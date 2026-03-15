@@ -1,0 +1,16 @@
+[project]
+name = "runtime-mlx"
+version = "0.1.0"
+description = "DGInf MLX runtime service skeleton."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+runtime-mlx-server = "runtime_mlx.server:main"
+
+[build-system]
+requires = ["setuptools>=80.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "src"

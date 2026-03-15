@@ -1,0 +1,19 @@
+[project]
+name = "dginf-sdk"
+version = "0.1.0"
+description = "DGInf Python SDK skeleton."
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=45.0.0",
+  "httpx>=0.28.1",
+]
+
+[project.scripts]
+dginf = "dginf_sdk.cli:main"
+
+[build-system]
+requires = ["setuptools>=80.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "src"

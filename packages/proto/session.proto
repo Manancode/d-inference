@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package dginf.session.v1;
+
+option go_package = "github.com/dginf/dginf/packages/proto/sessionv1";
+
+message ClientHello {
+  string session_id = 1;
+  string client_ephemeral_pubkey = 2;
+  uint64 sent_at_unix_ms = 3;
+}
+
+message ProviderHello {
+  string session_id = 1;
+  string provider_session_pubkey = 2;
+  string provider_session_signature = 3;
+  uint64 sent_at_unix_ms = 4;
+}
+
+message RequestChunk {
+  string session_id = 1;
+  bytes ciphertext = 2;
+  uint64 sequence = 3;
+}
+
+message ResponseChunk {
+  string session_id = 1;
+  bytes ciphertext = 2;
+  uint64 sequence = 3;
+  bool final = 4;
+}
+
+message UsageDelta {
+  string session_id = 1;
+  uint64 prompt_tokens = 2;
+  uint64 completion_tokens = 3;
+}
+
+message JobComplete {
+  string session_id = 1;
+  uint64 prompt_tokens = 2;
+  uint64 completion_tokens = 3;
+  string receipt_id = 4;
+}
+
+message JobError {
+  string session_id = 1;
+  string code = 2;
+  string message = 3;
+}
+
+message Cancel {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message Keepalive {
+  string session_id = 1;
+  uint64 sent_at_unix_ms = 2;
+}
+
+message SessionFrame {
+  oneof payload {
+    ClientHello client_hello = 1;
+    ProviderHello provider_hello = 2;
+    RequestChunk request_chunk = 3;
+    ResponseChunk response_chunk = 4;
+    UsageDelta usage_delta = 5;
+    JobComplete job_complete = 6;
+    JobError job_error = 7;
+    Cancel cancel = 8;
+    Keepalive keepalive = 9;
+  }
+}
+

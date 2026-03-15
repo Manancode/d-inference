@@ -1,0 +1,366 @@
+openapi: 3.1.0
+info:
+  title: DGInf Coordinator API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/auth/challenge:
+    post:
+      operationId: issueAuthChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthChallengeRequest'
+      responses:
+        '200':
+          description: Auth challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthChallengeResponse'
+  /v1/auth/verify:
+    post:
+      operationId: verifyAuthChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthVerifyRequest'
+      responses:
+        '200':
+          description: Session issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthVerifyResponse'
+  /v1/providers/register:
+    post:
+      operationId: registerProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderRegistration'
+      responses:
+        '201':
+          description: Provider registered
+  /v1/providers/heartbeat:
+    post:
+      operationId: providerHeartbeat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderHeartbeat'
+      responses:
+        '200':
+          description: Heartbeat accepted
+  /v1/models:
+    get:
+      operationId: listModels
+      responses:
+        '200':
+          description: Catalog entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CatalogEntry'
+  /v1/jobs/quote:
+    post:
+      operationId: quoteJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobQuoteRequest'
+      responses:
+        '200':
+          description: Quote result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobQuote'
+  /v1/jobs:
+    post:
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDescriptor'
+  /v1/jobs/{jobId}:
+    get:
+      operationId: getJob
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobRecord'
+  /v1/jobs/{jobId}/complete:
+    post:
+      operationId: completeJob
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCompletionRequest'
+      responses:
+        '200':
+          description: Completed job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobRecord'
+  /v1/jobs/{jobId}/cancel:
+    post:
+      operationId: cancelJob
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Cancellation requested
+  /v1/balances:
+    get:
+      operationId: getBalances
+      parameters:
+        - in: query
+          name: wallet
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Balance snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceSnapshot'
+  /v1/dev/seed-balance:
+    post:
+      operationId: seedBalance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeedBalanceRequest'
+      responses:
+        '200':
+          description: Seeded balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceSnapshot'
+components:
+  schemas:
+    AuthChallengeRequest:
+      type: object
+      required: [wallet, chainId]
+      properties:
+        wallet:
+          type: string
+        chainId:
+          type: integer
+    AuthChallengeResponse:
+      type: object
+      required: [nonce, message, expiresAt]
+      properties:
+        nonce:
+          type: string
+        message:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    AuthVerifyRequest:
+      type: object
+      required: [wallet, message, signature]
+      properties:
+        wallet:
+          type: string
+        message:
+          type: string
+        signature:
+          type: string
+    AuthVerifyResponse:
+      type: object
+      required: [sessionToken, wallet]
+      properties:
+        sessionToken:
+          type: string
+        wallet:
+          type: string
+    ProviderRegistration:
+      type: object
+      required:
+        [providerWallet, nodeId, secureEnclaveSigningPubkey, providerSessionPubkey, providerSessionSignature, hardwareProfile, memoryGb, selectedModelId]
+      properties:
+        providerWallet:
+          type: string
+        nodeId:
+          type: string
+        secureEnclaveSigningPubkey:
+          type: string
+        providerSessionPubkey:
+          type: string
+        providerSessionSignature:
+          type: string
+        hardwareProfile:
+          type: string
+        memoryGb:
+          type: integer
+        selectedModelId:
+          type: string
+    ProviderHeartbeat:
+      type: object
+      required: [nodeId, status, selectedModelId]
+      properties:
+        nodeId:
+          type: string
+        status:
+          type: string
+        selectedModelId:
+          type: string
+    CatalogEntry:
+      type: object
+      required: [modelId, minimumMemoryGb]
+      properties:
+        modelId:
+          type: string
+        minimumMemoryGb:
+          type: integer
+    JobQuoteRequest:
+      type: object
+      required: [consumerWallet, modelId, estimatedInputTokens, maxOutputTokens]
+      properties:
+        consumerWallet:
+          type: string
+        modelId:
+          type: string
+        estimatedInputTokens:
+          type: integer
+        maxOutputTokens:
+          type: integer
+    JobQuote:
+      type: object
+      required: [quoteId, providerId, reservationUsdc]
+      properties:
+        quoteId:
+          type: string
+        providerId:
+          type: string
+        reservationUsdc:
+          type: integer
+        minJobUsdc:
+          type: integer
+        input1mUsdc:
+          type: integer
+        output1mUsdc:
+          type: integer
+    JobCreateRequest:
+      type: object
+      required: [quoteId, clientEphemeralPubkey, encryptedJobEnvelope, maxSpendUsdc]
+      properties:
+        quoteId:
+          type: string
+        clientEphemeralPubkey:
+          type: string
+        encryptedJobEnvelope:
+          type: string
+        maxSpendUsdc:
+          type: integer
+    SessionDescriptor:
+      type: object
+      required: [jobId, sessionId, relayUrl]
+      properties:
+        jobId:
+          type: string
+        sessionId:
+          type: string
+        relayUrl:
+          type: string
+    JobRecord:
+      type: object
+      required: [jobId, state]
+      properties:
+        jobId:
+          type: string
+        state:
+          type: string
+        billedUsdc:
+          type: integer
+        promptTokens:
+          type: integer
+        completionTokens:
+          type: integer
+        reservedUsdc:
+          type: integer
+    BalanceSnapshot:
+      type: object
+      required: [wallet, availableUsdc, reservedUsdc, withdrawableUsdc]
+      properties:
+        wallet:
+          type: string
+        availableUsdc:
+          type: integer
+        reservedUsdc:
+          type: integer
+        withdrawableUsdc:
+          type: integer
+    JobCompletionRequest:
+      type: object
+      required: [promptTokens, completionTokens]
+      properties:
+        promptTokens:
+          type: integer
+        completionTokens:
+          type: integer
+    SeedBalanceRequest:
+      type: object
+      required: [wallet, availableUsdc]
+      properties:
+        wallet:
+          type: string
+        availableUsdc:
+          type: integer
+        withdrawableUsdc:
+          type: integer
