@@ -55,19 +55,28 @@ type Server struct {
 	logger            *slog.Logger
 	mux               *http.ServeMux
 	challengeInterval time.Duration // 0 means use DefaultChallengeInterval
+	settlementURL     string        // URL of the settlement sidecar (e.g. "http://localhost:8090")
+	processedTxHashes map[string]bool // prevents double-crediting the same on-chain tx
 }
 
 // NewServer creates a configured Server with all routes mounted.
 func NewServer(reg *registry.Registry, st store.Store, logger *slog.Logger) *Server {
 	s := &Server{
-		registry: reg,
-		store:    st,
-		ledger:   payments.NewLedger(st),
-		logger:   logger,
-		mux:      http.NewServeMux(),
+		registry:          reg,
+		store:             st,
+		ledger:            payments.NewLedger(st),
+		logger:            logger,
+		mux:               http.NewServeMux(),
+		settlementURL:     "http://localhost:8090",
+		processedTxHashes: make(map[string]bool),
 	}
 	s.routes()
 	return s
+}
+
+// SetSettlementURL configures the settlement service URL.
+func (s *Server) SetSettlementURL(url string) {
+	s.settlementURL = url
 }
 
 // routes mounts all HTTP and WebSocket handlers.
@@ -89,6 +98,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/payments/deposit", s.requireAuth(s.handleDeposit))
 	s.mux.HandleFunc("GET /v1/payments/balance", s.requireAuth(s.handleBalance))
 	s.mux.HandleFunc("GET /v1/payments/usage", s.requireAuth(s.handleUsage))
+	s.mux.HandleFunc("POST /v1/payments/withdraw", s.requireAuth(s.handleWithdraw))
 }
 
 // Handler returns the root http.Handler with global middleware applied.

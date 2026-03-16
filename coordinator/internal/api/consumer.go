@@ -16,12 +16,15 @@ package api
 //   with the provider's X25519 public key before forwarding.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dginf/coordinator/internal/protocol"
@@ -400,18 +403,198 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // --- payment handlers ---
 
 // depositRequest is the JSON body for POST /v1/payments/deposit.
+// If TxHash is provided, the deposit is verified on-chain via the settlement
+// service. Otherwise, the trust-based MVP flow is used.
 type depositRequest struct {
+	WalletAddress string `json:"wallet_address"`
+	AmountUSD     string `json:"amount_usd"`
+	TxHash        string `json:"tx_hash,omitempty"`
+}
+
+// settlementVerifyResponse is the JSON response from the settlement service's
+// POST /v1/settlement/verify-deposit endpoint.
+type settlementVerifyResponse struct {
+	Verified       bool   `json:"verified"`
+	TxHash         string `json:"txHash"`
+	From           string `json:"from"`
+	Amount         string `json:"amount"`
+	AmountUSD      string `json:"amountUSD"`
+	AmountMicroUSD int64  `json:"amountMicroUSD"`
+	BlockNumber    string `json:"blockNumber"`
+	Error          string `json:"error,omitempty"`
+}
+
+// txHashMu protects processedTxHashes for concurrent access.
+var txHashMu sync.Mutex
+
+// handleDeposit handles POST /v1/payments/deposit.
+//
+// Two modes:
+//   - If tx_hash is provided: verify the on-chain pathUSD transfer via the
+//     settlement service, then credit the verified amount. The tx_hash is
+//     recorded to prevent double-crediting.
+//   - If tx_hash is absent: use the trust-based MVP flow (direct ledger credit).
+func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
+	var req depositRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
+		return
+	}
+
+	if req.WalletAddress == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "wallet_address is required"))
+		return
+	}
+
+	consumerKey := consumerKeyFromContext(r.Context())
+
+	// On-chain verified deposit flow
+	if req.TxHash != "" {
+		s.handleVerifiedDeposit(w, consumerKey, req)
+		return
+	}
+
+	// Trust-based deposit flow (MVP)
+	if req.AmountUSD == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "amount_usd is required"))
+		return
+	}
+
+	amountFloat, err := strconv.ParseFloat(req.AmountUSD, 64)
+	if err != nil || amountFloat <= 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "amount_usd must be a positive number"))
+		return
+	}
+
+	amountMicroUSD := int64(amountFloat * 1_000_000)
+
+	if err := s.ledger.Deposit(consumerKey, amountMicroUSD); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to credit balance"))
+		return
+	}
+
+	s.logger.Info("deposit credited (trust-based)",
+		"consumer_key", consumerKey[:8]+"...",
+		"wallet_address", req.WalletAddress,
+		"amount_usd", req.AmountUSD,
+		"amount_micro_usd", amountMicroUSD,
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "deposited",
+		"wallet_address":    req.WalletAddress,
+		"amount_usd":        req.AmountUSD,
+		"amount_micro_usd":  amountMicroUSD,
+		"balance_micro_usd": s.ledger.Balance(consumerKey),
+	})
+}
+
+// handleVerifiedDeposit verifies a deposit on-chain via the settlement service.
+func (s *Server) handleVerifiedDeposit(w http.ResponseWriter, consumerKey string, req depositRequest) {
+	// Check for double-crediting
+	txHashMu.Lock()
+	if s.processedTxHashes[req.TxHash] {
+		txHashMu.Unlock()
+		writeJSON(w, http.StatusConflict, errorResponse("duplicate_deposit", "tx_hash has already been processed"))
+		return
+	}
+	txHashMu.Unlock()
+
+	// Call settlement service to verify the on-chain transfer
+	verifyBody, _ := json.Marshal(map[string]string{"tx_hash": req.TxHash})
+	resp, err := http.Post(
+		s.settlementURL+"/v1/settlement/verify-deposit",
+		"application/json",
+		bytes.NewReader(verifyBody),
+	)
+	if err != nil {
+		s.logger.Error("settlement service unreachable", "error", err)
+		writeJSON(w, http.StatusBadGateway, errorResponse("settlement_error", "settlement service unreachable"))
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to read settlement response"))
+		return
+	}
+
+	var verifyResp settlementVerifyResponse
+	if err := json.Unmarshal(body, &verifyResp); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to parse settlement response"))
+		return
+	}
+
+	if !verifyResp.Verified {
+		errMsg := "deposit verification failed"
+		if verifyResp.Error != "" {
+			errMsg = verifyResp.Error
+		}
+		writeJSON(w, http.StatusBadRequest, errorResponse("verification_failed", errMsg))
+		return
+	}
+
+	// Mark tx_hash as processed to prevent double-crediting
+	txHashMu.Lock()
+	// Double-check after acquiring the lock
+	if s.processedTxHashes[req.TxHash] {
+		txHashMu.Unlock()
+		writeJSON(w, http.StatusConflict, errorResponse("duplicate_deposit", "tx_hash has already been processed"))
+		return
+	}
+	s.processedTxHashes[req.TxHash] = true
+	txHashMu.Unlock()
+
+	// Credit the verified amount from the on-chain transfer
+	amountMicroUSD := verifyResp.AmountMicroUSD
+	if err := s.ledger.Deposit(consumerKey, amountMicroUSD); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to credit balance"))
+		return
+	}
+
+	amountUSD := fmt.Sprintf("%.6f", float64(amountMicroUSD)/1_000_000)
+
+	s.logger.Info("deposit credited (on-chain verified)",
+		"consumer_key", consumerKey[:8]+"...",
+		"wallet_address", req.WalletAddress,
+		"tx_hash", req.TxHash,
+		"amount_micro_usd", amountMicroUSD,
+		"from", verifyResp.From,
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "deposited",
+		"verified":          true,
+		"wallet_address":    req.WalletAddress,
+		"tx_hash":           req.TxHash,
+		"amount_usd":        amountUSD,
+		"amount_micro_usd":  amountMicroUSD,
+		"balance_micro_usd": s.ledger.Balance(consumerKey),
+	})
+}
+
+// withdrawRequest is the JSON body for POST /v1/payments/withdraw.
+type withdrawRequest struct {
 	WalletAddress string `json:"wallet_address"`
 	AmountUSD     string `json:"amount_usd"`
 }
 
-// handleDeposit handles POST /v1/payments/deposit.
+// settlementWithdrawResponse is the JSON response from the settlement service.
+type settlementWithdrawResponse struct {
+	ToAddress      string `json:"toAddress"`
+	AmountMicroUSD int64  `json:"amountMicroUSD"`
+	TxHash         string `json:"txHash"`
+	Success        bool   `json:"success"`
+	Error          string `json:"error,omitempty"`
+}
+
+// handleWithdraw handles POST /v1/payments/withdraw.
 //
-// For MVP this is trust-based — no on-chain verification. In production,
-// the coordinator would verify an on-chain pathUSD transfer on the Tempo
-// blockchain (via Viem's transferWithMemo) before crediting the ledger.
-func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
-	var req depositRequest
+// Debits the consumer's ledger balance and sends pathUSD via the settlement
+// service. If the on-chain transfer fails, the balance is re-credited.
+func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request) {
+	var req withdrawRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
 		return
@@ -426,7 +609,6 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse amount as float and convert to micro-USD (1 USD = 1,000,000 micro-USD).
 	amountFloat, err := strconv.ParseFloat(req.AmountUSD, 64)
 	if err != nil || amountFloat <= 0 {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "amount_usd must be a positive number"))
@@ -434,26 +616,75 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	amountMicroUSD := int64(amountFloat * 1_000_000)
-
-	// Credit the consumer's balance using their API key as the consumer ID.
 	consumerKey := consumerKeyFromContext(r.Context())
-	if err := s.ledger.Deposit(consumerKey, amountMicroUSD); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to credit balance"))
+
+	// Check and debit balance
+	if err := s.ledger.Charge(consumerKey, amountMicroUSD, "withdraw:"+req.WalletAddress); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("insufficient_funds", err.Error()))
 		return
 	}
 
-	s.logger.Info("deposit credited",
+	// Call settlement service to send on-chain
+	withdrawBody, _ := json.Marshal(map[string]any{
+		"to_address":       req.WalletAddress,
+		"amount_micro_usd": amountMicroUSD,
+		"reason":           "consumer_withdrawal",
+		"private_key":      "", // In production, loaded from secure config/HSM
+	})
+	resp, err := http.Post(
+		s.settlementURL+"/v1/settlement/withdraw",
+		"application/json",
+		bytes.NewReader(withdrawBody),
+	)
+	if err != nil {
+		// Settlement service unreachable — re-credit the balance
+		s.logger.Error("settlement service unreachable for withdrawal, re-crediting", "error", err)
+		_ = s.ledger.Deposit(consumerKey, amountMicroUSD)
+		writeJSON(w, http.StatusBadGateway, errorResponse("settlement_error", "settlement service unreachable"))
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		s.logger.Error("failed to read settlement withdrawal response", "error", err)
+		_ = s.ledger.Deposit(consumerKey, amountMicroUSD)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to read settlement response"))
+		return
+	}
+
+	var withdrawResp settlementWithdrawResponse
+	if err := json.Unmarshal(body, &withdrawResp); err != nil {
+		s.logger.Error("failed to parse settlement withdrawal response", "error", err)
+		_ = s.ledger.Deposit(consumerKey, amountMicroUSD)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to parse settlement response"))
+		return
+	}
+
+	if !withdrawResp.Success {
+		// On-chain transfer failed — re-credit the balance
+		s.logger.Error("on-chain withdrawal failed, re-crediting",
+			"error", withdrawResp.Error,
+			"wallet_address", req.WalletAddress,
+		)
+		_ = s.ledger.Deposit(consumerKey, amountMicroUSD)
+		writeJSON(w, http.StatusBadGateway, errorResponse("settlement_error", "on-chain transfer failed: "+withdrawResp.Error))
+		return
+	}
+
+	s.logger.Info("withdrawal processed",
 		"consumer_key", consumerKey[:8]+"...",
 		"wallet_address", req.WalletAddress,
-		"amount_usd", req.AmountUSD,
 		"amount_micro_usd", amountMicroUSD,
+		"tx_hash", withdrawResp.TxHash,
 	)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":           "deposited",
-		"wallet_address":   req.WalletAddress,
-		"amount_usd":       req.AmountUSD,
-		"amount_micro_usd": amountMicroUSD,
+		"status":            "withdrawn",
+		"wallet_address":    req.WalletAddress,
+		"amount_usd":        req.AmountUSD,
+		"amount_micro_usd":  amountMicroUSD,
+		"tx_hash":           withdrawResp.TxHash,
 		"balance_micro_usd": s.ledger.Balance(consumerKey),
 	})
 }

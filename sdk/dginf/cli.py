@@ -222,6 +222,35 @@ def deposit(
     console.print(f"  Balance: ${float(result.get('balance_micro_usd', 0)) / 1_000_000:.6f}")
 
 
+# ── withdraw ──────────────────────────────────────────────────────────────
+
+
+@app.command()
+def withdraw(
+    wallet: str = typer.Option(..., "--wallet", help="Ethereum-format wallet address (0x...)"),
+    amount: str = typer.Option(..., "--amount", help="Amount in USD to withdraw (e.g. 5.00)"),
+) -> None:
+    """Withdraw pathUSD from your DGInf balance to a wallet address.
+
+    Debits your ledger balance and sends the equivalent pathUSD on-chain
+    via the Tempo blockchain. If the on-chain transfer fails, your balance
+    is automatically re-credited.
+    """
+    client = _get_client()
+    try:
+        result = client.payments.withdraw(wallet_address=wallet, amount_usd=amount)
+    except DGInfError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    finally:
+        client.close()
+
+    console.print(f"[green]Withdrawn ${amount}[/green]")
+    console.print(f"  Wallet: {result.get('wallet_address', wallet)}")
+    console.print(f"  Tx Hash: {result.get('tx_hash', 'N/A')}")
+    console.print(f"  Balance: ${float(result.get('balance_micro_usd', 0)) / 1_000_000:.6f}")
+
+
 # ── balance ───────────────────────────────────────────────────────────────
 
 

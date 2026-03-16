@@ -334,6 +334,36 @@ class PaymentsNamespace:
         data = response.json()
         return data.get("usage", [])
 
+    def withdraw(self, wallet_address: str, amount_usd: str) -> dict[str, Any]:
+        """Withdraw pathUSD to wallet address.
+
+        Debits the internal ledger balance and sends pathUSD on-chain via
+        the settlement service. If the on-chain transfer fails, the balance
+        is re-credited automatically.
+
+        Args:
+            wallet_address: Ethereum-format hex address (0x...) to receive funds.
+            amount_usd: Amount in USD as a string (e.g. "5.00").
+
+        Returns:
+            Dict with status, wallet_address, amount, tx_hash, and updated balance.
+
+        Raises:
+            AuthenticationError: If the API key is invalid.
+            DGInfError: If insufficient funds or settlement fails.
+            RequestError: On connection/timeout failures.
+        """
+        try:
+            response = self._http.post(
+                "/v1/payments/withdraw",
+                json={"wallet_address": wallet_address, "amount_usd": amount_usd},
+            )
+        except httpx.HTTPError as exc:
+            raise RequestError(str(exc), cause=exc) from exc
+
+        _raise_for_status(response)
+        return response.json()
+
 
 # ── Main client ────────────────────────────────────────────────────────────
 

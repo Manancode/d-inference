@@ -436,3 +436,59 @@ def test_trust_level_missing_headers(client: DGInf) -> None:
 
     assert result.provider_attested is None
     assert result.provider_trust_level is None
+
+
+# ── Withdrawal endpoints ──────────────────────────────────────────────────
+
+
+WITHDRAW_RESPONSE = {
+    "status": "withdrawn",
+    "wallet_address": "0x2222222222222222222222222222222222222222",
+    "amount_usd": "5.00",
+    "amount_micro_usd": 5_000_000,
+    "tx_hash": "0xwithdraw123abc",
+    "balance_micro_usd": 5_000_000,
+}
+
+
+@respx.mock
+def test_payments_withdraw(client: DGInf) -> None:
+    respx.post(f"{BASE}/v1/payments/withdraw").mock(
+        return_value=httpx.Response(200, json=WITHDRAW_RESPONSE)
+    )
+
+    result = client.payments.withdraw(
+        wallet_address="0x2222222222222222222222222222222222222222",
+        amount_usd="5.00",
+    )
+
+    assert result["status"] == "withdrawn"
+    assert result["amount_micro_usd"] == 5_000_000
+    assert result["tx_hash"] == "0xwithdraw123abc"
+    assert result["balance_micro_usd"] == 5_000_000
+
+
+@respx.mock
+def test_payments_withdraw_insufficient_funds(client: DGInf) -> None:
+    respx.post(f"{BASE}/v1/payments/withdraw").mock(
+        return_value=httpx.Response(400, text="insufficient funds")
+    )
+
+    with pytest.raises(DGInfError):
+        client.payments.withdraw(
+            wallet_address="0x2222222222222222222222222222222222222222",
+            amount_usd="100.00",
+        )
+
+
+@respx.mock
+def test_payments_withdraw_connection_error(client: DGInf) -> None:
+    respx.post(f"{BASE}/v1/payments/withdraw").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+
+    with pytest.raises(RequestError):
+        client.payments.withdraw(
+            wallet_address="0x2222222222222222222222222222222222222222",
+            amount_usd="5.00",
+        )

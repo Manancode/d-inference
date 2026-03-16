@@ -54,3 +54,10 @@ def test_balance_help() -> None:
 def test_usage_help() -> None:
     result = runner.invoke(app, ["usage", "--help"])
     assert result.exit_code == 0
+
+
+def test_withdraw_help() -> None:
+    result = runner.invoke(app, ["withdraw", "--help"])
+    assert result.exit_code == 0
+    assert "--wallet" in result.output
+    assert "--amount" in result.output
