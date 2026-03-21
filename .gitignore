@@ -5,20 +5,25 @@ target/
 *.dylib
 
 # Rust
-provider/target/
+Cargo.lock
 
 # Go
 coordinator/bin/
 
-# Swift
-enclave/.build/
-enclave/.swiftpm/
+# Swift (all .build and .swiftpm dirs anywhere)
+.build/
+.swiftpm/
+
+# Node.js / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
 
 # Python
-sdk/__pycache__/
-sdk/*.egg-info/
-sdk/dist/
-sdk/build/
+__pycache__/
+*.egg-info/
+dist/
+build/
 .venv/
 *.pyc
 .pytest_cache/
