@@ -1,0 +1,45 @@
+# Build artifacts
+target/
+*.o
+*.a
+*.dylib
+
+# Rust
+Cargo.lock
+
+# Go
+coordinator/bin/
+
+# Swift (all .build and .swiftpm dirs anywhere)
+.build/
+.swiftpm/
+
+# Node.js / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.egg-info/
+dist/
+build/
+.venv/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Config (local dev)
+*.local.toml
+
+# Keys (never commit)
+*.pem
+enclave_key.data
