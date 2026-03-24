@@ -570,30 +570,33 @@ async fn cmd_serve(
         "python3".to_string()
     };
 
-    // Start vllm-mlx as the inference backend (preferred over mlx_lm.server)
-    // vllm-mlx provides continuous batching and higher throughput
-    tracing::info!("Starting vllm-mlx for model: {}", model);
+    // Start inference backend: try vllm-mlx CLI first, then mlx_lm.server
+    tracing::info!("Starting inference backend for model: {}", model);
 
-    // Try vllm-mlx first, fall back to mlx_lm.server
-    let serve_result = std::process::Command::new(&python_cmd)
-        .args(["-m", "vllm_mlx.entrypoints.openai.api_server",
-               "--model", &model, "--port", &be_port.to_string()])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
+    // Try vllm-mlx CLI (bundled at ~/.dginf/python/bin/vllm-mlx)
+    let vllm_cli = dginf_dir.join("python/bin/vllm-mlx");
+    let serve_result = if vllm_cli.exists() {
+        tracing::info!("Found vllm-mlx CLI: {}", vllm_cli.display());
+        std::process::Command::new(&vllm_cli)
+            .args(["serve", &model, "--port", &be_port.to_string()])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "vllm-mlx CLI not found"))
+    };
 
     let backend_name = match serve_result {
         Ok(child) => {
             tracing::info!("vllm-mlx started (PID: {:?}) on port {}", child.id(), be_port);
             "vllm-mlx"
         }
-        Err(_) => {
-            // Fall back to mlx_lm.server
-            tracing::info!("vllm-mlx not available, falling back to mlx_lm.server");
+        Err(e) => {
+            tracing::info!("vllm-mlx CLI failed ({e}), falling back to mlx_lm.server");
             let mlx_serve = std::process::Command::new(&python_cmd)
                 .args(["-m", "mlx_lm.server", "--model", &model, "--port", &be_port.to_string()])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
                 .spawn();
             match mlx_serve {
                 Ok(child) => {
