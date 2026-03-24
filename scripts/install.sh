@@ -4,12 +4,12 @@ set -euo pipefail
 # DGInf Provider Installer
 # Usage: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash
 #
-# Downloads a self-contained bundle (~92MB) with:
+# Installs:
 #   - dginf-provider (Rust binary, Apple Silicon)
 #   - dginf-enclave (Swift CLI, Secure Enclave attestation)
-#   - Bundled Python 3.12 + vllm-mlx + mlx + mlx-lm + transformers
+#   - vllm-mlx + mlx + mlx-lm (via pip, matched to your Python version)
 #
-# No pip, no Homebrew, no system Python needed.
+# Requires: macOS with Apple Silicon, Python 3.10+
 
 BASE_URL="https://inference-test.openinnovation.dev"
 DGINF_DIR="$HOME/.dginf"
@@ -40,40 +40,27 @@ echo "→ Detected: macOS $(sw_vers -productVersion) on $ARCH"
 CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")
 MEM=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1/1073741824}')
 echo "→ Hardware: $CHIP, ${MEM}GB RAM"
+
+# Check Python
+if ! command -v python3 >/dev/null 2>&1; then
+    echo ""
+    echo "Error: python3 not found."
+    echo "Install Python 3.10+ from https://python.org or: brew install python@3.12"
+    exit 1
+fi
+PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+echo "→ Python: $PYVER"
 echo ""
 
-# Download and extract bundle
-echo "→ Downloading DGInf bundle (~92MB)..."
-mkdir -p "$DGINF_DIR"
-curl -fsSL --progress-bar "$BASE_URL/dl/dginf-bundle-macos-arm64.tar.gz" -o "/tmp/dginf-bundle.tar.gz"
-
-echo "→ Extracting..."
+# Download binaries
+echo "→ Downloading dginf-provider..."
 mkdir -p "$BIN_DIR"
-tar xzf /tmp/dginf-bundle.tar.gz -C "$DGINF_DIR"
+curl -fSL "$BASE_URL/dl/dginf-provider" -o "$BIN_DIR/dginf-provider"
+chmod +x "$BIN_DIR/dginf-provider"
 
-# Move binaries to bin/
-mv "$DGINF_DIR/dginf-provider" "$BIN_DIR/dginf-provider" 2>/dev/null || true
-mv "$DGINF_DIR/dginf-enclave" "$BIN_DIR/dginf-enclave" 2>/dev/null || true
-chmod +x "$BIN_DIR/dginf-provider" "$BIN_DIR/dginf-enclave"
-
-# Fix venv paths (they were created at /tmp/dginf-bundle/python, now at ~/.dginf/python)
-if [ -f "$DGINF_DIR/python/bin/activate" ]; then
-    sed -i '' "s|/tmp/dginf-bundle/python|$DGINF_DIR/python|g" "$DGINF_DIR/python/bin/activate" 2>/dev/null || true
-    sed -i '' "s|/tmp/dginf-bundle/python|$DGINF_DIR/python|g" "$DGINF_DIR/python/bin/pip" 2>/dev/null || true
-    sed -i '' "s|/tmp/dginf-bundle/python|$DGINF_DIR/python|g" "$DGINF_DIR/python/bin/pip3" 2>/dev/null || true
-    # Fix all shebang lines in bin/
-    for f in "$DGINF_DIR/python/bin/"*; do
-        if [ -f "$f" ] && head -1 "$f" | grep -q "/tmp/dginf-bundle"; then
-            sed -i '' "s|/tmp/dginf-bundle/python|$DGINF_DIR/python|g" "$f" 2>/dev/null || true
-        fi
-    done
-    # Fix pyvenv.cfg
-    if [ -f "$DGINF_DIR/python/pyvenv.cfg" ]; then
-        sed -i '' "s|/tmp/dginf-bundle/python|$DGINF_DIR/python|g" "$DGINF_DIR/python/pyvenv.cfg" 2>/dev/null || true
-    fi
-fi
-
-rm -f /tmp/dginf-bundle.tar.gz
+echo "→ Downloading dginf-enclave..."
+curl -fSL "$BASE_URL/dl/dginf-enclave" -o "$BIN_DIR/dginf-enclave"
+chmod +x "$BIN_DIR/dginf-enclave"
 
 # Add to PATH if needed
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -84,20 +71,25 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo "" >> "$SHELL_RC"
     echo "# DGInf provider" >> "$SHELL_RC"
     echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$SHELL_RC"
-    echo "→ Added $BIN_DIR to PATH in $SHELL_RC"
     export PATH="$BIN_DIR:$PATH"
+    echo "→ Added $BIN_DIR to PATH"
 fi
 
-# Verify bundled Python + vllm-mlx
+# Install inference engine
 echo ""
-echo "→ Verifying bundled inference engine..."
-BUNDLED_PYTHON="$DGINF_DIR/python/bin/python3"
-if "$BUNDLED_PYTHON" -c "import vllm_mlx; print(f'  ✓ vllm-mlx {vllm_mlx.__version__}')" 2>/dev/null; then
-    true
-elif "$BUNDLED_PYTHON" -c "import mlx_lm; print('  ✓ mlx-lm available')" 2>/dev/null; then
-    true
+echo "→ Installing inference engine..."
+if python3 -c "import vllm_mlx" 2>/dev/null; then
+    VVER=$(python3 -c "import vllm_mlx; print(vllm_mlx.__version__)" 2>/dev/null || echo "?")
+    echo "  ✓ vllm-mlx $VVER already installed"
 else
-    echo "  ⚠ Bundled Python verification failed — will try system Python as fallback"
+    echo "  Installing vllm-mlx (this may take a minute)..."
+    pip3 install vllm-mlx --break-system-packages 2>/dev/null \
+        || pip3 install vllm-mlx 2>/dev/null \
+        || { echo "  ⚠ pip install failed. Try: pip3 install vllm-mlx"; }
+    if python3 -c "import vllm_mlx" 2>/dev/null; then
+        VVER=$(python3 -c "import vllm_mlx; print(vllm_mlx.__version__)" 2>/dev/null)
+        echo "  ✓ vllm-mlx $VVER installed"
+    fi
 fi
 
 # Setup Secure Enclave identity

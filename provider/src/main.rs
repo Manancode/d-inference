@@ -573,7 +573,7 @@ async fn cmd_serve(
     // Start inference backend: try vllm-mlx CLI first, then mlx_lm.server
     tracing::info!("Starting inference backend for model: {}", model);
 
-    // Try vllm-mlx CLI (bundled at ~/.dginf/python/bin/vllm-mlx)
+    // Try vllm-mlx CLI (bundled at ~/.dginf/python/bin/vllm-mlx or system)
     let vllm_cli = dginf_dir.join("python/bin/vllm-mlx");
     let serve_result = if vllm_cli.exists() {
         tracing::info!("Found vllm-mlx CLI: {}", vllm_cli.display());
@@ -583,7 +583,12 @@ async fn cmd_serve(
             .stderr(std::process::Stdio::inherit())
             .spawn()
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "vllm-mlx CLI not found"))
+        // Try system-installed vllm-mlx
+        std::process::Command::new("vllm-mlx")
+            .args(["serve", &model, "--port", &be_port.to_string()])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
     };
 
     let backend_name = match serve_result {
