@@ -261,23 +261,36 @@ async fn cmd_install(
 
     // Step 4: Select and download model
     println!("Step 4/6: Setting up inference model...");
+
+    // Show all supported models and which ones fit this hardware
+    println!("  Available memory: {} GB", hw.memory_available_gb);
+    println!();
+    let catalog = [
+        ("mlx-community/Qwen3.5-4B-MLX-4bit",        "Qwen3.5 4B",       2.5,  "4B dense",          "Lightweight"),
+        ("mlx-community/Qwen3.5-9B-MLX-4bit",        "Qwen3.5 9B",       6.0,  "9B dense",          "Balanced"),
+        ("mlx-community/Qwen3.5-27B-MLX-4bit",       "Qwen3.5 27B",     17.0,  "27B dense",         "High quality"),
+        ("mlx-community/Qwen3.5-35B-A3B-MLX-4bit",   "Qwen3.5 35B-A3B", 22.0,  "35B MoE, 3B active","Fast + smart"),
+        ("mlx-community/Qwen3.5-122B-A10B-MLX-4bit",  "Qwen3.5 122B",   76.0,  "122B MoE, 10B active","Best quality"),
+    ];
+
+    let mut best_fit: Option<&str> = None;
+    for (id, name, size_gb, arch, desc) in &catalog {
+        let fits = hw.memory_available_gb as f64 >= *size_gb;
+        let marker = if fits { "  ✓" } else { "  ✗" };
+        println!("{} {:20} {:>5.1} GB  {:25} {}",
+            marker, name, size_gb, arch, desc);
+        if fits {
+            best_fit = Some(id);
+        }
+    }
+    println!();
+
     let model = if let Some(m) = model_override {
         m
     } else {
-        // Auto-select model based on available memory
-        // Uses latest Qwen3.5 MoE models where possible — small active params
-        // (3-10B) make them fast on unified memory hardware.
-        let model = if hw.memory_available_gb >= 100 {
-            "mlx-community/Qwen3.5-122B-A10B-MLX-4bit"  // 122B MoE, 10B active, ~76GB
-        } else if hw.memory_available_gb >= 48 {
-            "mlx-community/Qwen3.5-35B-A3B-MLX-4bit"    // 35B MoE, 3B active, ~22GB
-        } else if hw.memory_available_gb >= 16 {
-            "mlx-community/Qwen3.5-9B-MLX-4bit"         // 9B dense, ~6GB
-        } else {
-            "mlx-community/Qwen3.5-4B-MLX-4bit"         // 4B dense, ~2.5GB
-        };
-        println!("  Auto-selected: {} (for {} GB available memory)", model, hw.memory_available_gb);
-        model.to_string()
+        let selected = best_fit.unwrap_or(catalog[0].0);
+        println!("  → Auto-selected: {} (largest that fits)", selected);
+        selected.to_string()
     };
 
     // Check if model is already downloaded
