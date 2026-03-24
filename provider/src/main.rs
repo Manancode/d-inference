@@ -63,7 +63,7 @@ enum Command {
         local: bool,
 
         /// Coordinator WebSocket URL
-        #[arg(long, default_value = "ws://localhost:8080/ws/provider")]
+        #[arg(long, default_value = "wss://inference-test.openinnovation.dev/ws/provider")]
         coordinator: String,
 
         /// Port for local API server
@@ -558,38 +558,26 @@ async fn cmd_serve(
     }
     tracing::info!("Primary model: {}", model);
 
-    // Find the bundled or system Python
+    // Find bundled Python at ~/.dginf/python (standalone Python 3.12 + vllm-mlx)
     let dginf_dir = dirs::home_dir().unwrap_or_default().join(".dginf");
-    let bundled_python = dginf_dir.join("python/bin/python3");
+    let bundled_python = dginf_dir.join("python/bin/python3.12");
     let python_cmd = if bundled_python.exists() {
         tracing::info!("Using bundled Python: {}", bundled_python.display());
         unsafe { std::env::set_var("PYTHONHOME", dginf_dir.join("python")); }
         bundled_python.to_string_lossy().to_string()
     } else {
-        tracing::info!("Using system Python");
+        tracing::info!("Using system Python (bundled Python not found at ~/.dginf/python)");
         "python3".to_string()
     };
 
-    // Start inference backend: try vllm-mlx CLI first, then mlx_lm.server
+    // Start inference backend via bundled Python
     tracing::info!("Starting inference backend for model: {}", model);
 
-    // Try vllm-mlx CLI (bundled at ~/.dginf/python/bin/vllm-mlx or system)
-    let vllm_cli = dginf_dir.join("python/bin/vllm-mlx");
-    let serve_result = if vllm_cli.exists() {
-        tracing::info!("Found vllm-mlx CLI: {}", vllm_cli.display());
-        std::process::Command::new(&vllm_cli)
-            .args(["serve", &model, "--port", &be_port.to_string()])
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-    } else {
-        // Try system-installed vllm-mlx
-        std::process::Command::new("vllm-mlx")
-            .args(["serve", &model, "--port", &be_port.to_string()])
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-    };
+    let serve_result = std::process::Command::new(&python_cmd)
+        .args(["-m", "vllm_mlx.server", "--model", &model, "--port", &be_port.to_string()])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn();
 
     let backend_name = match serve_result {
         Ok(child) => {
