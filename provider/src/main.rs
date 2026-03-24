@@ -248,17 +248,27 @@ async fn cmd_install(
     let already_enrolled = {
         #[cfg(target_os = "macos")]
         {
-            // Check both user and system profile domains
-            let output = std::process::Command::new("profiles")
-                .args(["list"])
-                .output();
-            output.map(|o| {
-                let s = String::from_utf8_lossy(&o.stdout);
-                s.contains("micromdm") || s.contains("com.github") ||
-                s.contains("dginf") || s.contains("MDM") ||
-                s.contains("Device Management") ||
-                (!s.contains("no configuration profiles") && s.contains("attribute"))
-            }).unwrap_or(false)
+            let check = |args: &[&str]| -> bool {
+                std::process::Command::new("profiles")
+                    .args(args)
+                    .output()
+                    .map(|o| {
+                        let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
+                        let err = String::from_utf8_lossy(&o.stderr).to_lowercase();
+                        let combined = format!("{}{}", out, err);
+                        // Enrolled if output mentions any profile identifier or enrollment
+                        (combined.contains("micromdm") || combined.contains("com.github") ||
+                         combined.contains("dginf") || combined.contains("mdm")) &&
+                        !combined.contains("no configuration profiles")
+                    })
+                    .unwrap_or(false)
+            };
+            // Try multiple detection methods
+            check(&["list"]) ||                          // user profiles
+            check(&["list", "-type", "enrollment"]) ||   // enrollment profiles
+            check(&["show", "-type", "enrollment"]) ||   // alternate syntax
+            // Also try checking if the MDM checkin file exists
+            std::path::Path::new("/var/db/ConfigurationProfiles/Settings/.profilesAreInstalled").exists()
         }
         #[cfg(not(target_os = "macos"))]
         { false }
