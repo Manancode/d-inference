@@ -305,62 +305,112 @@ async fn cmd_install(
 
     // Step 4: Select and download model
     println!("Step 4/6: Setting up inference model...");
-
-    // Show all supported models and which ones fit this hardware
     println!("  Available memory: {} GB", hw.memory_available_gb);
     println!();
+
     let catalog = [
-        ("mlx-community/Qwen3.5-4B-MLX-4bit",        "Qwen3.5 4B",       2.5,  "4B dense",          "Lightweight"),
-        ("mlx-community/Qwen3.5-9B-MLX-4bit",        "Qwen3.5 9B",       6.0,  "9B dense",          "Balanced"),
-        ("mlx-community/Qwen3.5-27B-MLX-4bit",       "Qwen3.5 27B",     17.0,  "27B dense",         "High quality"),
-        ("mlx-community/Qwen3.5-35B-A3B-MLX-4bit",   "Qwen3.5 35B-A3B", 22.0,  "35B MoE, 3B active","Fast + smart"),
-        ("mlx-community/Qwen3.5-122B-A10B-MLX-4bit",  "Qwen3.5 122B",   76.0,  "122B MoE, 10B active","Best quality"),
+        ("mlx-community/Qwen3.5-9B-MLX-4bit",       "Qwen3.5-9B-MLX-4bit",       "Qwen3.5 9B",       6.0,  "9B dense",           "Balanced"),
+        ("mlx-community/Qwen3.5-27B-4bit",           "Qwen3.5-27B-4bit",           "Qwen3.5 27B",     17.0,  "27B dense",           "High quality"),
+        ("mlx-community/Qwen3.5-35B-A3B-4bit",       "Qwen3.5-35B-A3B-4bit",       "Qwen3.5 35B-A3B", 22.0,  "35B MoE, 3B active",  "Fast + smart"),
+        ("mlx-community/Qwen3.5-122B-A10B-4bit",     "Qwen3.5-122B-A10B-4bit",     "Qwen3.5 122B",    76.0,  "122B MoE, 10B active", "Best quality"),
     ];
 
-    let mut best_fit: Option<&str> = None;
-    for (id, name, size_gb, arch, desc) in &catalog {
+    // Check which models are already downloaded
+    let available = models::scan_models(&hw);
+
+    let mut selectable: Vec<usize> = Vec::new();
+    for (i, (id, _s3_name, name, size_gb, arch, desc)) in catalog.iter().enumerate() {
         let fits = hw.memory_available_gb as f64 >= *size_gb;
-        let marker = if fits { "  ✓" } else { "  ✗" };
-        println!("{} {:20} {:>5.1} GB  {:25} {}",
-            marker, name, size_gb, arch, desc);
+        let downloaded = available.iter().any(|m| m.id == *id);
+        let status = if downloaded { "✓ ready" } else if fits { "  fits" } else { "✗ too large" };
         if fits {
-            best_fit = Some(id);
+            selectable.push(i);
+            println!("  [{}] {} {:>5.1} GB  {:25} {}  {}", selectable.len(), name, size_gb, arch, desc, status);
+        } else {
+            println!("  [-] {} {:>5.1} GB  {:25} {}  {}", name, size_gb, arch, desc, status);
         }
     }
     println!();
 
     let model = if let Some(m) = model_override {
         m
+    } else if selectable.is_empty() {
+        anyhow::bail!("No models fit in {} GB available memory", hw.memory_available_gb);
     } else {
-        let selected = best_fit.unwrap_or(catalog[0].0);
-        println!("  → Auto-selected: {} (largest that fits)", selected);
-        selected.to_string()
+        println!("  Select a model [1-{}] (or press Enter for [{}]):", selectable.len(), selectable.len());
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        let choice = if input.is_empty() {
+            selectable.len() - 1 // default to largest that fits
+        } else {
+            input.parse::<usize>().unwrap_or(selectable.len()).saturating_sub(1)
+        };
+
+        let idx = selectable.get(choice.min(selectable.len() - 1)).copied().unwrap_or(0);
+        let (id, _, name, _, _, _) = &catalog[idx];
+        println!("  → Selected: {} ({})", name, id);
+        id.to_string()
     };
 
-    // Check if model is already downloaded
-    let available = models::scan_models(&hw);
+    // Check if already downloaded
     let model_downloaded = available.iter().any(|m| m.id == model);
 
     if !model_downloaded {
-        println!("  Downloading model (this may take a few minutes)...");
-        let status = std::process::Command::new("huggingface-cli")
-            .args(["download", &model])
+        // Find S3 name for this model
+        let s3_name = catalog.iter()
+            .find(|(id, _, _, _, _, _)| *id == model)
+            .map(|(_, s3, _, _, _, _)| *s3)
+            .unwrap_or("");
+
+        let s3_url = format!("https://dginf-models.s3.amazonaws.com/{}", s3_name);
+        let cache_dir = dirs::home_dir().unwrap_or_default()
+            .join(".cache/huggingface/hub")
+            .join(format!("models--{}", model.replace('/', "--")))
+            .join("snapshots/main");
+
+        println!("  Downloading model from DGInf CDN...");
+        std::fs::create_dir_all(&cache_dir)?;
+
+        // Download model files from S3
+        let status = std::process::Command::new("curl")
+            .args(["-fsSL", &format!("{}/config.json", s3_url), "-o", &cache_dir.join("config.json").to_string_lossy()])
             .status();
-        match status {
-            Ok(s) if s.success() => println!("  ✓ Model downloaded"),
-            _ => {
-                // Try python fallback
-                println!("  huggingface-cli not found, trying Python...");
-                let py_status = std::process::Command::new("python3")
-                    .args(["-c", &format!(
-                        "from huggingface_hub import snapshot_download; snapshot_download('{}')",
-                        model
-                    )])
-                    .status();
-                match py_status {
-                    Ok(s) if s.success() => println!("  ✓ Model downloaded"),
-                    _ => println!("  ⚠ Could not download model. Download manually:\n    huggingface-cli download {}", model),
+
+        if status.map(|s| s.success()).unwrap_or(false) {
+            // Use aws s3 sync if available, otherwise curl individual files
+            let aws_status = std::process::Command::new("aws")
+                .args(["s3", "sync", &format!("s3://dginf-models/{}/", s3_name), &cache_dir.to_string_lossy(), "--region", "us-east-1", "--no-sign-request"])
+                .status();
+
+            match aws_status {
+                Ok(s) if s.success() => println!("  ✓ Model downloaded from DGInf CDN"),
+                _ => {
+                    println!("  AWS CLI not available. Trying HuggingFace...");
+                    let hf_status = std::process::Command::new("python3")
+                        .args(["-c", &format!(
+                            "from huggingface_hub import snapshot_download; snapshot_download('{}')",
+                            model
+                        )])
+                        .status();
+                    match hf_status {
+                        Ok(s) if s.success() => println!("  ✓ Model downloaded from HuggingFace"),
+                        _ => println!("  ⚠ Could not download model. Download manually:\n    aws s3 sync s3://dginf-models/{}/ ~/.cache/huggingface/hub/models--{}--/snapshots/main/ --no-sign-request", s3_name, model.replace('/', "--")),
+                    }
                 }
+            }
+        } else {
+            println!("  Model not yet available on DGInf CDN. Trying HuggingFace...");
+            let hf_status = std::process::Command::new("python3")
+                .args(["-c", &format!(
+                    "from huggingface_hub import snapshot_download; snapshot_download('{}')",
+                    model
+                )])
+                .status();
+            match hf_status {
+                Ok(s) if s.success() => println!("  ✓ Model downloaded from HuggingFace"),
+                _ => println!("  ⚠ Could not download model. It may require HuggingFace authentication.\n    Run: huggingface-cli login\n    Then: huggingface-cli download {}", model),
             }
         }
     } else {
