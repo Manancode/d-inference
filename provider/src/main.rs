@@ -407,20 +407,48 @@ async fn cmd_install(
     }
     println!();
 
-    // Step 6: Connect and serve
+    // Step 6: Launch provider in background
     println!("Step 6/6: Starting provider...");
     println!("  Coordinator: {}", coordinator_url);
     println!("  Model: {}", model);
     println!();
+
+    // Get the path to our own binary
+    let exe = std::env::current_exe()?;
+    let log_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".dginf/provider.log");
+
+    // Launch ourselves in the background with `serve`
+    let log_file = std::fs::File::create(&log_path)?;
+    let log_err = log_file.try_clone()?;
+
+    let child = std::process::Command::new(&exe)
+        .args([
+            "serve",
+            "--coordinator", &coordinator_url,
+            "--model", &model,
+        ])
+        .stdout(log_file)
+        .stderr(log_err)
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+
     println!("╔══════════════════════════════════════════╗");
-    println!("║  Provider is online and earning!          ║");
-    println!("║  Press Ctrl+C to stop.                    ║");
+    println!("║  Provider is running in the background!   ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
+    println!("  PID:  {}", child.id());
+    println!("  Logs: {}", log_path.display());
+    println!();
+    println!("Commands:");
+    println!("  dginf-provider status     Show provider status");
+    println!("  dginf-provider logs       View logs");
+    println!("  dginf-provider doctor     Run diagnostics");
+    println!("  pkill -f dginf-provider   Stop the provider");
+    println!();
 
-    // Convert wss:// coordinator URL to ws:// for serve (or keep as-is)
-    let ws_url = coordinator_url;
-    cmd_serve(false, ws_url, 8000, Some(model), None).await
+    Ok(())
 }
 
 async fn cmd_serve(
@@ -1280,7 +1308,9 @@ async fn cmd_wallet() -> Result<()> {
 }
 
 async fn cmd_logs(lines: usize) -> Result<()> {
-    let log_path = std::env::temp_dir().join("dginf-provider.log");
+    let log_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".dginf/provider.log");
 
     if !log_path.exists() {
         println!("No log file found at {}", log_path.display());
