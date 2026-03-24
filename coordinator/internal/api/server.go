@@ -110,8 +110,8 @@ func (s *Server) routes() {
 	// Provider WebSocket — no API key auth (providers authenticate differently).
 	s.mux.HandleFunc("GET /ws/provider", s.handleProviderWS)
 
-	// Admin endpoints — admin key auth required.
-	s.mux.HandleFunc("POST /v1/auth/keys", s.requireAuth(s.handleCreateKey))
+	// Key generation — open access for testing. In production, gate behind admin auth.
+	s.mux.HandleFunc("POST /v1/auth/keys", s.handleCreateKey)
 
 	// Consumer endpoints — API key auth required.
 	s.mux.HandleFunc("POST /v1/chat/completions", s.requireAuth(s.handleChatCompletions))
