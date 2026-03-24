@@ -2,41 +2,52 @@
 
 ## Overview
 
-DGInf is a platform for private, decentralized AI inference on Apple Silicon Macs. Mac owners provide idle compute. Consumers get private inference on open-source models with hardware-backed trust guarantees from Apple's Secure Enclave.
+DGInf is a platform for private, decentralized AI inference on Apple Silicon Macs. Mac owners provide idle compute. Consumers get private inference on open-source models with hardware-backed trust guarantees from Apple's Secure Enclave and MDM-verified security posture.
 
 ```
 Consumer (Python SDK)
     |
-    | HTTPS (TLS)
+    | HTTPS (OpenAI-compatible API)
     v
 Coordinator (Go, GCP Confidential VM — AMD SEV-SNP)
     |
     | WebSocket (outbound from provider, no port forwarding needed)
     v
-Provider Agent (Rust CLI daemon)
+Provider Agent (Rust + embedded Python via PyO3)
     |
-    | HTTP (localhost)
+    | In-process function calls (no HTTP, no IPC)
     v
-Inference Backend (mlx-lm / vllm-mlx subprocess)
-    |
-    v
-MLX -> Metal -> Apple Silicon GPU
+MLX inference engine -> Metal -> Apple Silicon GPU
 ```
 
 ## Components
 
 ### Provider Agent (`provider/`)
 
-**Language:** Rust
+**Language:** Rust + Python (PyO3)
 
-A CLI daemon that runs on each provider Mac. Manages the inference backend, connects to the coordinator, and proxies inference requests.
+A hardened CLI daemon that runs on each provider Mac. Runs inference **in-process** — the MLX engine is embedded directly in the Rust process via PyO3, with no subprocess or IPC channel.
 
+**Inference:**
+- Embeds Python interpreter via PyO3 for in-process MLX inference
+- Supports mlx-lm (primary) and vllm-mlx (preferred when available, adds batching)
+- Auto-installs mlx-lm if not present
+- No subprocess, no HTTP localhost, no Unix socket — all inference in one hardened process
+- Python import path locked to bundled packages (prevents malicious package injection)
+
+**Security hardening:**
+- `PT_DENY_ATTACH` at startup — blocks all debugger attachment at kernel level
+- SIP verification at startup, before every request, and in every challenge-response
+- Hardened Runtime signing (no `get-task-allow`) — blocks external memory reads
+- Binary self-hash included in Secure Enclave attestation
+- App bundle code signature verification — any modification refuses to serve
+- Memory wiping (volatile zero + fence) of prompts and responses after each request
+- Backend file integrity verification before launch
+
+**Other:**
 - Detects Apple Silicon hardware (chip family, memory, GPU cores, bandwidth)
-- Manages inference backends (mlx-lm, vllm-mlx) as subprocesses with health checking and auto-restart
 - Scans HuggingFace cache for available MLX models and filters by memory
 - Maintains persistent WebSocket connection to coordinator with auto-reconnect
-- Proxies inference requests from coordinator to local backend (streaming SSE)
-- Responds to attestation challenges to prove key possession
 - Generates Secure Enclave identity and signed attestation via the enclave CLI tool
 
 ### Coordinator (`coordinator/`)
@@ -47,10 +58,14 @@ The control plane. Runs in a GCP Confidential VM (AMD SEV-SNP) — hardware-encr
 
 - Accepts provider WebSocket connections and tracks availability
 - Exposes OpenAI-compatible HTTP API for consumers (`/v1/chat/completions`, `/v1/models`)
-- Routes requests to the best available provider (round-robin, trust-aware)
+- Routes requests to the best available provider using scoring: `(1-load) * decode_tps * trust_multiplier * reputation * warm_model_bonus`
 - Verifies provider attestations (Secure Enclave P-256 ECDSA signatures)
-- Periodically challenges providers to prove key possession (every 5 minutes)
+- Periodically challenges providers to prove key possession + fresh SIP/SecureBoot status (every 5 minutes)
+- Immediately marks provider untrusted if SIP or Secure Boot found disabled in challenge response
+- Verifies binary hash in attestation against known blessed versions
 - Manages API keys, usage tracking, payment ledger, and trust levels
+- Per-model request queues (max 10, 30s timeout) for when providers are busy
+- Reputation scoring: 40% job success + 30% uptime + 20% attestation + 10% response time
 - Persistent storage via PostgreSQL (in-memory fallback for development)
 
 ### Consumer SDK (`sdk/`)
@@ -63,44 +78,99 @@ OpenAI-compatible client library and CLI. Drop-in replacement for existing OpenA
 from dginf import DGInf
 client = DGInf(base_url="https://coordinator.dginf.io", api_key="dginf-...")
 response = client.chat.completions.create(
-    model="mlx-community/Qwen3.5-4B-MLX-4bit",
+    model="mlx-community/Qwen2.5-7B-Instruct-4bit",
     messages=[{"role": "user", "content": "Hello"}],
     stream=True,
 )
 ```
 
-Includes payment commands: `dginf deposit`, `dginf balance`, `dginf usage`.
+CLI commands: `configure`, `models`, `ask`, `chat`, `deposit`, `balance`, `usage`, `withdraw`.
+
+DGInf-specific response fields: `provider_attested` (bool), `provider_trust_level` (string).
+
+### macOS App (`app/DGInf/`)
+
+**Language:** Swift/SwiftUI
+
+Menu bar app (no dock icon) that wraps the provider agent:
+- Idle detection via CGEventSource (pauses serving when user is active)
+- Provider subprocess management with auto-restart
+- Model discovery from HuggingFace cache
+- Dashboard with hardware info, session stats, earnings
+- Settings for coordinator URL, API key, availability schedule
 
 ### Secure Enclave Module (`enclave/`)
 
 **Language:** Swift
 
-Wraps Apple CryptoKit's Secure Enclave APIs to provide hardware-bound cryptographic identity for provider nodes. This is the foundation of DGInf's trust model.
+Hardware-bound cryptographic identity for provider nodes:
+- P-256 key generation/storage in Apple Secure Enclave (non-extractable)
+- Signed attestation blobs (chip, SIP, SecureBoot, SE status, binary hash)
+- C FFI bridge (`@_cdecl`) for Rust integration
+- CLI tool: `dginf-enclave attest [--encryption-key <b64>] [--binary-hash <hex>]`
 
-## Apple Secure Enclave Attestation
+## Security Architecture
 
-### What the Secure Enclave Is
+### Why Providers Can't Read Prompts
 
-The Secure Enclave is a dedicated hardware security subsystem on every Apple Silicon chip (M1 and later). It has its own Boot ROM, AES engine, true random number generator (TRNG), and encrypted memory — isolated from the application processor. Even if macOS is fully compromised, the Secure Enclave remains intact.
+The provider owns the Mac hardware, but cannot inspect inference data because:
 
-Key properties for DGInf:
-- **Hardware-bound keys**: P-256 signing keys generated inside the Secure Enclave cannot be extracted, cloned, or transferred to another device. The private key never leaves the silicon.
-- **Non-exportable**: The `dataRepresentation` of a Secure Enclave key is an opaque handle — it only works on the device that created it.
-- **Tamper-resistant**: The Secure Enclave is physically part of the SoC die. Memory probing requires destructive desoldering of LPDDR5x chips that are soldered into the package.
-
-### How DGInf Uses the Secure Enclave
-
-#### Identity Key Generation
-
-On first run (`dginf-provider init`), the provider generates a P-256 signing key inside the Secure Enclave via Apple's CryptoKit:
-
-```swift
-let privateKey = try SecureEnclave.P256.Signing.PrivateKey()
+```
+Attack                          Blocked by
+─────────────────────────────────────────────────
+Attach debugger (lldb)          PT_DENY_ATTACH + Hardened Runtime
+Read process memory             Hardened Runtime (kernel denies task_for_pid)
+Sniff IPC/network               No IPC — inference is in-process
+Modify the binary               Code signing + SIP (modified binary won't launch)
+Replace with fake binary        Binary hash in attestation — coordinator verifies
+Inject malicious Python pkg     Python path locked to signed bundle
+Load kernel extension           SIP blocks unsigned kexts
+Modify kernel at runtime        KIP (hardware-enforced)
+Disable SIP                     Requires reboot → kills process → data gone
+Read /dev/mem                   Doesn't exist on Apple Silicon
+DMA attack                      IOMMU default-deny
+Physical memory probing         Soldered LPDDR5x into SoC die (lab-grade only)
 ```
 
-This key becomes the provider's permanent identity on the DGInf network. The opaque handle is saved to `~/.dginf/enclave_key.data` for persistence across reboots — but the actual private key material stays in the Secure Enclave hardware.
+This is the same threat model as Apple Private Cloud Compute.
 
-#### Attestation Blob
+### SIP Cannot Be Disabled at Runtime
+
+SIP (System Integrity Protection) is the foundation of the security model. To disable SIP, the provider must:
+1. Reboot into Recovery Mode (kills the inference process, wipes all data from memory)
+2. Run `csrutil disable`
+3. Reboot back to macOS
+
+DGInf checks SIP:
+- At process startup (refuses to serve if disabled)
+- Before every inference request (defense-in-depth)
+- In every 5-minute challenge-response (coordinator detects if provider rebooted with SIP off)
+
+If SIP is found disabled at any point, the provider is immediately marked untrusted and receives no more jobs.
+
+### Trust Levels
+
+| Level | Name | Meaning | How Achieved |
+|-------|------|---------|-------------|
+| `none` | Open Mode | No attestation. Consumer warned. | Provider sends no attestation |
+| `self_signed` | Self-Attested | SE-signed attestation + periodic challenge-response with SIP check | Provider sends SE-signed attestation |
+| `hardware` | Hardware-Attested | MDA certificate chain verified against Apple Enterprise Root CA | MDM enrollment + Managed Device Attestation |
+
+### MDM Integration
+
+DGInf uses Apple MDM (MicroMDM) to independently verify provider security posture:
+
+- **Enrollment:** Profile-based (`.mobileconfig`), minimal permissions (AccessRights=1041)
+- **SecurityInfo query returns:**
+  - `SystemIntegrityProtectionEnabled`: SIP status
+  - `SecureBoot.SecureBootLevel`: Boot security level (full/reduced/permissive)
+  - `AuthenticatedRootVolumeEnabled`: System volume integrity (SSV)
+  - `FDE_Enabled`: FileVault disk encryption
+  - `IsRecoveryLockEnabled`: Recovery Mode lock status
+- **Push notifications:** APNs for on-demand attestation queries
+- **Infrastructure:** MicroMDM + SCEP + step-ca on AWS
+
+### Attestation Blob
 
 The provider creates a signed attestation blob containing:
 
@@ -114,131 +184,68 @@ The provider creates a signed attestation blob containing:
 | `sipEnabled` | System Integrity Protection status |
 | `secureBootEnabled` | Secure Boot status |
 | `encryptionPublicKey` | X25519 key bound to this identity |
+| `binaryHash` | SHA-256 of the provider binary |
 | `timestamp` | ISO 8601 |
 
-The attestation is JSON-encoded with sorted keys and signed with the Secure Enclave P-256 key (ECDSA, DER-encoded signature). This produces a `SignedAttestation` with the blob + base64 signature.
+Signed with the Secure Enclave P-256 key (ECDSA, DER-encoded).
 
-#### Registration Flow
-
-```
-Provider Boot:
-  1. Secure Enclave generates/loads P-256 identity key
-  2. Provider builds attestation blob with system info
-  3. Secure Enclave signs the blob (P-256 ECDSA)
-  4. Provider connects to coordinator via WebSocket
-  5. Sends Register message with signed attestation
-
-Coordinator Verification:
-  6. Parses attestation JSON
-  7. Decodes P-256 public key from base64 (64-byte raw X||Y format)
-  8. Hashes the attestation blob with SHA-256
-  9. Verifies the ECDSA signature against the public key
-  10. Checks: SIP enabled? Secure Boot enabled? SE available?
-  11. Checks: encryptionPublicKey matches Register message's public_key?
-  12. If all pass -> provider marked as "self_signed" trust level
-  13. If any fail -> provider accepted but marked as unattested (Open Mode)
-```
-
-#### Challenge-Response Verification
-
-The coordinator periodically verifies that providers still hold their private key:
+### Challenge-Response Protocol
 
 ```
 Every 5 minutes:
   1. Coordinator generates 32-byte random nonce + timestamp
   2. Sends attestation_challenge over WebSocket
   3. Provider signs (nonce + timestamp + public_key) with their key
-  4. Sends attestation_response back
-  5. Coordinator verifies signature against registered public key
-  6. If 3 consecutive failures -> provider marked untrusted, no more jobs
+  4. Provider includes fresh sip_enabled and secure_boot_enabled status
+  5. Sends attestation_response back
+  6. Coordinator verifies:
+     - Nonce matches
+     - Public key matches registration
+     - Signature is non-empty
+     - sip_enabled == true (IMMEDIATE untrust if false)
+     - secure_boot_enabled == true (IMMEDIATE untrust if false)
+  7. If 3 consecutive failures → provider marked untrusted
+  8. If SIP or SecureBoot disabled → IMMEDIATE untrust (no 3-strike rule)
 ```
 
-This prevents a provider from registering once and then being compromised — ongoing key possession is verified.
-
-### Trust Levels
-
-| Level | Name | Meaning | How Achieved |
-|-------|------|---------|-------------|
-| `none` | Open Mode | No attestation. Consumer warned. | Provider sends no attestation |
-| `self_signed` | Self-Attested | Attestation signed by provider's own key. Coordinator verifies signature and challenges periodically. | Provider sends SE-signed attestation |
-| `hardware` | Hardware-Attested | MDA certificate chain verified against Apple Enterprise Attestation Root CA. Unforgeable. | Requires Apple Business Manager + MDM enrollment |
-
-Consumers see the trust level in API responses:
-- `X-Provider-Attested: true/false` header
-- `X-Provider-Trust-Level: self_signed` header
-- `attested_providers` count in `/v1/models` metadata
-
-### Current Limitation: Self-Signed vs Hardware-Attested
-
-Currently, the coordinator verifies that the attestation was signed by a P-256 key, but cannot prove that key lives in the Secure Enclave (vs. a software-generated P-256 key). Both produce identical signatures.
-
-**Managed Device Attestation (MDA)** closes this gap. MDA generates a certificate chain from the Secure Enclave that roots to Apple's Enterprise Attestation Root CA:
-
-```
-Device key (Secure Enclave) -> Apple Intermediate CA -> Apple Enterprise Attestation Root CA
-```
-
-MDA also provides hardware-attested OIDs for:
-
-| OID | Property |
-|-----|----------|
-| `1.2.840.113635.100.8.13.1` | SIP status (hardware-attested, not self-reported) |
-| `1.2.840.113635.100.8.13.2` | Secure Boot status |
-| `1.2.840.113635.100.8.13.3` | Third-party kernel extensions |
-
-MDA requires Apple Business Manager, which requires a business entity + D-U-N-S number. The MDA certificate verification infrastructure is already built (`coordinator/internal/attestation/mda.go`) — when ABM is available, it's a matter of swapping the test root CA for Apple's real root CA.
-
-### macOS Security Features (Built-In)
-
-These protections exist on every Apple Silicon Mac by default:
-
-| Feature | What it does | DGInf relevance |
-|---------|-------------|----------------|
-| **Secure Enclave** | Isolated security subsystem with own Boot ROM, AES, TRNG | Hardware-bound provider identity |
-| **Kernel Integrity Protection (KIP)** | Hardware-enforced after kernel init — memory controller denies all writes to kernel code | Prevents runtime kernel modification |
-| **Signed System Volume (SSV)** | Merkle tree hash over entire system volume, verified at boot | Detects OS tampering |
-| **System Integrity Protection (SIP)** | Restricts root from modifying /System, prevents unsigned kexts | Prevents code injection |
-| **IOMMU** | Per-device IOMMU for every DMA agent, default-deny | Prevents DMA-based memory extraction |
-| **No /dev/mem** | Apple Silicon does not expose physical memory to userspace | Prevents direct memory reads |
-| **Secure Boot** | Boot ROM -> LLB -> iBoot -> kernel, all Apple-signed | Strong boot chain |
-
-### Privacy Architecture
+## Privacy Architecture
 
 ```
 Layer                              Status      What it means
-------------------------------------------------------------
+─────────────────────────────────────────────────────────────────
 Confidential VM (coordinator)      Working     AMD SEV-SNP, hardware-encrypted memory
 TLS transport (consumer)           Working     Encrypted in transit
 Hardware-bound identity (SE)       Working     Provider key in Secure Enclave silicon
-Signed attestation                 Working     SE signs hardware info + encryption key
-Challenge-response                 Working     Ongoing key possession verification
-SIP/SecureBoot attestation         Self-signed Currently software-reported
-Hardware-attested posture (MDA)    Scaffolded  Needs Apple Business Manager
+Signed attestation                 Working     SE signs hardware info + binary hash
+Challenge-response + SIP check     Working     Ongoing security posture verification
+PT_DENY_ATTACH                     Working     Kernel-level anti-debug
+Hardened Runtime                   Working     Blocks external memory inspection
+In-process inference               Working     No subprocess/IPC to sniff
+Memory wiping                      Working     Volatile-zero after each request
+Python path locking                Working     Prevents malicious package injection
+Signed app bundle                  Working     Any modification breaks code signature
+MDM SecurityInfo                   Working     Hardware-verified SIP/SecureBoot/SSV
+SIP/SecureBoot attestation         Working     Self-reported + MDM-verified
+Hardware-attested posture (MDA)    Scaffolded  Needs Apple Business Manager setup
 ```
 
-## Inference Backends
+## Inference
 
-DGInf does not implement inference. It uses existing open-source backends:
+DGInf runs inference **in-process** — no subprocess architecture. The Python MLX engine is embedded directly in the Rust process via PyO3.
 
-| Backend | Role | Performance |
-|---------|------|------------|
-| **mlx-lm** | Primary | Apple's MLX library, best Metal performance, 100+ model architectures |
-| **vllm-mlx** | Alternative | Continuous batching, prefix caching, 21-87% faster than llama.cpp |
-| **EXO** | Future | Multi-device inference across multiple Macs via libp2p + MLX distributed |
+| Backend | Mode | Features |
+|---------|------|----------|
+| **mlx-lm** | In-process (PyO3) | Primary backend, auto-installed if missing |
+| **vllm-mlx** | In-process (PyO3) | Preferred when available — continuous batching, prefix caching |
 
-The provider agent manages the backend as a subprocess with health checks and auto-restart.
+There is no subprocess fallback. If the in-process engine cannot initialize, the provider refuses to start and instructs the user to install mlx-lm.
 
-## Payments (Tempo Blockchain)
+## Payments
 
-Payments use the Tempo blockchain (Stripe's blockchain for stablecoin payments).
-
-- **pathUSD** stablecoin at `0x20C0000000000000000000000000000000000000` (6 decimals)
-- Sub-cent transaction fees (~$0.001 per transfer)
-- `transferWithMemo` links payments to inference job IDs on-chain
-- Internal ledger uses micro-USD (1 USD = 1,000,000), maps 1:1 to pathUSD
-- Consumer deposits -> inference charges -> provider payouts (90%) + platform fee (10%)
-- Testnet: Chain ID 42431, RPC `https://rpc.moderato.tempo.xyz`
-- Mainnet: Chain ID 4217, RPC `https://rpc.presto.tempo.xyz`
+- Internal micro-USD ledger (1 USD = 1,000,000 micro-USD)
+- Pricing: $0.50 per 1M output tokens, $0.001 minimum per request
+- Platform fee: 10%, provider payout: 90%
+- Settlement: Stripe (MVP) or Tempo blockchain (pathUSD stablecoin)
 
 ## Storage
 
@@ -248,8 +255,6 @@ Payments use the Tempo blockchain (Stripe's blockchain for stablecoin payments).
 | **PostgresStore** | Production | Atomic balance operations, persistent ledger |
 
 Tables: `api_keys`, `usage`, `payments`, `balances`, `ledger_entries`
-
-Every balance change is recorded as an immutable ledger entry with type (deposit/charge/payout/platform_fee), amount, balance-after, reference, and timestamp.
 
 ## Hardware Support
 
