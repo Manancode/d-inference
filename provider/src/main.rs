@@ -115,8 +115,12 @@ enum Command {
     /// Show hardware and connection status
     Status,
 
-    /// List available models that fit in memory
-    Models,
+    /// List, download, or remove models
+    Models {
+        /// Action: list (default), download, or remove
+        #[arg(default_value = "list")]
+        action: String,
+    },
 
     /// Show earnings and usage history
     Earnings {
@@ -202,7 +206,7 @@ async fn main() -> Result<()> {
         Command::Unenroll => cmd_unenroll().await,
         Command::Benchmark => cmd_benchmark().await,
         Command::Status => cmd_status().await,
-        Command::Models => cmd_models().await,
+        Command::Models { action } => cmd_models(action).await,
         Command::Earnings { coordinator } => cmd_earnings(coordinator).await,
         Command::Doctor { coordinator } => cmd_doctor(coordinator).await,
         Command::Start { coordinator, model } => cmd_start(coordinator, model).await,
@@ -1086,35 +1090,156 @@ async fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_models() -> Result<()> {
+async fn cmd_models(action: String) -> Result<()> {
     let hw = hardware::detect()?;
-    let models = models::scan_models(&hw);
+    let downloaded = models::scan_models(&hw);
 
-    if models.is_empty() {
-        println!("No MLX models found in HuggingFace cache.");
-        println!("Download models with: huggingface-cli download <model-name>");
-        println!("Example: huggingface-cli download mlx-community/Qwen3.5-9B-MLX-4bit");
-    } else {
-        println!("Downloaded models ({} found):\n", models.len());
-        for model in &models {
-            println!("  {model}");
-        }
-    }
-
-    println!();
-    println!("Recommended models for {} ({} GB available):", hw.chip_name, hw.memory_available_gb);
-    let catalog = [
-        ("Qwen3.5-4B",       2.5,  "mlx-community/Qwen3.5-4B-MLX-4bit"),
+    let catalog: Vec<(&str, f64, &str)> = vec![
+        ("Qwen2.5-0.5B",     0.4,  "mlx-community/Qwen2.5-0.5B-4bit"),
+        ("Qwen2.5-1.5B",     1.0,  "mlx-community/Qwen2.5-1.5B-4bit"),
+        ("Qwen2.5-3B",       2.0,  "mlx-community/Qwen2.5-3B-4bit"),
+        ("Llama-3.2-3B",     2.0,  "mlx-community/Llama-3.2-3B-Instruct-4bit"),
         ("Qwen3.5-9B",       6.0,  "mlx-community/Qwen3.5-9B-MLX-4bit"),
-        ("Qwen3.5-27B",     17.0,  "mlx-community/Qwen3.5-27B-MLX-4bit"),
-        ("Qwen3.5-35B-A3B", 22.0,  "mlx-community/Qwen3.5-35B-A3B-MLX-4bit"),
-        ("Qwen3.5-122B",    76.0,  "mlx-community/Qwen3.5-122B-A10B-MLX-4bit"),
+        ("Qwen3.5-27B",     17.0,  "mlx-community/Qwen3.5-27B-4bit"),
+        ("Qwen3.5-35B-A3B", 22.0,  "mlx-community/Qwen3.5-35B-A3B-4bit"),
+        ("Qwen3.5-122B",    76.0,  "mlx-community/Qwen3.5-122B-A10B-4bit"),
     ];
-    for (name, size, id) in &catalog {
-        let fits = hw.memory_available_gb as f64 >= *size;
-        let downloaded = models.iter().any(|m| m.id == *id);
-        let status = if downloaded { "✓ downloaded" } else if fits { "  fits" } else { "✗ too large" };
-        println!("  {} {:>5.1} GB  {:15} {}", status, size, name, id);
+
+    match action.as_str() {
+        "list" | "ls" => {
+            println!("Models for {} ({} GB available):", hw.chip_name, hw.memory_available_gb);
+            println!();
+            for (name, size, id) in &catalog {
+                let fits = hw.memory_available_gb as f64 >= *size;
+                let is_downloaded = downloaded.iter().any(|m| m.id == *id);
+                let status = if is_downloaded { "✓" } else if fits { " " } else { "✗" };
+                let label = if is_downloaded { "downloaded" } else if fits { "available" } else { "too large" };
+                println!("  {} {:>5.1} GB  {:15} {:10} {}", status, size, name, label, id);
+            }
+            // Show any downloaded models not in catalog
+            for m in &downloaded {
+                let in_catalog = catalog.iter().any(|(_, _, id)| *id == m.id);
+                if !in_catalog {
+                    println!("  ✓ {:>5.1} GB  {:15} {:10} {}", m.estimated_memory_gb, "", "downloaded", m.id);
+                }
+            }
+        }
+
+        "download" | "add" => {
+            println!("Select models to download ({} GB available):", hw.memory_available_gb);
+            println!();
+
+            let mut available: Vec<(usize, &str, f64, &str)> = Vec::new();
+            for (name, size, id) in &catalog {
+                let fits = hw.memory_available_gb as f64 >= *size;
+                let is_downloaded = downloaded.iter().any(|m| m.id == *id);
+                if is_downloaded {
+                    println!("  [✓] {:>5.1} GB  {} (already downloaded)", size, name);
+                } else if fits {
+                    available.push((available.len() + 1, name, *size, id));
+                    println!("  [{}] {:>5.1} GB  {}", available.len(), size, name);
+                } else {
+                    println!("  [✗] {:>5.1} GB  {} (too large)", size, name);
+                }
+            }
+
+            if available.is_empty() {
+                println!();
+                println!("All available models are already downloaded!");
+                return Ok(());
+            }
+
+            println!();
+            println!("  Enter numbers to download (comma-separated, e.g. 1,3):");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            let selections: Vec<usize> = input.trim()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .collect();
+
+            let dginf_dir = dirs::home_dir().unwrap_or_default().join(".dginf");
+            let bundled_python = dginf_dir.join("python/bin/python3");
+            let python_cmd = if bundled_python.exists() {
+                bundled_python.to_string_lossy().to_string()
+            } else {
+                "python3".to_string()
+            };
+
+            for sel in selections {
+                if let Some((_, name, _, id)) = available.iter().find(|(i, _, _, _)| *i == sel) {
+                    println!();
+                    println!("  Downloading {}...", name);
+
+                    // Try S3 first, then HuggingFace
+                    let s3_name = id.split('/').last().unwrap_or(id);
+                    let s3_sync = std::process::Command::new("aws")
+                        .args(["s3", "sync",
+                            &format!("s3://dginf-models/{}/", s3_name),
+                            &format!("{}/.cache/huggingface/hub/models--{}/snapshots/main/",
+                                dirs::home_dir().unwrap_or_default().display(),
+                                id.replace('/', "--")),
+                            "--region", "us-east-1", "--no-sign-request"])
+                        .status();
+
+                    match s3_sync {
+                        Ok(s) if s.success() => println!("  ✓ {} downloaded from DGInf CDN", name),
+                        _ => {
+                            // Fallback to HuggingFace
+                            let hf = std::process::Command::new(&python_cmd)
+                                .args(["-c", &format!(
+                                    "from huggingface_hub import snapshot_download; snapshot_download('{}')", id
+                                )])
+                                .status();
+                            match hf {
+                                Ok(s) if s.success() => println!("  ✓ {} downloaded", name),
+                                _ => println!("  ✗ Failed to download {}", name),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "remove" | "rm" | "delete" => {
+            if downloaded.is_empty() {
+                println!("No models downloaded.");
+                return Ok(());
+            }
+
+            println!("Select models to remove:");
+            println!();
+            for (i, m) in downloaded.iter().enumerate() {
+                println!("  [{}] {:.1} GB  {}", i + 1, m.estimated_memory_gb, m.id);
+            }
+            println!();
+            println!("  Enter numbers to remove (comma-separated, e.g. 1,3):");
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            let selections: Vec<usize> = input.trim()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .collect();
+
+            for sel in selections {
+                if let Some(m) = downloaded.get(sel.saturating_sub(1)) {
+                    let cache_dir = dirs::home_dir().unwrap_or_default()
+                        .join(".cache/huggingface/hub")
+                        .join(format!("models--{}", m.id.replace('/', "--")));
+                    if cache_dir.exists() {
+                        std::fs::remove_dir_all(&cache_dir)?;
+                        println!("  ✓ Removed {}", m.id);
+                    }
+                }
+            }
+        }
+
+        _ => {
+            println!("Usage: dginf-provider models [list|download|remove]");
+        }
     }
 
     Ok(())
@@ -1343,17 +1468,45 @@ async fn cmd_start(coordinator_url: String, model_override: Option<String>) -> R
     // Stop any existing provider first
     cmd_stop().await?;
 
-    // Detect model from config or scan
+    let hw = hardware::detect()?;
+    let downloaded = models::scan_models(&hw);
+
+    if downloaded.is_empty() {
+        anyhow::bail!("No models downloaded. Run: dginf-provider install");
+    }
+
+    // Interactive model selection if no --model specified
     let model = if let Some(m) = model_override {
         m
     } else {
-        let hw = hardware::detect()?;
-        let models = models::scan_models(&hw);
-        if let Some(m) = models.last() {
-            m.id.clone()
-        } else {
-            anyhow::bail!("No models downloaded. Run: dginf-provider install");
+        println!("Select a model to serve (available memory: {} GB):", hw.memory_available_gb);
+        println!();
+
+        let mut total_mem = 0.0_f64;
+        for (i, m) in downloaded.iter().enumerate() {
+            let fits = (total_mem + m.estimated_memory_gb) <= hw.memory_available_gb as f64;
+            let marker = if fits { "  " } else { "✗ " };
+            println!("  {}[{}] {} ({:.1} GB)", marker, i + 1, m.id, m.estimated_memory_gb);
         }
+
+        println!();
+        println!("  Enter number [1-{}] (or press Enter for [{}] - largest):",
+            downloaded.len(), downloaded.len());
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        let idx = if input.is_empty() {
+            downloaded.len() - 1
+        } else {
+            input.parse::<usize>().unwrap_or(downloaded.len()).saturating_sub(1)
+        };
+
+        let idx = idx.min(downloaded.len() - 1);
+        let selected = &downloaded[idx];
+        println!("  → {}", selected.id);
+        selected.id.clone()
     };
 
     let exe = std::env::current_exe()?;
