@@ -61,7 +61,7 @@ export default function ChatPage() {
       const coordUrl =
         localStorage.getItem("dginf_coordinator_url") ||
         process.env.NEXT_PUBLIC_COORDINATOR_URL ||
-        "http://localhost:8080";
+        "https://inference-test.openinnovation.dev";
 
       if (!localStorage.getItem("dginf_api_key")) {
         await generateKey(coordUrl);

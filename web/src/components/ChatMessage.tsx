@@ -3,6 +3,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { TrustBadge } from "./TrustBadge";
+import { VerificationPanel } from "./VerificationPanel";
 import type { Message } from "@/lib/store";
 import { User, Bot, Copy, Check, ChevronRight, Brain } from "lucide-react";
 import { useState, useCallback } from "react";
@@ -153,6 +154,13 @@ export function ChatMessage({ message }: { message: Message }) {
                 thinking={message.thinking!}
                 streaming={isThinking}
               />
+            )}
+
+            {/* Verification panel — shown after streaming completes */}
+            {message.trust && !message.streaming && (
+              <div className="mb-3">
+                <VerificationPanel trust={message.trust} />
+              </div>
             )}
 
             {/* Main content */}

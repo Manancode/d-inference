@@ -34,7 +34,7 @@ export default function SettingsPage() {
       setCoordinatorUrl(
         localStorage.getItem("dginf_coordinator_url") ||
           process.env.NEXT_PUBLIC_COORDINATOR_URL ||
-          "http://localhost:8080"
+          "https://inference-test.openinnovation.dev"
       );
     }
   }, []);
