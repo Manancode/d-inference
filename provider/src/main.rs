@@ -430,9 +430,15 @@ async fn cmd_serve(
     model_override: Option<String>,
     backend_port_override: Option<u16>,
 ) -> Result<()> {
+    // Kill any existing provider/mlx_lm processes to avoid "address already in use"
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
+        // Small delay to let ports free up
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
     // Verify security posture before serving any inference requests.
-    // SIP cannot be disabled at runtime (requires reboot), so this check
-    // at startup guarantees SIP will remain on for the process lifetime.
     if let Err(reason) = security::verify_security_posture() {
         anyhow::bail!("Security check failed: {reason}");
     }
@@ -508,17 +514,39 @@ async fn cmd_serve(
 
     #[cfg(not(feature = "python"))]
     let backend: Box<dyn backend::Backend> = {
-        // Without Python feature, use mlx_lm.server as subprocess
-        tracing::info!("Starting mlx_lm.server as subprocess...");
-        let mlx_serve = std::process::Command::new("python3")
+        // Find the bundled Python (shipped with the DGInf bundle)
+        let dginf_dir = dirs::home_dir().unwrap_or_default().join(".dginf");
+        let bundled_python = dginf_dir.join("python/bin/python3");
+        let python_cmd = if bundled_python.exists() {
+            tracing::info!("Using bundled Python: {}", bundled_python.display());
+            bundled_python.to_string_lossy().to_string()
+        } else {
+            tracing::info!("Using system Python");
+            "python3".to_string()
+        };
+
+        // Set PYTHONHOME for bundled Python
+        if bundled_python.exists() {
+            unsafe { std::env::set_var("PYTHONHOME", dginf_dir.join("python")); }
+        }
+
+        tracing::info!("Starting mlx_lm.server for model: {}", model);
+        let mlx_serve = std::process::Command::new(&python_cmd)
             .args(["-m", "mlx_lm.server", "--model", &model, "--port", &be_port.to_string()])
             .spawn();
         match mlx_serve {
-            Ok(_) => tracing::info!("mlx_lm.server started on port {}", be_port),
-            Err(e) => anyhow::bail!("Failed to start mlx_lm.server: {e}. Install with: pip3 install mlx-lm"),
+            Ok(child) => {
+                tracing::info!("mlx_lm.server started (PID: {:?}) on port {}", child.id(), be_port);
+            }
+            Err(e) => anyhow::bail!(
+                "Failed to start mlx_lm.server: {e}.\n\
+                 If using the DGInf bundle, reinstall: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash\n\
+                 If using system Python: pip3 install mlx-lm"
+            ),
         }
-        // Give it time to load
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        // Give it time to load the model
+        tracing::info!("Waiting for model to load...");
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         Box::new(backend::vllm_mlx::VllmMlxBackend::new(
             model.clone(), be_port, cfg.backend.continuous_batching,
         ))
