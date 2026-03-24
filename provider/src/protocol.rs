@@ -86,7 +86,11 @@ pub enum ProviderMessage {
 pub enum CoordinatorMessage {
     InferenceRequest {
         request_id: String,
+        #[serde(default)]
         body: serde_json::Value,
+        /// E2E encrypted request body — only the hardened process can decrypt
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_body: Option<EncryptedPayload>,
     },
     Cancel {
         request_id: String,
@@ -96,6 +100,15 @@ pub enum CoordinatorMessage {
         nonce: String,
         timestamp: String,
     },
+}
+
+/// NaCl Box encrypted payload for E2E encryption.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EncryptedPayload {
+    /// Sender's ephemeral X25519 public key (base64)
+    pub ephemeral_public_key: String,
+    /// Nonce + encrypted data (base64)
+    pub ciphertext: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -338,6 +351,7 @@ mod tests {
         let msg = CoordinatorMessage::InferenceRequest {
             request_id: "uuid-abc".to_string(),
             body,
+            encrypted_body: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -370,7 +384,7 @@ mod tests {
         let raw = r#"{"type":"inference_request","request_id":"abc-123","body":{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":false}}"#;
         let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
         match msg {
-            CoordinatorMessage::InferenceRequest { request_id, body } => {
+            CoordinatorMessage::InferenceRequest { request_id, body, .. } => {
                 assert_eq!(request_id, "abc-123");
                 assert_eq!(body["model"], "test");
                 assert_eq!(body["stream"], false);

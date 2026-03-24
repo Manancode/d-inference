@@ -105,10 +105,13 @@ type HeartbeatStats struct {
 }
 
 // InferenceResponseChunkMessage carries a single SSE chunk from the provider.
+// When E2E encryption is active, Data is empty and EncryptedData contains
+// the encrypted chunk.
 type InferenceResponseChunkMessage struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Data      string `json:"data"`
+	Type          string            `json:"type"`
+	RequestID     string            `json:"request_id"`
+	Data          string            `json:"data,omitempty"`
+	EncryptedData *EncryptedPayload `json:"encrypted_data,omitempty"`
 }
 
 // UsageInfo carries token usage information.
@@ -150,10 +153,21 @@ type InferenceRequestBody struct {
 }
 
 // InferenceRequestMessage tells a provider to run inference.
+// When E2E encryption is enabled, Body is empty and EncryptedBody contains
+// the NaCl Box encrypted request. Only the provider's hardened process can
+// decrypt it using its X25519 private key.
 type InferenceRequestMessage struct {
 	Type      string               `json:"type"`
 	RequestID string               `json:"request_id"`
-	Body      InferenceRequestBody `json:"body"`
+	Body      InferenceRequestBody `json:"body,omitempty"`
+	// E2E encrypted request body (set when provider has a public key)
+	EncryptedBody *EncryptedPayload `json:"encrypted_body,omitempty"`
+}
+
+// EncryptedPayload carries a NaCl Box encrypted message.
+type EncryptedPayload struct {
+	EphemeralPublicKey string `json:"ephemeral_public_key"` // sender's ephemeral X25519 public key (base64)
+	Ciphertext         string `json:"ciphertext"`           // nonce || encrypted data (base64)
 }
 
 // CancelMessage tells a provider to cancel an in-flight request.

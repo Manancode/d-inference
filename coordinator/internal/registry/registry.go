@@ -50,13 +50,14 @@ const (
 
 // PendingRequest is a channel-based handle for an in-flight inference request.
 type PendingRequest struct {
-	RequestID   string
-	ProviderID  string
-	Model       string
-	ConsumerKey string
-	ChunkCh     chan string             // SSE data chunks
-	CompleteCh  chan protocol.UsageInfo // closed after usage sent
-	ErrorCh     chan protocol.InferenceErrorMessage
+	RequestID      string
+	ProviderID     string
+	Model          string
+	ConsumerKey    string
+	ChunkCh        chan string             // SSE data chunks
+	CompleteCh     chan protocol.UsageInfo  // closed after usage sent
+	ErrorCh        chan protocol.InferenceErrorMessage
+	SessionPrivKey *[32]byte               // E2E session private key for decrypting responses
 }
 
 // Provider represents a connected provider agent.

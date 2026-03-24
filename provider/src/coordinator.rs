@@ -209,11 +209,26 @@ impl CoordinatorClient {
                     match msg {
                         Some(Ok(Message::Text(text))) => {
                             match serde_json::from_str::<CoordinatorMessage>(&text) {
-                                Ok(CoordinatorMessage::InferenceRequest { request_id, body }) => {
+                                Ok(CoordinatorMessage::InferenceRequest { request_id, body, encrypted_body }) => {
                                     tracing::info!("Received inference request: {request_id}");
+
+                                    // Decrypt E2E encrypted body if present
+                                    let decrypted_body = if let Some(enc) = encrypted_body {
+                                        tracing::info!("Decrypting E2E encrypted request");
+                                        match decrypt_request_body(&enc, self.public_key.as_deref()) {
+                                            Ok(b) => b,
+                                            Err(e) => {
+                                                tracing::error!("Failed to decrypt request: {e}");
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        body
+                                    };
+
                                     let _ = event_tx.send(CoordinatorEvent::InferenceRequest {
                                         request_id,
-                                        body,
+                                        body: decrypted_body,
                                     }).await;
                                 }
                                 Ok(CoordinatorMessage::Cancel { request_id }) => {
@@ -263,6 +278,49 @@ impl CoordinatorClient {
             }
         }
     }
+}
+
+/// Decrypt an E2E encrypted request body using the provider's X25519 private key.
+///
+/// The coordinator encrypted the request with the provider's public key.
+/// Only this hardened process has the private key to decrypt it.
+/// MITM on the network sees only encrypted blobs.
+fn decrypt_request_body(
+    encrypted: &crate::protocol::EncryptedPayload,
+    _public_key: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    use base64::Engine;
+
+    // Load the provider's X25519 private key
+    let key_path = crate::crypto::default_key_path()?;
+    let keypair = crate::crypto::NodeKeyPair::load_or_generate(&key_path)?;
+
+    // Decode the ephemeral public key from the coordinator
+    let ephemeral_pub_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&encrypted.ephemeral_public_key)
+        .map_err(|e| anyhow::anyhow!("invalid ephemeral public key: {e}"))?;
+
+    if ephemeral_pub_bytes.len() != 32 {
+        anyhow::bail!("invalid ephemeral key length: {}", ephemeral_pub_bytes.len());
+    }
+
+    let mut ephemeral_pub = [0u8; 32];
+    ephemeral_pub.copy_from_slice(&ephemeral_pub_bytes);
+
+    // Decode ciphertext (nonce || encrypted data)
+    let ciphertext = base64::engine::general_purpose::STANDARD
+        .decode(&encrypted.ciphertext)
+        .map_err(|e| anyhow::anyhow!("invalid ciphertext: {e}"))?;
+
+    // Decrypt with our private key + coordinator's ephemeral public key
+    let plaintext = keypair.decrypt(&ephemeral_pub, &ciphertext)?;
+
+    // Parse the decrypted JSON
+    let body: serde_json::Value = serde_json::from_slice(&plaintext)
+        .map_err(|e| anyhow::anyhow!("decrypted body is not valid JSON: {e}"))?;
+
+    tracing::info!("E2E decryption successful — request decrypted inside hardened process");
+    Ok(body)
 }
 
 /// Handle an attestation challenge by signing the nonce+timestamp data
