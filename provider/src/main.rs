@@ -242,63 +242,54 @@ async fn cmd_install(
     println!("  ✓ Wallet: {} (stored in Keychain)", w.address());
     println!();
 
-    // Step 3: Download and install MDM enrollment profile
+    // Step 3: MDM enrollment (skip if already enrolled)
     println!("Step 3/6: MDM enrollment...");
-    let profile_path = std::env::temp_dir().join("DGInf-Enroll.mobileconfig");
-    println!("  Downloading enrollment profile...");
-    let client = reqwest::Client::new();
-    let resp = client.get(&profile_url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("Failed to download enrollment profile: HTTP {}", resp.status());
-    }
-    let profile_bytes = resp.bytes().await?;
-    std::fs::write(&profile_path, &profile_bytes)?;
-    println!("  ✓ Downloaded to {}", profile_path.display());
 
-    // Open the profile for installation
-    println!("  Opening profile for installation...");
-    println!();
-    println!("  ┌─────────────────────────────────────────────────────┐");
-    println!("  │  A System Settings window will open.                │");
-    println!("  │  Go to General → Device Management and click        │");
-    println!("  │  Install on the DGInf profile.                      │");
-    println!("  │                                                      │");
-    println!("  │  This only allows DGInf to query your Mac's         │");
-    println!("  │  security status. No access to personal data.       │");
-    println!("  └─────────────────────────────────────────────────────┘");
-    println!();
+    let already_enrolled = {
+        #[cfg(target_os = "macos")]
+        {
+            // Check both user and system profile domains
+            let output = std::process::Command::new("profiles")
+                .args(["list"])
+                .output();
+            output.map(|o| {
+                let s = String::from_utf8_lossy(&o.stdout);
+                s.contains("micromdm") || s.contains("com.github") ||
+                s.contains("dginf") || s.contains("MDM") ||
+                s.contains("Device Management") ||
+                (!s.contains("no configuration profiles") && s.contains("attribute"))
+            }).unwrap_or(false)
+        }
+        #[cfg(not(target_os = "macos"))]
+        { false }
+    };
 
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open")
-            .arg(&profile_path)
-            .status();
-    }
+    if already_enrolled {
+        println!("  ✓ Already enrolled in MDM — skipping");
+    } else {
+        let profile_path = std::env::temp_dir().join("DGInf-Enroll.mobileconfig");
+        println!("  Downloading enrollment profile...");
+        let client = reqwest::Client::new();
+        let resp = client.get(&profile_url).send().await?;
+        if !resp.status().is_success() {
+            println!("  ⚠ Could not download profile (HTTP {}). Skipping MDM enrollment.", resp.status());
+            println!("    You can enroll later: dginf-provider enroll");
+        } else {
+            let profile_bytes = resp.bytes().await?;
+            std::fs::write(&profile_path, &profile_bytes)?;
 
-    // Wait for enrollment
-    println!("  Waiting for MDM enrollment (install the profile, then press Enter)...");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-
-    // Verify enrollment by checking profiles
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("profiles")
-            .args(["list"])
-            .output();
-        match output {
-            Ok(o) => {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                if stdout.contains("micromdm") || stdout.contains("dginf") || stdout.contains("com.github") || stdout.contains("MDM") || stdout.contains("Device Management") {
-                    println!("  ✓ MDM enrollment confirmed!");
-                } else if stdout.contains("no configuration profiles") || stdout.is_empty() {
-                    println!("  ⚠ No profiles detected. You can install the profile later.");
-                    println!("    Download from: {}", profile_url);
-                } else {
-                    println!("  ✓ Profile installed");
-                }
+            #[cfg(target_os = "macos")]
+            {
+                println!("  Opening enrollment profile...");
+                println!("  Install it in System Settings → General → Device Management");
+                println!("  (Only queries security status — no access to personal data)");
+                println!();
+                let _ = std::process::Command::new("open").arg(&profile_path).status();
             }
-            Err(_) => println!("  ⚠ Could not verify enrollment (continuing anyway)"),
+
+            println!("  Press Enter after installing (or to skip)...");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
         }
     }
     println!();
@@ -309,7 +300,11 @@ async fn cmd_install(
     println!();
 
     let catalog = [
-        ("mlx-community/Qwen3.5-9B-MLX-4bit",       "Qwen3.5-9B-MLX-4bit",       "Qwen3.5 9B",       6.0,  "9B dense",           "Balanced"),
+        ("mlx-community/Qwen2.5-0.5B-4bit",          "Qwen2.5-0.5B-4bit",          "Qwen2.5 0.5B",     0.4,  "0.5B dense",          "Tiny (testing)"),
+        ("mlx-community/Qwen2.5-1.5B-4bit",          "Qwen2.5-1.5B-4bit",          "Qwen2.5 1.5B",     1.0,  "1.5B dense",          "Very light"),
+        ("mlx-community/Qwen2.5-3B-4bit",            "Qwen2.5-3B-4bit",            "Qwen2.5 3B",       2.0,  "3B dense",            "Light"),
+        ("mlx-community/Llama-3.2-3B-Instruct-4bit", "Llama-3.2-3B-Instruct-4bit", "Llama 3.2 3B",     2.0,  "3B dense",            "Meta Llama"),
+        ("mlx-community/Qwen3.5-9B-MLX-4bit",        "Qwen3.5-9B-MLX-4bit",        "Qwen3.5 9B",       6.0,  "9B dense",            "Balanced"),
         ("mlx-community/Qwen3.5-27B-4bit",           "Qwen3.5-27B-4bit",           "Qwen3.5 27B",     17.0,  "27B dense",           "High quality"),
         ("mlx-community/Qwen3.5-35B-A3B-4bit",       "Qwen3.5-35B-A3B-4bit",       "Qwen3.5 35B-A3B", 22.0,  "35B MoE, 3B active",  "Fast + smart"),
         ("mlx-community/Qwen3.5-122B-A10B-4bit",     "Qwen3.5-122B-A10B-4bit",     "Qwen3.5 122B",    76.0,  "122B MoE, 10B active", "Best quality"),
@@ -530,7 +525,17 @@ async fn cmd_serve(
 
     #[cfg(not(feature = "python"))]
     let backend: Box<dyn backend::Backend> = {
-        tracing::info!("Using subprocess backend (built without python feature)");
+        // Without Python feature, use mlx_lm.server as subprocess
+        tracing::info!("Starting mlx_lm.server as subprocess...");
+        let mlx_serve = std::process::Command::new("python3")
+            .args(["-m", "mlx_lm.server", "--model", &model, "--port", &be_port.to_string()])
+            .spawn();
+        match mlx_serve {
+            Ok(_) => tracing::info!("mlx_lm.server started on port {}", be_port),
+            Err(e) => anyhow::bail!("Failed to start mlx_lm.server: {e}. Install with: pip3 install mlx-lm"),
+        }
+        // Give it time to load
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         Box::new(backend::vllm_mlx::VllmMlxBackend::new(
             model.clone(), be_port, cfg.backend.continuous_batching,
         ))
