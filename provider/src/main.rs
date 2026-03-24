@@ -497,6 +497,7 @@ async fn cmd_serve(
     #[cfg(unix)]
     {
         let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
+        let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status();
         // Small delay to let ports free up
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
@@ -569,24 +570,44 @@ async fn cmd_serve(
         "python3".to_string()
     };
 
-    // Start mlx_lm.server with the primary model
-    // mlx_lm.server supports dynamic model loading via the /v1/models endpoint
-    // so additional models can be served on-demand
-    tracing::info!("Starting mlx_lm.server for model: {}", model);
-    let mlx_serve = std::process::Command::new(&python_cmd)
-        .args(["-m", "mlx_lm.server", "--model", &model, "--port", &be_port.to_string()])
+    // Start vllm-mlx as the inference backend (preferred over mlx_lm.server)
+    // vllm-mlx provides continuous batching and higher throughput
+    tracing::info!("Starting vllm-mlx for model: {}", model);
+
+    // Try vllm-mlx first, fall back to mlx_lm.server
+    let serve_result = std::process::Command::new(&python_cmd)
+        .args(["-m", "vllm_mlx.entrypoints.openai.api_server",
+               "--model", &model, "--port", &be_port.to_string()])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn();
-    match mlx_serve {
+
+    let backend_name = match serve_result {
         Ok(child) => {
-            tracing::info!("mlx_lm.server started (PID: {:?}) on port {}", child.id(), be_port);
+            tracing::info!("vllm-mlx started (PID: {:?}) on port {}", child.id(), be_port);
+            "vllm-mlx"
         }
-        Err(e) => anyhow::bail!(
-            "Failed to start mlx_lm.server: {e}.\n\
-             Reinstall: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
-        ),
-    }
+        Err(_) => {
+            // Fall back to mlx_lm.server
+            tracing::info!("vllm-mlx not available, falling back to mlx_lm.server");
+            let mlx_serve = std::process::Command::new(&python_cmd)
+                .args(["-m", "mlx_lm.server", "--model", &model, "--port", &be_port.to_string()])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+            match mlx_serve {
+                Ok(child) => {
+                    tracing::info!("mlx_lm.server started (PID: {:?}) on port {}", child.id(), be_port);
+                    "mlx_lm"
+                }
+                Err(e) => anyhow::bail!(
+                    "Failed to start inference backend: {e}.\n\
+                     Reinstall: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+                ),
+            }
+        }
+    };
+    tracing::info!("Backend: {} on port {}", backend_name, be_port);
 
     // Wait for model to load
     tracing::info!("Waiting for model to load...");
@@ -736,7 +757,8 @@ async fn cmd_serve(
 
     // Clean up mlx_lm.server
     #[cfg(unix)]
-    { let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status(); }
+    { let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
+        let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status(); }
 
     Ok(())
 }
@@ -1558,6 +1580,7 @@ async fn cmd_stop() -> Result<()> {
                     }
                     // Kill mlx_lm.server too
                     let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
+        let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status();
                     let _ = std::fs::remove_file(&pid_path);
                     println!("Provider stopped.");
                     return Ok(());
@@ -1573,6 +1596,7 @@ async fn cmd_stop() -> Result<()> {
     {
         let _ = std::process::Command::new("pkill").args(["-f", "dginf-provider serve"]).status();
         let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
+        let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status();
     }
 
     println!("Provider stopped.");
