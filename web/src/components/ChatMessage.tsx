@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { TrustBadge } from "./TrustBadge";
 import type { Message } from "@/lib/store";
-import { User, Bot, Copy, Check } from "lucide-react";
+import { User, Bot, Copy, Check, ChevronRight, Brain } from "lucide-react";
 import { useState, useCallback } from "react";
 
 function CodeBlock({
@@ -45,11 +45,82 @@ function CodeBlock({
   );
 }
 
-export function ChatMessage({ message }: { message: Message }) {
-  const isUser = message.role === "user";
+function ThinkingBlock({
+  thinking,
+  streaming,
+}: {
+  thinking: string;
+  streaming?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={`message-animate py-5 ${isUser ? "" : ""}`}>
+    <div className="mb-3">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-accent-amber/8 border border-accent-amber/15 hover:bg-accent-amber/12 transition-all text-accent-amber group"
+      >
+        <ChevronRight
+          size={12}
+          className={`transition-transform duration-200 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        />
+        <Brain size={12} />
+        <span className="text-[11px] font-mono">
+          {streaming && !thinking.length
+            ? "Thinking..."
+            : `Thinking${streaming ? "..." : ""}`}
+        </span>
+        {!expanded && thinking.length > 0 && (
+          <span className="text-[10px] text-text-tertiary ml-1">
+            ({thinking.length} chars)
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="mt-1.5 ml-1 pl-3 border-l-2 border-accent-amber/20">
+          <div
+            className={`prose text-text-secondary text-[13px] leading-relaxed opacity-80 ${
+              streaming ? "streaming-cursor" : ""
+            }`}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {thinking}
+            </ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const markdownComponents: any = {
+  code({ className, children, ...props }: any) {
+    const isInline = !className;
+    if (isInline) {
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    }
+    return <CodeBlock className={className}>{children}</CodeBlock>;
+  },
+  pre({ children }: any) {
+    return <>{children}</>;
+  },
+};
+
+export function ChatMessage({ message }: { message: Message }) {
+  const isUser = message.role === "user";
+  const hasThinking = !isUser && message.thinking && message.thinking.length > 0;
+  const isThinking = message.streaming && !message.content && !!message.thinking;
+
+  return (
+    <div className={`message-animate py-5`}>
       <div className="max-w-3xl mx-auto px-6">
         <div className="flex gap-4">
           {/* Avatar */}
@@ -76,34 +147,30 @@ export function ChatMessage({ message }: { message: Message }) {
               {message.trust && <TrustBadge trust={message.trust} />}
             </div>
 
+            {/* Thinking block */}
+            {hasThinking && (
+              <ThinkingBlock
+                thinking={message.thinking!}
+                streaming={isThinking}
+              />
+            )}
+
+            {/* Main content */}
             <div
               className={`prose text-text-primary text-[15px] leading-relaxed ${
-                message.streaming ? "streaming-cursor" : ""
+                message.streaming && !isThinking ? "streaming-cursor" : ""
               }`}
             >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code({ className, children, ...props }) {
-                    const isInline = !className;
-                    if (isInline) {
-                      return (
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      );
-                    }
-                    return (
-                      <CodeBlock className={className}>{children}</CodeBlock>
-                    );
-                  },
-                  pre({ children }) {
-                    return <>{children}</>;
-                  },
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
+              {message.content ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              ) : message.streaming && !hasThinking ? (
+                <span className="text-text-tertiary text-sm streaming-cursor" />
+              ) : null}
             </div>
           </div>
         </div>

@@ -22,6 +22,7 @@ export default function ChatPage() {
     addMessage,
     updateMessage,
     appendToMessage,
+    appendToThinking,
     updateChatTitle,
     selectedModel,
     setModels,
@@ -145,6 +146,9 @@ export default function ChatPage() {
             onToken: (token) => {
               appendToMessage(chatId!, assistantId, token);
             },
+            onThinking: (token) => {
+              appendToThinking(chatId!, assistantId, token);
+            },
             onDone: (trust) => {
               updateMessage(chatId!, assistantId, {
                 streaming: false,
@@ -181,6 +185,7 @@ export default function ChatPage() {
       addMessage,
       updateMessage,
       appendToMessage,
+      appendToThinking,
       updateChatTitle,
       selectedModel,
     ]

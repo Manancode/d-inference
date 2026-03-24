@@ -64,6 +64,7 @@ export interface TrustMetadata {
 
 export interface StreamCallbacks {
   onToken: (token: string) => void;
+  onThinking: (token: string) => void;
   onDone: (trustMeta: TrustMetadata) => void;
   onError: (error: string) => void;
 }
@@ -185,7 +186,10 @@ export async function streamChat(
 
       try {
         const chunk = JSON.parse(payload);
-        const content = chunk.choices?.[0]?.delta?.content;
+        const delta = chunk.choices?.[0]?.delta;
+        const content = delta?.content;
+        const reasoning = delta?.reasoning_content || delta?.reasoning;
+        if (reasoning) callbacks.onThinking(reasoning);
         if (content) callbacks.onToken(content);
       } catch {
         // skip malformed chunks

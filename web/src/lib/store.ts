@@ -13,6 +13,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking?: string;
   trust?: TrustMetadata;
   streaming?: boolean;
   timestamp: number;
@@ -33,6 +34,7 @@ interface AppState {
   addMessage: (chatId: string, msg: Message) => void;
   updateMessage: (chatId: string, msgId: string, update: Partial<Message>) => void;
   appendToMessage: (chatId: string, msgId: string, token: string) => void;
+  appendToThinking: (chatId: string, msgId: string, token: string) => void;
   setSelectedModel: (model: string) => void;
   setModels: (models: Model[]) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -108,6 +110,22 @@ export const useStore = create<AppState>()(
                   ...c,
                   messages: c.messages.map((m) =>
                     m.id === msgId ? { ...m, content: m.content + token } : m
+                  ),
+                }
+              : c
+          ),
+        })),
+
+      appendToThinking: (chatId, msgId, token) =>
+        set((s) => ({
+          chats: s.chats.map((c) =>
+            c.id === chatId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === msgId
+                      ? { ...m, thinking: (m.thinking || "") + token }
+                      : m
                   ),
                 }
               : c
