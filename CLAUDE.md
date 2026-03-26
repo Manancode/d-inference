@@ -26,13 +26,17 @@ PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo build --release
 ```
 Note: `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` is needed if your Python version is newer than PyO3's max supported version.
 
-## Deploying the Coordinator
+## Deploying
 
-The coordinator runs on AWS EC2 instance `dginf-mdm` at `inference-test.openinnovation.dev`.
+Full deploy runbook for all components: **[docs/coordinator-deploy-runbook.md](docs/coordinator-deploy-runbook.md)**
 
-Full deploy instructions: **[docs/coordinator-deploy-runbook.md](docs/coordinator-deploy-runbook.md)**
+Covers:
+- **Coordinator** — Build Go binary, SCP to AWS EC2, restart systemd service
+- **Provider CLI bundle** — Build Rust binary + enclave helper, create tarball, upload to server
+- **macOS App** — Build `.app` bundle with `scripts/bundle-app.sh`, code-sign, optional notarization
+- **install.sh** — The curl one-liner installer that providers use (`curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash`)
 
-Quick deploy:
+Quick coordinator deploy:
 ```bash
 cd coordinator && \
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dginf-coordinator-linux ./cmd/coordinator && \

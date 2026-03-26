@@ -1,6 +1,6 @@
-# Coordinator Deploy Runbook
+# DGInf Deploy Runbook
 
-How to build, deploy, and update the DGInf coordinator running on AWS.
+How to build, deploy, and update all DGInf components: the coordinator, provider CLI, and macOS app bundle.
 
 ## Infrastructure
 
@@ -149,4 +149,146 @@ sudo journalctl -u dginf-coordinator -n 50 --no-pager
 
 ```bash
 sudo tail -50 /var/log/nginx/error.log
+```
+
+---
+
+## Provider CLI & Bundle Distribution
+
+Providers install via a curl one-liner that downloads a tarball from the coordinator server:
+
+```bash
+curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash
+```
+
+This downloads `dginf-bundle-macos-arm64.tar.gz` from `/var/www/html/dl/` on the server and extracts it to `~/.dginf/`.
+
+### What's in the bundle
+
+| File | Description |
+|------|-------------|
+| `dginf-provider` | Rust CLI binary (arm64 macOS) |
+| `dginf-enclave` | Swift Secure Enclave attestation helper |
+| `python/` | Standalone Python 3.12 + mlx + vllm-mlx |
+
+### Building the provider CLI
+
+```bash
+cd provider
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo build --release --no-default-features
+```
+
+The binary is at `target/release/dginf-provider`.
+
+### Building the Secure Enclave helper
+
+```bash
+cd app/DGInf
+swift build -c release --product dginf-enclave
+```
+
+### Creating the tarball bundle
+
+The tarball bundles the provider binary, enclave helper, and a standalone Python environment with mlx/vllm-mlx pre-installed.
+
+Prerequisites:
+- Python bundle already set up at `~/.dginf/python/` (created by a prior install or manual setup)
+- Provider binary built (`cargo build --release --no-default-features`)
+- Enclave binary built (`swift build -c release`)
+
+```bash
+# Create bundle directory
+mkdir -p /tmp/dginf-bundle
+cp provider/target/release/dginf-provider /tmp/dginf-bundle/
+cp app/DGInf/.build/release/dginf-enclave /tmp/dginf-bundle/
+cp -a ~/.dginf/python /tmp/dginf-bundle/
+
+# Create tarball
+cd /tmp/dginf-bundle
+tar czf dginf-bundle-macos-arm64.tar.gz dginf-provider dginf-enclave python/
+```
+
+### Uploading the bundle to the server
+
+```bash
+scp -i ~/.ssh/dginf-infra /tmp/dginf-bundle/dginf-bundle-macos-arm64.tar.gz \
+  ubuntu@34.197.17.112:/tmp/
+
+ssh -i ~/.ssh/dginf-infra ubuntu@34.197.17.112 \
+  'sudo mv /tmp/dginf-bundle-macos-arm64.tar.gz /var/www/html/dl/ && \
+   ls -lh /var/www/html/dl/dginf-bundle-macos-arm64.tar.gz'
+```
+
+### Updating install.sh
+
+The install script is at `scripts/install.sh` in the repo and served from `/var/www/html/install.sh` on the server. To update:
+
+```bash
+scp -i ~/.ssh/dginf-infra scripts/install.sh ubuntu@34.197.17.112:/tmp/ && \
+ssh -i ~/.ssh/dginf-infra ubuntu@34.197.17.112 \
+  'sudo mv /tmp/install.sh /var/www/html/install.sh'
+```
+
+### Verify the distribution
+
+```bash
+# Check tarball is accessible
+curl -sI https://inference-test.openinnovation.dev/dl/dginf-bundle-macos-arm64.tar.gz | head -5
+
+# Check install script is accessible
+curl -s https://inference-test.openinnovation.dev/install.sh | head -5
+```
+
+---
+
+## macOS App Bundle (.app / .dmg)
+
+For distributing the full macOS menu bar app (not just the CLI).
+
+### Build the app bundle
+
+```bash
+./scripts/bundle-app.sh                                      # Ad-hoc signing (testing only)
+./scripts/bundle-app.sh "Developer ID Application: OrgName"  # Production signing
+./scripts/bundle-app.sh "Developer ID Application: OrgName" --notarize  # + Apple notarization
+```
+
+This produces:
+- `build/DGInf.app` — Code-signed macOS app with hardened runtime
+- `build/DGInf-0.1.0.dmg` — Drag-and-drop installer DMG
+
+The app bundle includes the provider binary, enclave helper, and bundled Python — all code-signed so any tampering breaks the signature.
+
+### Prerequisites for the app bundle
+
+```bash
+# 1. Build the Rust provider (release, no Python feature to avoid linking issues)
+cd provider && cargo build --release --no-default-features && cd ..
+
+# 2. Build the Swift app and enclave helper
+cd app/DGInf && swift build -c release && cd ../..
+
+# 3. Ensure Python bundle exists at ~/.dginf/python/
+```
+
+### Distributing the DMG
+
+Currently manual — upload the DMG wherever you want to host it. The install.sh flow uses the tarball, not the DMG. The DMG is for users who prefer a traditional macOS app install.
+
+---
+
+## Server file layout
+
+Files served by nginx from `/var/www/html/`:
+
+```
+/var/www/html/
+├── index.html                          # Landing page
+├── install.sh                          # curl installer script
+├── enroll.mobileconfig                 # MDM enrollment profile
+├── dginf-provider-macos-arm64.tar.gz   # Legacy standalone provider tarball
+└── dl/
+    ├── dginf-bundle-macos-arm64.tar.gz # Full bundle (provider + python + enclave)
+    ├── dginf-provider                  # Standalone provider binary
+    └── dginf-enclave                   # Standalone enclave binary
 ```
