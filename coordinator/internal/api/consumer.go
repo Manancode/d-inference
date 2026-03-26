@@ -51,9 +51,11 @@ const (
 // The consumer sends plain JSON — no encryption fields are needed because
 // TLS to the Confidential VM is the trust boundary.
 type chatCompletionRequest struct {
-	Model    string                 `json:"model"`
-	Messages []protocol.ChatMessage `json:"messages"`
-	Stream   bool                   `json:"stream"`
+	Model       string                 `json:"model"`
+	Messages    []protocol.ChatMessage `json:"messages"`
+	Stream      bool                   `json:"stream"`
+	MaxTokens   *int                   `json:"max_tokens,omitempty"`
+	Temperature *float64               `json:"temperature,omitempty"`
 }
 
 // handleChatCompletions handles POST /v1/chat/completions.
@@ -112,9 +114,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.New().String()
 
 	plainBody := protocol.InferenceRequestBody{
-		Model:    req.Model,
-		Messages: req.Messages,
-		Stream:   req.Stream,
+		Model:       req.Model,
+		Messages:    req.Messages,
+		Stream:      req.Stream,
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
 	}
 	inferenceBody, _ := json.Marshal(plainBody)
 

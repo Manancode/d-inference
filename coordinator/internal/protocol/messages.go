@@ -155,9 +155,11 @@ type ChatMessage struct {
 
 // InferenceRequestBody is the body sent inside an InferenceRequest.
 type InferenceRequestBody struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	Stream      bool          `json:"stream"`
+	MaxTokens   *int          `json:"max_tokens,omitempty"`
+	Temperature *float64      `json:"temperature,omitempty"`
 }
 
 // InferenceRequestMessage tells a provider to run inference.
