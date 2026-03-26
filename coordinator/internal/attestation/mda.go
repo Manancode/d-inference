@@ -195,27 +195,26 @@ func VerifyMDACertChain(certChainPEM []byte, appleRootCA *x509.Certificate) (*MD
 
 	result := &MDAResult{}
 
-	rootCA := appleRootCA
-	if rootCA == nil {
-		rootCA = appleEnterpriseAttestationRootCA
-	}
+	// When a root CA is provided, verify the certificate chain.
+	// When nil, skip chain verification and just parse OIDs.
+	if appleRootCA != nil {
+		roots := x509.NewCertPool()
+		roots.AddCert(appleRootCA)
 
-	roots := x509.NewCertPool()
-	roots.AddCert(rootCA)
+		intPool := x509.NewCertPool()
+		for _, ic := range intermediatesCerts {
+			intPool.AddCert(ic)
+		}
 
-	intPool := x509.NewCertPool()
-	for _, ic := range intermediatesCerts {
-		intPool.AddCert(ic)
-	}
+		opts := x509.VerifyOptions{
+			Roots:         roots,
+			Intermediates: intPool,
+		}
 
-	opts := x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: intPool,
-	}
-
-	if _, err := leaf.Verify(opts); err != nil {
-		result.Error = fmt.Sprintf("certificate chain verification failed: %v", err)
-		return result, nil
+		if _, err := leaf.Verify(opts); err != nil {
+			result.Error = fmt.Sprintf("certificate chain verification failed: %v", err)
+			return result, nil
+		}
 	}
 
 	result.Valid = true

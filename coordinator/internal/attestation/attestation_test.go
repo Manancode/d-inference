@@ -85,14 +85,15 @@ func TestVerifyMissingSIP(t *testing.T) {
 	pubKeyBytes := marshalUncompressedP256(privKey)
 
 	blob := AttestationBlob{
-		PublicKey:              base64.StdEncoding.EncodeToString(pubKeyBytes),
-		Timestamp:              time.Now().UTC().Format(time.RFC3339),
-		HardwareModel:          "Mac15,8",
-		ChipName:               "Apple M3 Max",
-		OSVersion:              "15.3.0",
-		SecureEnclaveAvailable: true,
-		SIPEnabled:             false, // SIP disabled
-		SecureBootEnabled:      true,
+		PublicKey:                base64.StdEncoding.EncodeToString(pubKeyBytes),
+		Timestamp:                time.Now().UTC().Format(time.RFC3339),
+		HardwareModel:            "Mac15,8",
+		ChipName:                 "Apple M3 Max",
+		OSVersion:                "15.3.0",
+		SecureEnclaveAvailable:   true,
+		SIPEnabled:               false, // SIP disabled
+		SecureBootEnabled:        true,
+		AuthenticatedRootEnabled: true,
 	}
 
 	signed := signBlob(t, blob, privKey)
@@ -114,14 +115,15 @@ func TestVerifyMissingSecureEnclave(t *testing.T) {
 	pubKeyBytes := marshalUncompressedP256(privKey)
 
 	blob := AttestationBlob{
-		PublicKey:              base64.StdEncoding.EncodeToString(pubKeyBytes),
-		Timestamp:              time.Now().UTC().Format(time.RFC3339),
-		HardwareModel:          "Mac15,8",
-		ChipName:               "Apple M3 Max",
-		OSVersion:              "15.3.0",
-		SecureEnclaveAvailable: false, // no SE
-		SIPEnabled:             true,
-		SecureBootEnabled:      true,
+		PublicKey:                base64.StdEncoding.EncodeToString(pubKeyBytes),
+		Timestamp:                time.Now().UTC().Format(time.RFC3339),
+		HardwareModel:            "Mac15,8",
+		ChipName:                 "Apple M3 Max",
+		OSVersion:                "15.3.0",
+		SecureEnclaveAvailable:   false, // no SE
+		SIPEnabled:               true,
+		SecureBootEnabled:        true,
+		AuthenticatedRootEnabled: true,
 	}
 
 	signed := signBlob(t, blob, privKey)
@@ -160,15 +162,16 @@ func TestVerifyWithEncryptionKey(t *testing.T) {
 	encKey := base64.StdEncoding.EncodeToString([]byte("fake-x25519-public-key-32bytes!!"))
 
 	blob := AttestationBlob{
-		ChipName:               "Apple M3 Max",
-		EncryptionPublicKey:    encKey,
-		HardwareModel:          "Mac15,8",
-		OSVersion:              "15.3.0",
-		PublicKey:              base64.StdEncoding.EncodeToString(pubKeyBytes),
-		SecureBootEnabled:      true,
-		SecureEnclaveAvailable: true,
-		SIPEnabled:             true,
-		Timestamp:              time.Now().UTC().Format(time.RFC3339),
+		ChipName:                 "Apple M3 Max",
+		EncryptionPublicKey:      encKey,
+		HardwareModel:            "Mac15,8",
+		OSVersion:                "15.3.0",
+		PublicKey:                base64.StdEncoding.EncodeToString(pubKeyBytes),
+		SecureBootEnabled:        true,
+		SecureEnclaveAvailable:   true,
+		SIPEnabled:               true,
+		AuthenticatedRootEnabled: true,
+		Timestamp:                time.Now().UTC().Format(time.RFC3339),
 	}
 
 	signed := signBlob(t, blob, privKey)
@@ -355,14 +358,15 @@ func createTestAttestation(t *testing.T) SignedAttestation {
 	pubKeyBytes := marshalUncompressedP256(privKey)
 
 	blob := AttestationBlob{
-		PublicKey:              base64.StdEncoding.EncodeToString(pubKeyBytes),
-		Timestamp:              time.Now().UTC().Format(time.RFC3339),
-		HardwareModel:          "Mac15,8",
-		ChipName:               "Apple M3 Max",
-		OSVersion:              "15.3.0",
-		SecureEnclaveAvailable: true,
-		SIPEnabled:             true,
-		SecureBootEnabled:      true,
+		PublicKey:                base64.StdEncoding.EncodeToString(pubKeyBytes),
+		Timestamp:                time.Now().UTC().Format(time.RFC3339),
+		HardwareModel:            "Mac15,8",
+		ChipName:                 "Apple M3 Max",
+		OSVersion:                "15.3.0",
+		SecureEnclaveAvailable:   true,
+		SIPEnabled:               true,
+		SecureBootEnabled:        true,
+		AuthenticatedRootEnabled: true,
 	}
 
 	return signBlob(t, blob, privKey)

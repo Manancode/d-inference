@@ -253,14 +253,15 @@ func createTestAttestationJSON(t *testing.T, encryptionKey string) json.RawMessa
 
 	// Build attestation blob as sorted-key map
 	blobMap := map[string]interface{}{
-		"chipName":               "Apple M3 Max",
-		"hardwareModel":          "Mac15,8",
-		"osVersion":              "15.3.0",
-		"publicKey":              pubKeyB64,
-		"secureBootEnabled":      true,
-		"secureEnclaveAvailable": true,
-		"sipEnabled":             true,
-		"timestamp":              time.Now().UTC().Format(time.RFC3339),
+		"authenticatedRootEnabled": true,
+		"chipName":                 "Apple M3 Max",
+		"hardwareModel":            "Mac15,8",
+		"osVersion":                "15.3.0",
+		"publicKey":                pubKeyB64,
+		"secureBootEnabled":        true,
+		"secureEnclaveAvailable":   true,
+		"sipEnabled":               true,
+		"timestamp":                time.Now().UTC().Format(time.RFC3339),
 	}
 	if encryptionKey != "" {
 		blobMap["encryptionPublicKey"] = encryptionKey
