@@ -128,6 +128,10 @@ func (s *Server) routes() {
 
 	// Provider earnings — no API key auth (providers identify by wallet address).
 	s.mux.HandleFunc("GET /v1/provider/earnings", s.handleProviderEarnings)
+
+	// Attestation verification — public, no auth needed.
+	// Users can independently verify Apple's MDA certificate chain.
+	s.mux.HandleFunc("GET /v1/providers/attestation", s.handleProviderAttestation)
 }
 
 // Handler returns the root http.Handler with global middleware applied.

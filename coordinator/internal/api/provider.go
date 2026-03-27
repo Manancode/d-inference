@@ -606,13 +606,11 @@ func (s *Server) verifyProviderViaMDM(providerID string, provider *registry.Prov
 		"mdm_auth_root_volume", mdmResult.MDMAuthRootVolume,
 	)
 
-	// MDA (Apple Device Attestation) is implemented but disabled.
-	// It requires Apple Business Manager enrollment which isn't practical
-	// for a decentralized provider network. The SecurityInfo path above
-	// is self-reinforcing: spoofing it requires SIP to be off, which means
-	// privacy is already compromised anyway. Enable MDA for managed fleets:
-	//
-	// s.verifyAppleDeviceAttestation(providerID, provider, attestResult, mdmResult.UDID)
+	// Request Apple Device Attestation — Apple's servers generate a
+	// certificate chain that proves this device's identity. This cert
+	// chain can be independently verified by users against Apple's
+	// Enterprise Attestation Root CA.
+	s.verifyAppleDeviceAttestation(providerID, provider, attestResult, mdmResult.UDID)
 }
 
 // verifyAppleDeviceAttestation sends a DeviceInformation command requesting
@@ -677,8 +675,10 @@ func (s *Server) verifyAppleDeviceAttestation(providerID string, provider *regis
 		return
 	}
 
-	// Apple Device Attestation verified
+	// Apple Device Attestation verified — store proof for user verification
 	provider.MDAVerified = true
+	provider.MDACertChain = attestResp.CertChain
+	provider.MDAResult = mdaResult
 	s.logger.Info("Apple Device Attestation (MDA) verified — Apple CA confirmed device identity",
 		"provider_id", providerID,
 		"mda_serial", mdaResult.DeviceSerial,
@@ -686,6 +686,88 @@ func (s *Server) verifyAppleDeviceAttestation(providerID string, provider *regis
 		"mda_os_version", mdaResult.OSVersion,
 		"mda_sepos_version", mdaResult.SepOSVersion,
 	)
+}
+
+// handleProviderAttestation returns the attestation proof for all providers.
+// Users can independently verify the Apple MDA certificate chain against
+// Apple's public Enterprise Attestation Root CA.
+func (s *Server) handleProviderAttestation(w http.ResponseWriter, r *http.Request) {
+	type providerAttestation struct {
+		ProviderID    string `json:"provider_id"`
+		ChipName      string `json:"chip_name"`
+		HardwareModel string `json:"hardware_model"`
+		SerialNumber  string `json:"serial_number"`
+		TrustLevel    string `json:"trust_level"`
+
+		// Secure Enclave attestation (self-signed)
+		SecureEnclave        bool   `json:"secure_enclave"`
+		SIPEnabled           bool   `json:"sip_enabled"`
+		SecureBootEnabled    bool   `json:"secure_boot_enabled"`
+		AuthenticatedRoot    bool   `json:"authenticated_root_enabled"`
+		SystemVolumeHash     string `json:"system_volume_hash,omitempty"`
+		SEPublicKey          string `json:"se_public_key"`
+		AttestationSignature string `json:"attestation_signature,omitempty"`
+
+		// MDM SecurityInfo (verified by Apple's MDM framework)
+		MDMVerified bool `json:"mdm_verified"`
+
+		// Apple Device Attestation (MDA) — certificate chain signed by Apple
+		MDAVerified   bool     `json:"mda_verified"`
+		MDACertChain  []string `json:"mda_cert_chain_b64,omitempty"` // base64 DER certs, leaf first
+		MDASerial     string   `json:"mda_serial,omitempty"`
+		MDAUDID       string   `json:"mda_udid,omitempty"`
+		MDAOSVersion  string   `json:"mda_os_version,omitempty"`
+		MDASepVersion string   `json:"mda_sepos_version,omitempty"`
+	}
+
+	var providers []providerAttestation
+
+	s.registry.ForEachProvider(func(p *registry.Provider) {
+		pa := providerAttestation{
+			ProviderID: p.ID,
+			TrustLevel: string(p.TrustLevel),
+			MDMVerified: p.TrustLevel == registry.TrustHardware,
+			MDAVerified: p.MDAVerified,
+		}
+
+		if p.AttestationResult != nil {
+			ar := p.AttestationResult
+			pa.ChipName = ar.ChipName
+			pa.HardwareModel = ar.HardwareModel
+			pa.SerialNumber = ar.SerialNumber
+			pa.SecureEnclave = ar.SecureEnclaveAvailable
+			pa.SIPEnabled = ar.SIPEnabled
+			pa.SecureBootEnabled = ar.SecureBootEnabled
+			pa.AuthenticatedRoot = ar.AuthenticatedRootEnabled
+			pa.SystemVolumeHash = ar.SystemVolumeHash
+			pa.SEPublicKey = ar.PublicKey
+		}
+
+		// Include MDA cert chain for independent verification
+		if len(p.MDACertChain) > 0 {
+			for _, der := range p.MDACertChain {
+				pa.MDACertChain = append(pa.MDACertChain, base64.StdEncoding.EncodeToString(der))
+			}
+		}
+		if p.MDAResult != nil {
+			pa.MDASerial = p.MDAResult.DeviceSerial
+			pa.MDAUDID = p.MDAResult.DeviceUDID
+			pa.MDAOSVersion = p.MDAResult.OSVersion
+			pa.MDASepVersion = p.MDAResult.SepOSVersion
+		}
+
+		providers = append(providers, pa)
+	})
+
+	resp := map[string]any{
+		"providers":                 providers,
+		"apple_root_ca_url":        "https://www.apple.com/certificateauthority/",
+		"apple_enterprise_root_ca": "Apple Enterprise Attestation Root CA",
+		"verification_instructions": "Download each provider's mda_cert_chain_b64, decode from base64 to DER, " +
+			"then verify the certificate chain against Apple's Enterprise Attestation Root CA. " +
+			"If verification passes, Apple has confirmed this is a real Apple device with the attested properties.",
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // SendInferenceRequest writes an inference request to the provider's WebSocket.

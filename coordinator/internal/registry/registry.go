@@ -72,6 +72,8 @@ type Provider struct {
 	AttestationResult *attestation.VerificationResult
 	TrustLevel        TrustLevel // attestation trust level
 	MDAVerified       bool       // true if Apple Device Attestation cert chain verified
+	MDACertChain      [][]byte   // DER-encoded Apple MDA certificate chain (leaf first)
+	MDAResult         *attestation.MDAResult // parsed OIDs from Apple cert
 	Status            ProviderStatus
 	Conn              *websocket.Conn
 	LastHeartbeat     time.Time
@@ -634,6 +636,15 @@ func (r *Registry) ProviderCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.providers)
+}
+
+// ForEachProvider iterates over all registered providers (read lock held).
+func (r *Registry) ForEachProvider(fn func(p *Provider)) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.providers {
+		fn(p)
+	}
 }
 
 // ProviderIDs returns the IDs of all registered providers.
