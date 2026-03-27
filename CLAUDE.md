@@ -132,7 +132,7 @@ scp -i ~/.ssh/dginf-infra /tmp/dginf-bundle/dginf-bundle-macos-arm64.tar.gz \
 - **Request cancellation**: In-flight inference requests are tracked by request_id with CancellationToken. On coordinator disconnect, all in-flight requests are cancelled and the HTTP connection to vllm-mlx is dropped so it stops generating.
 - **Idle GPU timeout**: Backend (vllm-mlx) process is killed after 10 minutes of no requests to free GPU memory. Lazy-reloaded when the next request arrives (cold-start penalty of ~10-30s for model reload).
 - **E2E encryption**: Consumer requests encrypted with provider's X25519 public key (NaCl box). Coordinator never sees plaintext prompts. Decryption only inside the hardened provider process.
-- **Attestation chain**: Secure Enclave P-256 key → signs attestation blob (hardware, SIP, Secure Boot, ARV status) → coordinator verifies signature + issues periodic challenge-response to detect key/posture changes.
+- **Attestation chain**: Secure Enclave P-256 key → signs attestation blob → coordinator verifies signature (self_signed) → MDM SecurityInfo cross-check (hardware trust) → Apple Enterprise Attestation Root CA signs device cert chain via MDA (mda_verified). Full chain exposed at `GET /v1/providers/attestation` for user-side verification.
 - **Protocol symmetry**: `provider/src/protocol.rs` and `coordinator/internal/protocol/messages.go` define the same WebSocket message types. Changes to one must be mirrored in the other.
 
 ## Common Pitfalls

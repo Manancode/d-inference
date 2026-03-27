@@ -58,7 +58,10 @@ The control plane. Runs in a GCP Confidential VM (AMD SEV-SNP) — hardware-encr
 
 - Accepts provider WebSocket connections and tracks availability
 - Exposes OpenAI-compatible HTTP API for consumers (`/v1/chat/completions`, `/v1/models`)
-- Routes requests to the best available provider using scoring: `(1-load) * decode_tps * trust_multiplier * reputation * warm_model_bonus`
+- Routes requests to the best available provider using scoring: `(1-load) * decode_tps * trust_multiplier * reputation * warm_model_bonus * health_factor`
+- Health factor uses live system metrics (memory pressure, CPU usage, thermal state) from heartbeats
+- Supports up to 4 concurrent requests per provider (gradient load scoring)
+- Cancels in-flight requests when consumer disconnects or coordinator drops
 - Verifies provider attestations (Secure Enclave P-256 ECDSA signatures)
 - Periodically challenges providers to prove key possession + fresh SIP/SecureBoot status (every 5 minutes)
 - Immediately marks provider untrusted if SIP or Secure Boot found disabled in challenge response
@@ -170,6 +173,43 @@ DGInf uses Apple MDM (MicroMDM) to independently verify provider security postur
 - **Push notifications:** APNs for on-demand attestation queries
 - **Infrastructure:** MicroMDM + SCEP + step-ca on AWS
 
+### Apple Device Attestation (MDA)
+
+After SecurityInfo verification, the coordinator requests `DevicePropertiesAttestation` via MDM. The device contacts Apple's servers, which return a DER-encoded certificate chain signed by Apple's Enterprise Attestation Root CA. This is the strongest verification — Apple itself vouches for the device.
+
+```
+Verification chain:
+  Apple Enterprise Attestation Root CA (P-384, embedded in coordinator)
+    └─ Apple Enterprise Attestation Sub CA 1
+        └─ Leaf cert (device identity)
+            ├─ Serial number (OID 1.2.840.113635.100.8.9.1)
+            ├─ UDID (OID 1.2.840.113635.100.8.9.2)
+            ├─ OS version (OID 1.2.840.113635.100.8.10.1)
+            ├─ SepOS version (OID 1.2.840.113635.100.8.10.2)
+            ├─ Secure Boot level (OID 1.2.840.113635.100.8.13.2)
+            └─ Freshness code (OID 1.2.840.113635.100.8.11.1)
+```
+
+The coordinator verifies the cert chain against Apple's root CA, cross-checks the serial number against the provider's self-reported attestation, and stores the cert chain. Users can independently verify via `GET /v1/providers/attestation`, which exposes the base64-encoded DER certificates. Any standard x509 library can verify these against Apple's public Enterprise Attestation Root CA.
+
+### User Attestation Verification
+
+Public API endpoint (no auth required): `GET /v1/providers/attestation`
+
+Returns for each provider:
+- Secure Enclave P-256 public key
+- Hardware info (chip, model, serial, system volume hash)
+- Security state (SIP, SecureBoot, ARV, SE)
+- MDM verification status
+- **Apple MDA certificate chain** (base64 DER, leaf + intermediate)
+- MDA-extracted properties (serial, UDID, OS version, SepOS version)
+
+Users can verify by:
+1. Downloading Apple's Enterprise Attestation Root CA from [apple.com/certificateauthority](https://www.apple.com/certificateauthority/)
+2. Decoding the `mda_cert_chain_b64` certificates from base64 to DER
+3. Verifying the cert chain against Apple's root CA using any x509 library
+4. Checking that the serial number in the Apple cert matches the provider's attestation
+
 ### Attestation Blob
 
 The provider creates a signed attestation blob containing:
@@ -184,6 +224,9 @@ The provider creates a signed attestation blob containing:
 | `sipEnabled` | System Integrity Protection status |
 | `secureBootEnabled` | Secure Boot status |
 | `encryptionPublicKey` | X25519 key bound to this identity |
+| `authenticatedRootEnabled` | Authenticated Root Volume (sealed system volume) |
+| `systemVolumeHash` | APFS snapshot hash (proves unmodified system volume) |
+| `serialNumber` | Hardware serial number for MDM cross-reference |
 | `binaryHash` | SHA-256 of the provider binary |
 | `timestamp` | ISO 8601 |
 
@@ -226,7 +269,8 @@ Python path locking                Working     Prevents malicious package inject
 Signed app bundle                  Working     Any modification breaks code signature
 MDM SecurityInfo                   Working     Hardware-verified SIP/SecureBoot/SSV
 SIP/SecureBoot attestation         Working     Self-reported + MDM-verified
-Hardware-attested posture (MDA)    Scaffolded  Needs Apple Business Manager setup
+Hardware-attested posture (MDA)    Working     Apple Enterprise Attestation Root CA signs device cert chain
+User-verifiable attestation API    Working     GET /v1/providers/attestation — exposes Apple cert chain
 ```
 
 ## Inference
