@@ -773,6 +773,87 @@ The MDM enrollment requests the minimum permissions necessary for security verif
 Providers can unenroll at any time via System Settings, which removes the profile and all associated certificates immediately and completely.
 
 % =====================================================================
+\section{Consumer-Selectable Trust Tiers}
+\label{sec:trust-tiers}
+
+The four-layer attestation architecture (Section~\ref{sec:attestation}) and the ACME enrollment protocol (Section~\ref{sec:enrollment}) establish a spectrum of verifiable trust guarantees. We formalize this spectrum into \emph{trust tiers} that consumers can select at inference time, enabling a market-driven equilibrium between privacy assurance and provider participation.
+
+\subsection{Tier Definitions}
+
+\begin{table}[h]
+\centering
+\caption{Consumer-selectable trust tiers. Consumers specify a minimum tier; the coordinator routes only to providers meeting that threshold.}
+\label{tab:trust-tiers}
+\vspace{4pt}
+\scriptsize
+\begin{tabular}{@{}clp{3.5cm}l@{}}
+\toprule
+\textbf{Tier} & \textbf{Name} & \textbf{Verification Guarantee} & \textbf{Provider Consent} \\
+\midrule
+0 & \texttt{none} & No attestation & None \\
+1 & \texttt{self\_signed} & SE-signed attestation blob & Profile install \\
+2 & \texttt{hardware} & MDM SecurityInfo + Apple MDA certificate chain & Read-only MDM (bits 0,4,10) \\
+3 & \texttt{apple\_grade} & All of Tier~2 + ACME-attested SE key used for response signing & Read-only MDM + managed app install (bit 12) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cryptographic Guarantees by Tier}
+
+The tiers correspond to progressively stronger cryptographic claims about the provider's hardware and the provenance of inference outputs:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Tier~2 (\texttt{hardware}):} Apple's MDM framework independently confirms SIP, Secure Boot, and the Authenticated Root Volume. Apple's Enterprise Attestation Root CA signs a certificate chain confirming the device's serial number and identity. The provider signs each inference response with a Secure Enclave P-256 key, providing output integrity. However, the binding between the signing key and the Secure Enclave is enforced by SIP (which prevents binary replacement) rather than by a cryptographic certificate chain.
+
+    \item \textbf{Tier~3 (\texttt{apple\_grade}):} In addition to all Tier~2 guarantees, the provider's response signing key is the P-384 key generated during ACME \texttt{device-attest-01} enrollment. This key was verified by Apple's attestation servers to reside in the Secure Enclave of a specific physical device. The trust chain for every inference response becomes fully cryptographic:
+    \[
+    \text{response} \xrightarrow{\text{sign}} \text{SE P-384 key} \xrightarrow{\text{cert}} \text{step-ca} \xrightarrow{\text{attest}} \text{Apple Enterprise Root CA}
+    \]
+    Any party possessing Apple's public root certificate can independently verify this chain without trusting the coordinator.
+\end{itemize}
+
+\subsection{Provider Opt-In and Permission Scoping}
+
+The transition from Tier~2 to Tier~3 requires the provider to grant an additional MDM permission: bit~12 (\texttt{InstallManagedApplications}). This enables the coordinator to install a signed, notarized application bundle that can access the ACME-attested key from the managed profile keychain---a macOS restriction that prevents non-managed applications from accessing profile-provisioned cryptographic identities.
+
+This design creates a natural separation of concerns:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Tier~2 providers} grant only read-only query permissions (bits 0, 4, 10). The MDM server cannot install software, modify settings, lock, or erase the device.
+    \item \textbf{Tier~3 providers} additionally grant bit~12, scoped to a single application bundle that is Developer ID signed and Apple-notarized. The installed application's sole function is to relay WebSocket frames through macOS's native TLS stack, which presents the ACME-attested Secure Enclave identity for mutual TLS authentication.
+\end{itemize}
+
+Providers can revoke Tier~3 status at any time by removing the MDM profile, which also removes the managed application and its keychain access.
+
+\subsection{Consumer-Side Selection}
+
+Consumers specify their minimum trust tier in the API request. The coordinator's routing algorithm filters providers by trust tier before applying the composite scoring function (Section~\ref{sec:scoring}). Tier~3 providers receive a $1.2\times$ scoring multiplier, creating an economic incentive for providers to opt into the higher trust level.
+
+This mechanism enables privacy-sensitive workloads (medical, legal, financial inference) to require \texttt{apple\_grade} trust, ensuring that every token in the response is signed by a key whose Secure Enclave residency is cryptographically verified by Apple. Less sensitive workloads can accept \texttt{hardware} trust, expanding the available provider pool.
+
+\subsection{Comparison of Trust Properties}
+
+\begin{table}[h]
+\centering
+\caption{Trust properties by tier. ``Crypto'' indicates the property is established by a verifiable certificate chain; ``OS'' indicates it is enforced by the operating system and verified by Apple's MDM framework.}
+\label{tab:tier-comparison}
+\vspace{4pt}
+\scriptsize
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Property} & \textbf{Tier 0} & \textbf{Tier 1} & \textbf{Tier 2} & \textbf{Tier 3} \\
+\midrule
+Device is real Apple hardware & --- & --- & Crypto & Crypto \\
+SIP / Secure Boot enabled & --- & Self & OS + MDM & OS + MDM \\
+SE key identity & --- & Self & Self + OS & Crypto \\
+Response integrity (signed) & --- & --- & OS & Crypto \\
+Output traceable to Apple Root CA & --- & --- & --- & Crypto \\
+User-verifiable without coordinator & --- & --- & Partial & Full \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =====================================================================
 \section{End-to-End Encryption}
 \label{sec:e2e}
 
