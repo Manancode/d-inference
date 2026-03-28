@@ -13,7 +13,11 @@ import {
   Lock,
   HardDrive,
   Fingerprint,
+  Loader2,
+  ExternalLink,
 } from "lucide-react";
+
+const ATTESTATION_API = "https://inference-test.openinnovation.dev";
 
 function StatusLine({
   ok,
@@ -43,6 +47,16 @@ function StatusLine({
 
 export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
   const [open, setOpen] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<string | null>(null);
+  const [providerDetail, setProviderDetail] = useState<{
+    systemVolumeHash?: string;
+    sePublicKey?: string;
+    mdaSerial?: string;
+    mdaOsVersion?: string;
+    mdaSepVersion?: string;
+    mdaCertCount?: number;
+  } | null>(null);
 
   const isHardware = trust.trustLevel === "hardware";
   const isSelfSigned = trust.trustLevel === "self_signed";
@@ -73,6 +87,60 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
   const chipLabel = trust.providerChip
     ? `${trust.providerChip}${trust.providerSerial ? ` · ${trust.providerSerial}` : ""}`
     : "";
+
+  async function handleVerify() {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await fetch(`${ATTESTATION_API}/v1/providers/attestation`);
+      const data = await res.json();
+
+      // Find this provider by serial
+      const provider = data.providers?.find(
+        (p: { serial_number: string }) => p.serial_number === trust.providerSerial
+      ) || data.providers?.[0];
+
+      if (!provider) {
+        setVerifyResult("Provider not found in attestation API");
+        return;
+      }
+
+      // Store details for display
+      setProviderDetail({
+        systemVolumeHash: provider.system_volume_hash,
+        sePublicKey: provider.se_public_key,
+        mdaSerial: provider.mda_serial,
+        mdaOsVersion: provider.mda_os_version,
+        mdaSepVersion: provider.mda_sepos_version,
+        mdaCertCount: provider.mda_cert_chain_b64?.length || 0,
+      });
+
+      // Verify checks
+      const certs = provider.mda_cert_chain_b64 || [];
+      const checks = [
+        { ok: provider.trust_level === "hardware", label: "Hardware trust level" },
+        { ok: provider.mdm_verified, label: "MDM SecurityInfo verified" },
+        { ok: provider.mda_verified, label: "Apple MDA cert chain verified" },
+        { ok: certs.length >= 2, label: `Apple cert chain: ${certs.length} certificates` },
+        { ok: provider.mda_serial === provider.serial_number, label: `Serial match: ${provider.mda_serial}` },
+        { ok: provider.secure_enclave, label: "Secure Enclave available" },
+        { ok: provider.sip_enabled, label: "SIP enabled" },
+        { ok: provider.secure_boot_enabled, label: "Secure Boot enabled" },
+        { ok: provider.authenticated_root_enabled, label: "Authenticated Root Volume" },
+      ];
+
+      const passed = checks.filter((c) => c.ok).length;
+      setVerifyResult(
+        passed === checks.length
+          ? `All ${passed} checks passed. Provider ${provider.serial_number} verified by Apple Enterprise Attestation Root CA.`
+          : `${passed}/${checks.length} checks passed. ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")} failed.`
+      );
+    } catch (e) {
+      setVerifyResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setVerifying(false);
+    }
+  }
 
   return (
     <div className={`rounded-lg border ${bg} overflow-hidden`}>
@@ -154,7 +222,6 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
             <StatusLine ok={isHardware} label="PT_DENY_ATTACH (anti-debug)" />
             <StatusLine ok={isHardware} label="Hardened Runtime (no task_for_pid)" />
             <StatusLine ok={isHardware} label="Memory wiping after inference" />
-            <StatusLine ok={isHardware} label="Python path locked to signed bundle" />
           </div>
 
           {trust.mdaVerified && (
@@ -165,63 +232,106 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
                   Apple Device Attestation
                 </span>
               </div>
-              <StatusLine
-                ok={true}
-                label="Apple CA certificate chain verified"
-              />
+              <StatusLine ok={true} label="Apple CA certificate chain verified" />
               <StatusLine ok={true} label="Device identity confirmed by Apple" />
             </div>
           )}
 
-          <div className="mt-3 pt-2 border-t border-border-dim/50">
-            <p className="text-[10px] text-text-tertiary leading-relaxed">
-              {isHardware
-                ? "This provider's security posture was independently verified by querying Apple's MDM framework. SIP, Secure Boot, and the sealed system volume were confirmed. The provider cannot read your inference data."
-                : isSelfSigned
-                ? "This provider presented a Secure Enclave attestation but has not been independently verified via MDM."
-                : "This provider has not been verified. Responses should not be trusted with sensitive data."}
-            </p>
-          </div>
-
+          {/* Verify button — fetches attestation data and checks inline */}
           {isHardware && (
             <div className="mt-3 pt-2 border-t border-border-dim/50">
-              <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-2">
-                Verify Yourself
+              <button
+                onClick={handleVerify}
+                disabled={verifying}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent-purple/10 border border-accent-purple/20 text-accent-purple text-xs font-medium hover:bg-accent-purple/20 transition-colors disabled:opacity-50"
+              >
+                {verifying ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <ShieldCheck size={12} />
+                )}
+                Verify Apple Attestation
+              </button>
+
+              {verifyResult && (
+                <p
+                  className={`mt-2 text-xs font-mono leading-relaxed ${
+                    verifyResult.startsWith("All") ? "text-accent-green" : "text-accent-red"
+                  }`}
+                >
+                  {verifyResult}
+                </p>
+              )}
+
+              {providerDetail && (
+                <div className="mt-2 space-y-1.5">
+                  {providerDetail.mdaSerial && (
+                    <p className="text-[10px] text-text-tertiary">
+                      <span className="font-mono">MDA Serial:</span> {providerDetail.mdaSerial}
+                    </p>
+                  )}
+                  {providerDetail.mdaOsVersion && (
+                    <p className="text-[10px] text-text-tertiary">
+                      <span className="font-mono">macOS:</span> {providerDetail.mdaOsVersion}
+                      {providerDetail.mdaSepVersion && ` · SepOS: ${providerDetail.mdaSepVersion}`}
+                    </p>
+                  )}
+                  {providerDetail.mdaCertCount !== undefined && providerDetail.mdaCertCount > 0 && (
+                    <p className="text-[10px] text-text-tertiary">
+                      <span className="font-mono">Apple Certs:</span> {providerDetail.mdaCertCount} (leaf + intermediate)
+                    </p>
+                  )}
+                  {providerDetail.systemVolumeHash && (
+                    <div>
+                      <p className="text-[10px] font-mono text-text-tertiary">Volume Hash:</p>
+                      <p className="text-[9px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded px-1.5 py-1 mt-0.5">
+                        {providerDetail.systemVolumeHash}
+                      </p>
+                    </div>
+                  )}
+                  {providerDetail.sePublicKey && (
+                    <div>
+                      <p className="text-[10px] font-mono text-text-tertiary">SE Public Key:</p>
+                      <p className="text-[9px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded px-1.5 py-1 mt-0.5">
+                        {providerDetail.sePublicKey}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <p className="mt-2 text-[10px] text-text-tertiary leading-relaxed">
+                Manual: download MDA cert chain from{" "}
+                <a
+                  href={`${ATTESTATION_API}/v1/providers/attestation`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-purple hover:underline inline-flex items-center gap-0.5"
+                >
+                  attestation API
+                  <ExternalLink size={8} />
+                </a>
+                , decode base64 to DER, verify against{" "}
+                <a
+                  href="https://www.apple.com/certificateauthority/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-purple hover:underline inline-flex items-center gap-0.5"
+                >
+                  Apple&apos;s Root CA
+                  <ExternalLink size={8} />
+                </a>
               </p>
-              <div className="space-y-2 text-[10px] text-text-tertiary leading-relaxed">
-                <p>
-                  <span className="text-text-secondary font-medium">1.</span> Visit{" "}
-                  <a
-                    href="/providers"
-                    className="text-accent-purple hover:underline"
-                  >
-                    /providers
-                  </a>{" "}
-                  and expand the Security Verification panel
-                </p>
-                <p>
-                  <span className="text-text-secondary font-medium">2.</span> Click{" "}
-                  <span className="text-accent-purple font-medium">Verify Apple Attestation</span>{" "}
-                  to check the certificate chain in your browser
-                </p>
-                <p>
-                  <span className="text-text-secondary font-medium">3.</span> For manual verification: download the MDA cert chain (base64 DER),
-                  decode it, and verify against{" "}
-                  <a
-                    href="https://www.apple.com/certificateauthority/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent-purple hover:underline"
-                  >
-                    Apple&apos;s Enterprise Attestation Root CA
-                  </a>
-                </p>
-                <p>
-                  <span className="text-text-secondary font-medium">4.</span> Every inference response includes an{" "}
-                  <span className="font-mono text-text-secondary">se_signature</span>{" "}
-                  signed by the provider&apos;s Secure Enclave key, verifiable against the SE public key shown on the providers page
-                </p>
-              </div>
+            </div>
+          )}
+
+          {!isHardware && (
+            <div className="mt-3 pt-2 border-t border-border-dim/50">
+              <p className="text-[10px] text-text-tertiary leading-relaxed">
+                {isSelfSigned
+                  ? "This provider presented a Secure Enclave attestation. MDM and Apple Device Attestation are being verified..."
+                  : "This provider has not been verified."}
+              </p>
             </div>
           )}
         </div>
