@@ -304,6 +304,15 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		case chunk, ok := <-pr.ChunkCh:
 			if !ok {
 				// Channel closed — inference complete.
+				// Include SE signature as final event before [DONE]
+				if pr.SESignature != "" {
+					sigEvent, _ := json.Marshal(map[string]any{
+						"se_signature":  pr.SESignature,
+						"response_hash": pr.ResponseHash,
+					})
+					fmt.Fprintf(w, "data: %s\n\n", sigEvent)
+					flusher.Flush()
+				}
 				fmt.Fprint(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				return
@@ -363,7 +372,7 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, r *http.Reque
 				// Wait for usage info from the provider's InferenceComplete message.
 				select {
 				case usage := <-pr.CompleteCh:
-					resp := buildNonStreamingResponse(pr.RequestID, pr.Model, content, usage)
+					resp := buildNonStreamingResponse(pr.RequestID, pr.Model, content, usage, pr.SESignature, pr.ResponseHash)
 					writeJSON(w, http.StatusOK, resp)
 				case <-ctx.Done():
 					writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "timed out waiting for usage info"))
@@ -418,8 +427,8 @@ func extractContent(chunks []string) string {
 
 // buildNonStreamingResponse constructs a complete OpenAI-compatible chat
 // completion response from the aggregated content and usage info.
-func buildNonStreamingResponse(requestID, model, content string, usage protocol.UsageInfo) map[string]any {
-	return map[string]any{
+func buildNonStreamingResponse(requestID, model, content string, usage protocol.UsageInfo, seSignature, responseHash string) map[string]any {
+	resp := map[string]any{
 		"id":      "chatcmpl-" + requestID,
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
@@ -440,6 +449,14 @@ func buildNonStreamingResponse(requestID, model, content string, usage protocol.
 			"total_tokens":      usage.PromptTokens + usage.CompletionTokens,
 		},
 	}
+
+	// Include SE signature if the provider signed the response
+	if seSignature != "" {
+		resp["se_signature"] = seSignature
+		resp["response_hash"] = responseHash
+	}
+
+	return resp
 }
 
 // handleListModels handles GET /v1/models.

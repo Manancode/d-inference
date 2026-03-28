@@ -403,6 +403,10 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 		return
 	}
 
+	// Store SE signature for the consumer response headers.
+	pr.SESignature = msg.SESignature
+	pr.ResponseHash = msg.ResponseHash
+
 	// Send usage and signal completion.
 	pr.CompleteCh <- msg.Usage
 	close(pr.ChunkCh)

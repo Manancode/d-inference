@@ -58,6 +58,8 @@ type PendingRequest struct {
 	CompleteCh     chan protocol.UsageInfo  // closed after usage sent
 	ErrorCh        chan protocol.InferenceErrorMessage
 	SessionPrivKey *[32]byte               // E2E session private key for decrypting responses
+	SESignature    string                  // SE signature over response hash
+	ResponseHash   string                  // SHA-256 of response data
 }
 
 // Provider represents a connected provider agent.
