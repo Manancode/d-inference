@@ -142,65 +142,52 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	inferenceBody, _ := json.Marshal(plainBody)
 
-	// E2E encrypt the request body if the provider has a public key.
-	// This prevents the provider from reading prompts via MITM on their
-	// own network — only the hardened process can decrypt with its private key.
-	var wireMsg map[string]any
-	var sessionKeys *e2e.SessionKeys
-
-	if provider.PublicKey != "" {
-		providerPubKey, err := e2e.ParsePublicKey(provider.PublicKey)
-		if err != nil {
-			s.logger.Warn("provider public key invalid, sending unencrypted",
-				"provider_id", provider.ID, "error", err)
-			wireMsg = map[string]any{
-				"type":       protocol.TypeInferenceRequest,
-				"request_id": requestID,
-				"body":       json.RawMessage(inferenceBody),
-			}
-		} else {
-			session, err := e2e.GenerateSessionKeys()
-			if err != nil {
-				s.logger.Error("failed to generate session keys", "error", err)
-				wireMsg = map[string]any{
-					"type":       protocol.TypeInferenceRequest,
-					"request_id": requestID,
-					"body":       json.RawMessage(inferenceBody),
-				}
-			} else {
-				sessionKeys = session
-				encrypted, err := e2e.Encrypt(inferenceBody, providerPubKey, session)
-				if err != nil {
-					s.logger.Error("failed to encrypt request", "error", err)
-					wireMsg = map[string]any{
-						"type":       protocol.TypeInferenceRequest,
-						"request_id": requestID,
-						"body":       json.RawMessage(inferenceBody),
-					}
-				} else {
-					wireMsg = map[string]any{
-						"type":       protocol.TypeInferenceRequest,
-						"request_id": requestID,
-						"encrypted_body": map[string]string{
-							"ephemeral_public_key": encrypted.EphemeralPublicKey,
-							"ciphertext":           encrypted.Ciphertext,
-						},
-					}
-					s.logger.Debug("request encrypted for provider",
-						"request_id", requestID,
-						"provider_id", provider.ID,
-					)
-				}
-			}
-		}
-	} else {
-		// No public key — send unencrypted (provider registered without key)
-		wireMsg = map[string]any{
-			"type":       protocol.TypeInferenceRequest,
-			"request_id": requestID,
-			"body":       json.RawMessage(inferenceBody),
-		}
+	// E2E encryption is mandatory. Providers without a public key cannot
+	// receive inference requests — consumer prompts must never travel in plaintext.
+	if provider.PublicKey == "" {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("encryption_required",
+			"no provider with E2E encryption available for this model — prompt data requires encryption"))
+		return
 	}
+
+	providerPubKey, err := e2e.ParsePublicKey(provider.PublicKey)
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"provider public key invalid"))
+		return
+	}
+
+	sessionKeys, err := e2e.GenerateSessionKeys()
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"failed to generate session keys"))
+		return
+	}
+
+	encrypted, err := e2e.Encrypt(inferenceBody, providerPubKey, sessionKeys)
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"failed to encrypt request"))
+		return
+	}
+
+	wireMsg := map[string]any{
+		"type":       protocol.TypeInferenceRequest,
+		"request_id": requestID,
+		"encrypted_body": map[string]string{
+			"ephemeral_public_key": encrypted.EphemeralPublicKey,
+			"ciphertext":           encrypted.Ciphertext,
+		},
+	}
+
+	s.logger.Debug("request encrypted for provider",
+		"request_id", requestID,
+		"provider_id", provider.ID,
+	)
 
 	// Create pending request channels. These channels connect the provider's
 	// WebSocket read loop to this HTTP handler, allowing chunks to flow from
@@ -215,10 +202,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		CompleteCh:  make(chan protocol.UsageInfo, 1),
 		ErrorCh:     make(chan protocol.InferenceErrorMessage, 1),
 	}
-	// Store session key for decrypting encrypted responses
-	if sessionKeys != nil {
-		pr.SessionPrivKey = &sessionKeys.PrivateKey
-	}
+	pr.SessionPrivKey = &sessionKeys.PrivateKey
 	provider.AddPending(pr)
 
 	// Send the inference request to the provider via WebSocket.
