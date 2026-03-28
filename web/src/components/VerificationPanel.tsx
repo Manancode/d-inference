@@ -67,8 +67,12 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
       ? "Apple Attested"
       : "Hardware Verified"
     : isSelfSigned
-    ? "Self-Signed"
+    ? "Verifying..."
     : "Unverified";
+
+  const chipLabel = trust.providerChip
+    ? `${trust.providerChip}${trust.providerSerial ? ` · ${trust.providerSerial}` : ""}`
+    : "";
 
   return (
     <div className={`rounded-lg border ${bg} overflow-hidden`}>
@@ -78,6 +82,11 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
       >
         <Icon size={14} className={color} />
         <span className={`text-xs font-medium ${color}`}>{title}</span>
+        {chipLabel && (
+          <span className="text-[10px] text-text-tertiary font-mono ml-1">
+            {chipLabel}
+          </span>
+        )}
         <ChevronDown
           size={12}
           className={`ml-auto text-text-tertiary transition-transform ${

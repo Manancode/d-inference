@@ -239,7 +239,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Provider-Attested", "false")
 	}
 	w.Header().Set("X-Provider-Trust-Level", string(provider.TrustLevel))
+	w.Header().Set("X-Provider-ID", provider.ID)
+	w.Header().Set("X-Provider-Chip", provider.Hardware.ChipName)
+	w.Header().Set("X-Provider-Model", provider.Hardware.MachineModel)
 	if provider.AttestationResult != nil {
+		w.Header().Set("X-Provider-Serial", provider.AttestationResult.SerialNumber)
 		if provider.AttestationResult.SecureEnclaveAvailable {
 			w.Header().Set("X-Provider-Secure-Enclave", "true")
 		} else {
