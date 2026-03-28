@@ -117,7 +117,11 @@ pub enum CoordinatorMessage {
     /// Transcription request — provider should transcribe the audio data.
     TranscriptionRequest {
         request_id: String,
-        body: TranscriptionRequestBody,
+        #[serde(default)]
+        body: serde_json::Value,
+        /// E2E encrypted transcription body — same encryption as inference requests
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_body: Option<EncryptedPayload>,
     },
     Cancel {
         request_id: String,
@@ -549,14 +553,16 @@ mod tests {
 
     #[test]
     fn test_transcription_request_roundtrip() {
+        let body = serde_json::json!({
+            "model": "CohereLabs/cohere-transcribe",
+            "audio": "SGVsbG8=",
+            "language": "en",
+            "format": "wav"
+        });
         let msg = CoordinatorMessage::TranscriptionRequest {
             request_id: "stt-123".to_string(),
-            body: TranscriptionRequestBody {
-                model: "CohereLabs/cohere-transcribe".to_string(),
-                audio: "SGVsbG8=".to_string(),
-                language: Some("en".to_string()),
-                format: "wav".to_string(),
-            },
+            body,
+            encrypted_body: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -597,16 +603,31 @@ mod tests {
 
     #[test]
     fn test_deserialize_transcription_request_from_go_json() {
-        // This is the JSON format that Go coordinator would produce
+        // This is the JSON format that Go coordinator would produce (plaintext)
         let raw = r#"{"type":"transcription_request","request_id":"go-req-1","body":{"model":"cohere-transcribe","audio":"dGVzdA==","language":"en","format":"mp3"}}"#;
         let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
         match msg {
-            CoordinatorMessage::TranscriptionRequest { request_id, body } => {
+            CoordinatorMessage::TranscriptionRequest { request_id, body, encrypted_body } => {
                 assert_eq!(request_id, "go-req-1");
-                assert_eq!(body.model, "cohere-transcribe");
-                assert_eq!(body.audio, "dGVzdA==");
-                assert_eq!(body.language, Some("en".to_string()));
-                assert_eq!(body.format, "mp3");
+                assert_eq!(body["model"], "cohere-transcribe");
+                assert_eq!(body["audio"], "dGVzdA==");
+                assert!(encrypted_body.is_none());
+            }
+            _ => panic!("expected TranscriptionRequest"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_transcription_request_encrypted() {
+        // When E2E encrypted, body is empty and encrypted_body is present
+        let raw = r#"{"type":"transcription_request","request_id":"enc-1","encrypted_body":{"ephemeral_public_key":"a2V5","ciphertext":"Y2lwaGVy"}}"#;
+        let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
+        match msg {
+            CoordinatorMessage::TranscriptionRequest { request_id, encrypted_body, .. } => {
+                assert_eq!(request_id, "enc-1");
+                let enc = encrypted_body.unwrap();
+                assert_eq!(enc.ephemeral_public_key, "a2V5");
+                assert_eq!(enc.ciphertext, "Y2lwaGVy");
             }
             _ => panic!("expected TranscriptionRequest"),
         }

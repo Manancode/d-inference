@@ -223,10 +223,13 @@ type TranscriptionRequestBody struct {
 }
 
 // TranscriptionRequestMessage tells a provider to transcribe audio.
+// When E2E encryption is enabled, Body is empty and EncryptedBody contains
+// the NaCl Box encrypted request (same as InferenceRequestMessage).
 type TranscriptionRequestMessage struct {
-	Type      string                   `json:"type"`
-	RequestID string                   `json:"request_id"`
-	Body      TranscriptionRequestBody `json:"body"`
+	Type          string                   `json:"type"`
+	RequestID     string                   `json:"request_id"`
+	Body          TranscriptionRequestBody `json:"body,omitempty"`
+	EncryptedBody *EncryptedPayload        `json:"encrypted_body,omitempty"`
 }
 
 // TranscriptionSegment is a timed segment within a transcription.

@@ -260,12 +260,35 @@ impl CoordinatorClient {
                                         body: decrypted_body,
                                     }).await;
                                 }
-                                Ok(CoordinatorMessage::TranscriptionRequest { request_id, body }) => {
+                                Ok(CoordinatorMessage::TranscriptionRequest { request_id, body, encrypted_body }) => {
                                     tracing::info!("Received transcription request: {request_id}");
-                                    let _ = event_tx.send(CoordinatorEvent::TranscriptionRequest {
-                                        request_id,
-                                        body,
-                                    }).await;
+
+                                    // Decrypt E2E encrypted body if present
+                                    let decrypted_body = if let Some(enc) = encrypted_body {
+                                        tracing::info!("Decrypting E2E encrypted transcription request");
+                                        match decrypt_request_body(&enc, self.public_key.as_deref()) {
+                                            Ok(b) => b,
+                                            Err(e) => {
+                                                tracing::error!("Failed to decrypt transcription request: {e}");
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        body
+                                    };
+
+                                    // Parse the transcription body
+                                    match serde_json::from_value::<TranscriptionRequestBody>(decrypted_body) {
+                                        Ok(parsed_body) => {
+                                            let _ = event_tx.send(CoordinatorEvent::TranscriptionRequest {
+                                                request_id,
+                                                body: parsed_body,
+                                            }).await;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Failed to parse transcription body: {e}");
+                                        }
+                                    }
                                 }
                                 Ok(CoordinatorMessage::Cancel { request_id }) => {
                                     tracing::info!("Received cancel for: {request_id}");

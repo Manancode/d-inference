@@ -361,10 +361,64 @@ func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		transcriptionBody.Language = &language
 	}
 
-	wireMsg := map[string]any{
-		"type":       protocol.TypeTranscriptionRequest,
-		"request_id": requestID,
-		"body":       transcriptionBody,
+	bodyJSON, _ := json.Marshal(transcriptionBody)
+
+	// E2E encrypt the audio payload if the provider has a public key.
+	// Audio data (someone's voice) is at least as sensitive as text prompts.
+	var wireMsg map[string]any
+	var sessionKeys *e2e.SessionKeys
+
+	if provider.PublicKey != "" {
+		providerPubKey, err := e2e.ParsePublicKey(provider.PublicKey)
+		if err != nil {
+			s.logger.Warn("provider public key invalid, sending unencrypted",
+				"provider_id", provider.ID, "error", err)
+			wireMsg = map[string]any{
+				"type":       protocol.TypeTranscriptionRequest,
+				"request_id": requestID,
+				"body":       json.RawMessage(bodyJSON),
+			}
+		} else {
+			session, err := e2e.GenerateSessionKeys()
+			if err != nil {
+				s.logger.Error("failed to generate session keys for transcription", "error", err)
+				wireMsg = map[string]any{
+					"type":       protocol.TypeTranscriptionRequest,
+					"request_id": requestID,
+					"body":       json.RawMessage(bodyJSON),
+				}
+			} else {
+				sessionKeys = session
+				encrypted, err := e2e.Encrypt(bodyJSON, providerPubKey, session)
+				if err != nil {
+					s.logger.Error("failed to encrypt transcription request", "error", err)
+					wireMsg = map[string]any{
+						"type":       protocol.TypeTranscriptionRequest,
+						"request_id": requestID,
+						"body":       json.RawMessage(bodyJSON),
+					}
+				} else {
+					wireMsg = map[string]any{
+						"type":       protocol.TypeTranscriptionRequest,
+						"request_id": requestID,
+						"encrypted_body": map[string]string{
+							"ephemeral_public_key": encrypted.EphemeralPublicKey,
+							"ciphertext":           encrypted.Ciphertext,
+						},
+					}
+					s.logger.Debug("transcription request encrypted for provider",
+						"request_id", requestID,
+						"provider_id", provider.ID,
+					)
+				}
+			}
+		}
+	} else {
+		wireMsg = map[string]any{
+			"type":       protocol.TypeTranscriptionRequest,
+			"request_id": requestID,
+			"body":       json.RawMessage(bodyJSON),
+		}
 	}
 
 	// Create pending request with transcription channel.
@@ -377,6 +431,9 @@ func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		CompleteCh:      make(chan protocol.UsageInfo, 1),
 		ErrorCh:         make(chan protocol.InferenceErrorMessage, 1),
 		TranscriptionCh: make(chan *protocol.TranscriptionCompleteMessage, 1),
+	}
+	if sessionKeys != nil {
+		pr.SessionPrivKey = &sessionKeys.PrivateKey
 	}
 	provider.AddPending(pr)
 
