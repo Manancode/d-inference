@@ -22,8 +22,11 @@ package api
 
 import (
 	"context"
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -144,11 +147,11 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 			provider = s.registry.Register(providerID, conn, regMsg)
 			s.verifyProviderAttestation(providerID, provider, regMsg)
 
-			// If ACME client cert was verified, upgrade to hardware trust immediately.
-			// This proves the provider's SE key is Apple-attested — strongest verification.
+			// If ACME client cert was verified, upgrade to hardware trust.
+			// ACME device-attest-01 proves the provider's SE key is Apple-attested.
 			if acmeResult != nil && acmeResult.Valid {
-				provider.TrustLevel = registry.TrustHardware
 				provider.ACMEVerified = true
+				provider.TrustLevel = registry.TrustHardware
 				s.logger.Info("ACME client cert verified — hardware trust via Apple SE attestation",
 					"provider_id", providerID,
 					"acme_serial", acmeResult.SerialNumber,
@@ -618,7 +621,7 @@ func (s *Server) verifyProviderViaMDM(providerID string, provider *registry.Prov
 		return
 	}
 
-	// MDM SecurityInfo verification passed — upgrade trust level
+	// MDM SecurityInfo verification passed — upgrade to hardware trust.
 	provider.TrustLevel = registry.TrustHardware
 	s.logger.Info("MDM verification passed — upgraded to hardware trust",
 		"provider_id", providerID,
@@ -643,13 +646,31 @@ func (s *Server) verifyAppleDeviceAttestation(providerID string, provider *regis
 		return
 	}
 
-	s.logger.Info("requesting Apple Device Attestation (MDA)",
-		"provider_id", providerID,
-		"udid", udid,
-	)
+	// Compute SE key hash for nonce-based key binding.
+	// If the provider has an SE public key, include its hash as the
+	// DeviceAttestationNonce. Apple will embed SHA-256(nonce) as FreshnessCode
+	// in the signed cert, cryptographically binding the SE key to genuine hardware.
+	var seKeyNonce string
+	var expectedFreshness [32]byte
+	if attestResult.PublicKey != "" {
+		seKeyHash := sha256.Sum256([]byte(attestResult.PublicKey))
+		seKeyNonce = base64.StdEncoding.EncodeToString(seKeyHash[:])
+		expectedFreshness = sha256.Sum256([]byte(seKeyNonce))
+		s.logger.Info("requesting Apple Device Attestation (MDA) with SE key binding",
+			"provider_id", providerID,
+			"udid", udid,
+			"se_key_hash", hex.EncodeToString(seKeyHash[:8])+"...",
+		)
+	} else {
+		s.logger.Info("requesting Apple Device Attestation (MDA)",
+			"provider_id", providerID,
+			"udid", udid,
+		)
+	}
 
-	// Send DeviceInformation command requesting DevicePropertiesAttestation
-	_, err := s.mdmClient.SendDeviceAttestationCommand(udid)
+	// Always send the raw plist command so the nonce reaches Apple's servers.
+	// The structured MicroMDM API doesn't support DeviceAttestationNonce.
+	_, err := s.mdmClient.SendDeviceAttestationCommand(udid, seKeyNonce)
 	if err != nil {
 		s.logger.Warn("failed to send DeviceInformation attestation command",
 			"provider_id", providerID,
@@ -701,13 +722,37 @@ func (s *Server) verifyAppleDeviceAttestation(providerID string, provider *regis
 	provider.MDAVerified = true
 	provider.MDACertChain = attestResp.CertChain
 	provider.MDAResult = mdaResult
-	s.logger.Info("Apple Device Attestation (MDA) verified — Apple CA confirmed device identity",
-		"provider_id", providerID,
-		"mda_serial", mdaResult.DeviceSerial,
-		"mda_udid", mdaResult.DeviceUDID,
-		"mda_os_version", mdaResult.OSVersion,
-		"mda_sepos_version", mdaResult.SepOSVersion,
-	)
+
+	// Verify SE key binding via FreshnessCode if we sent a nonce.
+	// Apple computes FreshnessCode = SHA-256(DeviceAttestationNonce).
+	if seKeyNonce != "" && len(mdaResult.FreshnessCode) > 0 {
+		if bytes.Equal(mdaResult.FreshnessCode, expectedFreshness[:]) {
+			provider.SEKeyBound = true
+			s.logger.Info("MDA verified with SE key binding — Apple CA confirmed device + key",
+				"provider_id", providerID,
+				"mda_serial", mdaResult.DeviceSerial,
+				"mda_udid", mdaResult.DeviceUDID,
+				"se_key_bound", true,
+			)
+		} else {
+			s.logger.Warn("MDA verified but FreshnessCode mismatch — SE key NOT bound",
+				"provider_id", providerID,
+				"mda_serial", mdaResult.DeviceSerial,
+				"expected_freshness", hex.EncodeToString(expectedFreshness[:8])+"...",
+				"got_freshness", hex.EncodeToString(mdaResult.FreshnessCode[:min(8, len(mdaResult.FreshnessCode))])+"...",
+			)
+		}
+	} else {
+		s.logger.Info("Apple Device Attestation (MDA) verified — Apple CA confirmed device identity",
+			"provider_id", providerID,
+			"mda_serial", mdaResult.DeviceSerial,
+			"mda_udid", mdaResult.DeviceUDID,
+			"mda_os_version", mdaResult.OSVersion,
+			"mda_sepos_version", mdaResult.SepOSVersion,
+			"se_key_bound", false,
+			"freshness_code_len", len(mdaResult.FreshnessCode),
+		)
+	}
 }
 
 // handleProviderAttestation returns the attestation proof for all providers.

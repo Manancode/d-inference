@@ -82,30 +82,47 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find a provider that serves the requested model. The registry only
-	// routes to hardware-trusted (MDM-verified) providers.
-	provider := s.registry.FindProvider(req.Model)
+	// Consumer-selectable trust level. Consumers can request a minimum trust
+	// tier (e.g. "hardware") to filter providers. If not specified, uses the
+	// registry's default (hardware).
+	var requestedTrust registry.TrustLevel
+	if trustParam := r.URL.Query().Get("trust_level"); trustParam != "" {
+		requestedTrust = registry.TrustLevel(trustParam)
+		if trustRank := registry.TrustRank(requestedTrust); trustRank < 0 {
+			writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error",
+				fmt.Sprintf("invalid trust_level %q — valid values: none, self_signed, hardware", trustParam)))
+			return
+		}
+	}
+
+	// Find a provider that serves the requested model.
+	provider := s.registry.FindProviderWithTrust(req.Model, requestedTrust)
 	if provider == nil {
-		// No idle hardware-trusted provider — try queueing the request.
+		trustDesc := "hardware-trusted"
+		if requestedTrust != "" {
+			trustDesc = string(requestedTrust)
+		}
+		// No idle provider at requested trust — try queueing.
 		queuedReq := &registry.QueuedRequest{
 			RequestID:  uuid.New().String(),
 			Model:      req.Model,
 			ResponseCh: make(chan *registry.Provider, 1),
 		}
 		if err := s.registry.Queue().Enqueue(queuedReq); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider available for model %q and queue is full", req.Model)))
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no %s provider available for model %q and queue is full", trustDesc, req.Model)))
 			return
 		}
 
-		s.logger.Info("request queued, waiting for hardware-trusted provider",
+		s.logger.Info("request queued, waiting for provider",
 			"model", req.Model,
+			"trust_level", trustDesc,
 			"queue_request_id", queuedReq.RequestID,
 		)
 
 		var err error
 		provider, err = s.registry.Queue().WaitForProvider(queuedReq)
 		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", req.Model)))
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no %s provider became available for model %q (queue timeout)", trustDesc, req.Model)))
 			return
 		}
 	}

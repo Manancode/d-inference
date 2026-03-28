@@ -1341,9 +1341,10 @@ async fn cmd_enroll(coordinator_url: String) -> Result<()> {
         println!();
         println!("  Install it in System Settings → General → Device Management");
         println!("  This will:");
-        println!("    1. Generate a key in your Secure Enclave");
-        println!("    2. Apple verifies your device is genuine hardware");
-        println!("    3. A certificate is issued binding the SE key to your device");
+        println!("    1. Enroll in MDM for security verification");
+        println!("    2. Generate a key in your Secure Enclave");
+        println!("    3. Apple verifies your device is genuine hardware");
+        println!("    4. A certificate is issued binding the SE key to your device");
         println!();
         let _ = std::process::Command::new("open").arg(&profile_path).status();
     }

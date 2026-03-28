@@ -164,24 +164,6 @@ do {
         let signature = try signIdentity.sign(data)
         print(signature.base64EncodedString())
 
-    case "tls-bridge":
-        // WebSocket bridge with TLS client cert from managed profile
-        var coordinatorURL = "wss://inference-test.openinnovation.dev/ws/provider"
-        var socketPath = "/tmp/dginf-ws-bridge.sock"
-        var i = 2
-        while i < args.count {
-            if args[i] == "--url" && i + 1 < args.count {
-                coordinatorURL = args[i + 1]
-                i += 2
-            } else if args[i] == "--socket" && i + 1 < args.count {
-                socketPath = args[i + 1]
-                i += 2
-            } else {
-                i += 1
-            }
-        }
-        runWebSocketBridge(coordinatorURL: coordinatorURL, socketPath: socketPath)
-
     default:
         fputs("error: unknown command '\(command)'\n", stderr)
         printUsage()

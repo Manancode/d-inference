@@ -45,8 +45,7 @@ type TrustLevel string
 const (
 	TrustNone       TrustLevel = "none"        // No attestation provided
 	TrustSelfSigned TrustLevel = "self_signed"  // Attestation signed by provider's own key
-	TrustHardware   TrustLevel = "hardware"     // MDM + MDA verified by Apple
-	TrustAppleGrade TrustLevel = "apple_grade"  // ACME SE key verified + managed app (full Apple chain)
+	TrustHardware   TrustLevel = "hardware"     // MDM + MDA + SE key bound to Apple-verified hardware
 )
 
 // PendingRequest is a channel-based handle for an in-flight inference request.
@@ -78,6 +77,7 @@ type Provider struct {
 	MDACertChain      [][]byte   // DER-encoded Apple MDA certificate chain (leaf first)
 	MDAResult         *attestation.MDAResult // parsed OIDs from Apple cert
 	ACMEVerified      bool       // true if ACME device-attest-01 client cert verified (SE key proven)
+	SEKeyBound        bool       // true if SE key was bound to device via MDA nonce
 	Status            ProviderStatus
 	Conn              *websocket.Conn
 	LastHeartbeat     time.Time
@@ -342,8 +342,6 @@ func (r *Registry) RecordChallengeFailure(providerID string) int {
 // TrustMultiplier returns the trust multiplier for routing score calculation.
 func TrustMultiplier(t TrustLevel) float64 {
 	switch t {
-	case TrustAppleGrade:
-		return 1.2 // Premium — full Apple SE key chain
 	case TrustHardware:
 		return 1.0
 	case TrustSelfSigned:
@@ -426,8 +424,22 @@ func ScoreProvider(p *Provider, model string) float64 {
 // and warm model cache. Picks the highest-scoring provider that has
 // concurrency headroom (pending requests < MaxConcurrentRequests).
 func (r *Registry) FindProvider(model string) *Provider {
+	return r.FindProviderWithTrust(model, "")
+}
+
+// FindProviderWithTrust selects a provider with an optional per-request
+// minimum trust level. If minTrust is empty, the registry's default
+// MinTrustLevel is used. Consumers can request a specific trust level
+// (e.g. hardware) to filter providers.
+func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel) *Provider {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Determine effective minimum: max of registry default and per-request
+	effectiveMin := r.MinTrustLevel
+	if minTrust != "" && trustRank(minTrust) > trustRank(effectiveMin) {
+		effectiveMin = minTrust
+	}
 
 	var candidates []*Provider
 	for _, p := range r.providers {
@@ -435,7 +447,7 @@ func (r *Registry) FindProvider(model string) *Provider {
 		if p.Status == StatusOffline || p.Status == StatusUntrusted {
 			continue
 		}
-		if !r.trustMeetsMinimum(p.TrustLevel) {
+		if trustRank(p.TrustLevel) < trustRank(effectiveMin) {
 			continue
 		}
 		// Skip providers at max concurrency
@@ -591,17 +603,23 @@ func (r *Registry) ListModels() []AggregateModel {
 }
 
 // trustRank returns a numeric rank for trust levels (higher = more trusted).
+// Returns -1 for unknown/invalid trust levels.
 func trustRank(t TrustLevel) int {
 	switch t {
-	case TrustAppleGrade:
-		return 3
 	case TrustHardware:
 		return 2
 	case TrustSelfSigned:
 		return 1
-	default:
+	case TrustNone:
 		return 0
+	default:
+		return -1
 	}
+}
+
+// TrustRank is the exported version of trustRank for use by other packages.
+func TrustRank(t TrustLevel) int {
+	return trustRank(t)
 }
 
 // RecordJobSuccess records a successful job completion for the provider's reputation.

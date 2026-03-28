@@ -25,6 +25,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // DeviceAttestationResponse contains the DER-encoded certificate chain
@@ -183,7 +185,25 @@ func (c *Client) SendSecurityInfoCommand(udid string) (string, error) {
 // DevicePropertiesAttestation from Apple. The device contacts Apple's servers,
 // which return a DER-encoded certificate chain signed by Apple's Enterprise
 // Attestation Root CA. This is the real MDA — Apple vouches for the device.
-func (c *Client) SendDeviceAttestationCommand(udid string) (string, error) {
+//
+// If nonce is non-empty, it is included as DeviceAttestationNonce. Apple hashes
+// the nonce and embeds the hash as FreshnessCode (OID 1.2.840.113635.100.8.11.1)
+// in the leaf certificate. This binds arbitrary data (e.g. a SE key hash) to
+// Apple's attestation signature.
+//
+// When a nonce is provided, we send a raw plist command because MicroMDM's
+// DeviceInformation struct doesn't support DeviceAttestationNonce.
+func (c *Client) SendDeviceAttestationCommand(udid string, nonce ...string) (string, error) {
+	// Always use raw plist to support DeviceAttestationNonce
+	nonceStr := ""
+	if len(nonce) > 0 {
+		nonceStr = nonce[0]
+	}
+	return c.sendDeviceAttestationWithNonce(udid, nonceStr)
+}
+
+// sendDeviceAttestationStructured is the legacy structured API path (unused).
+func (c *Client) sendDeviceAttestationStructured(udid string) (string, error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"udid":         udid,
 		"request_type": "DeviceInformation",
@@ -212,6 +232,67 @@ func (c *Client) SendDeviceAttestationCommand(udid string) (string, error) {
 	}
 
 	return result.Payload.CommandUUID, nil
+}
+
+// sendDeviceAttestationWithNonce sends a raw plist DeviceInformation command
+// with DeviceAttestationNonce. MicroMDM's structured API doesn't support this
+// field, so we bypass it with the raw command endpoint: POST /v1/commands/{udid}.
+func (c *Client) sendDeviceAttestationWithNonce(udid, nonce string) (string, error) {
+	cmdUUID := uuid.New().String()
+
+	// Build nonce XML if provided
+	nonceXML := ""
+	if nonce != "" {
+		nonceXML = fmt.Sprintf(`
+		<key>DeviceAttestationNonce</key>
+		<data>%s</data>`, nonce)
+	}
+
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Command</key>
+	<dict>
+		<key>RequestType</key>
+		<string>DeviceInformation</string>
+		<key>Queries</key>
+		<array>
+			<string>DevicePropertiesAttestation</string>
+		</array>%s
+	</dict>
+	<key>CommandUUID</key>
+	<string>%s</string>
+</dict>
+</plist>`, nonceXML, cmdUUID)
+
+	req, err := http.NewRequest("POST", c.baseURL+"/v1/commands/"+udid, bytes.NewReader([]byte(plist)))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth("micromdm", c.apiKey)
+	req.Header.Set("Content-Type", "application/xml")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("mdm send DeviceInformation with nonce failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("mdm raw command failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	// Push to trigger device check-in
+	pushReq, err := http.NewRequest("GET", c.baseURL+"/push/"+udid, nil)
+	if err != nil {
+		return cmdUUID, nil // command queued, push failed
+	}
+	pushReq.SetBasicAuth("micromdm", c.apiKey)
+	c.client.Do(pushReq)
+
+	return cmdUUID, nil
 }
 
 // WaitForDeviceAttestation waits for a DevicePropertiesAttestation response.

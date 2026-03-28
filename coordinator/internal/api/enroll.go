@@ -52,9 +52,12 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 }
 
 // generateCombinedProfile creates a .mobileconfig with three payloads:
-//   1. SCEP — MDM identity certificate (for enrollment)
-//   2. MDM — enrolls with MicroMDM (SecurityInfo verification)
-//   3. ACME — device-attest-01 (SE key binding via Apple attestation)
+//  1. SCEP — MDM identity certificate (for enrollment)
+//  2. MDM — enrolls with MicroMDM (SecurityInfo verification)
+//  3. ACME — device-attest-01 (SE key binding via Apple attestation)
+//
+// AccessRights=1041: profile inspection (1) + device lock/passcode (16) + security queries (1024).
+// This is read-only MDM — no app management or device wipe capabilities.
 func generateCombinedProfile(serialNumber string) string {
 	acmePayloadUUID := uuid.New().String()
 	profileUUID := uuid.New().String()
@@ -174,6 +177,8 @@ func generateCombinedProfile(serialNumber string) string {
       <true/>
       <key>Attest</key>
       <true/>
+      <key>KeyIsExtractable</key>
+      <false/>
       <key>Subject</key>
       <array>
         <array>

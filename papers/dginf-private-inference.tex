@@ -113,7 +113,7 @@ We present a system and method for private machine learning inference on a decen
 
 Our approach eliminates every software path through which inference data could be observed. The inference engine runs directly inside a single hardened process---no subprocess, no local server, no inter-process communication. The macOS kernel blocks all external access to this process's memory: debuggers are denied at the system call level (\texttt{PT\_DENY\_ATTACH}), memory-reading APIs are blocked by Hardened Runtime, and these protections cannot be disabled without rebooting, which terminates the process and erases its data. We prove that System Integrity Protection, once verified, is immutable for the process lifetime (Theorem~\ref{thm:sip}).
 
-A four-layer attestation architecture verifies each machine in the network: (1)~a Secure Enclave signature proves hardware-bound identity, (2)~Apple's MDM framework independently confirms the machine's security configuration, (3)~ACME \texttt{device-attest-01} produces an Apple-signed certificate chain proving the device is genuine Apple hardware with security features intact, and (4)~periodic challenge-response confirms nothing has changed since enrollment.
+A multi-layer attestation architecture verifies each machine in the network: (1)~a Secure Enclave signature proves hardware-bound identity, (2)~Apple's MDM framework independently confirms the machine's security configuration, (3)~Apple's Managed Device Attestation (MDA) produces an Apple-signed certificate chain proving the device is genuine hardware, with an MDA nonce binding the provider's signing key to the attested device, and (4)~periodic challenge-response confirms security posture has not degraded since enrollment.
 
 After eliminating all software access paths, the only remaining attack requires physically probing the memory chips---which are soldered directly into Apple's System-on-Chip package. This is the same residual threat model accepted by Apple's Private Cloud Compute~\cite{apple-pcc} for Siri and Apple Intelligence. We validate the system end-to-end on production hardware with live inference, demonstrating negligible security overhead (12\,ms per request).
 \end{abstract}
@@ -144,7 +144,7 @@ We present a system that makes this possible. Rather than encrypting memory (whi
     \item A \textbf{decentralized private inference architecture} that enables confidential AI computation on a network of third-party Apple Silicon machines, where each machine's owner is assumed to be adversarial.
     \item A \textbf{formal security model} for this setting, including a proof that System Integrity Protection provides runtime immutability under standard assumptions (Theorem~\ref{thm:sip}), and a complete enumeration of the software attack surface.
     \item An \textbf{in-process inference design} that embeds the inference engine directly in a hardened process, eliminating all inter-process communication channels that could be observed.
-    \item A \textbf{four-layer attestation architecture} combining Secure Enclave signatures, MDM-based independent verification, ACME \texttt{device-attest-01} hardware attestation with Apple-signed certificate chains, and periodic challenge-response with fresh security state.
+    \item A \textbf{multi-layer attestation architecture} combining Secure Enclave signatures, MDM-based independent verification, Apple MDA hardware attestation with Apple-signed certificate chains, MDA nonce-based SE key binding, and periodic challenge-response with fresh security state.
     \item A \textbf{combined enrollment protocol} that unifies MDM enrollment and ACME device attestation into a single configuration profile, reducing trust establishment to a one-step process.
     \item \textbf{End-to-end validation} on production hardware (Apple M2 and M4~Max) with live inference, demonstrating that the security mechanisms introduce negligible overhead.
     \item A \textbf{cost analysis} showing that Mixture-of-Experts models create 6--32$\times$ cost advantages on unified-memory hardware versus cloud GPUs, establishing economic feasibility.
@@ -776,7 +776,7 @@ Providers can unenroll at any time via System Settings, which removes the profil
 \section{Consumer-Selectable Trust Tiers}
 \label{sec:trust-tiers}
 
-The four-layer attestation architecture (Section~\ref{sec:attestation}) and the ACME enrollment protocol (Section~\ref{sec:enrollment}) establish a spectrum of verifiable trust guarantees. We formalize this spectrum into \emph{trust tiers} that consumers can select at inference time, allowing each request to specify the minimum acceptable level of cryptographic assurance.
+The multi-layer attestation architecture (Section~\ref{sec:attestation}) and the ACME enrollment protocol (Section~\ref{sec:enrollment}) establish a spectrum of verifiable trust guarantees. We formalize this spectrum into \emph{trust tiers} that consumers can select at inference time, allowing each request to specify the minimum acceptable level of hardware assurance.
 
 \subsection{Tier Definitions}
 
@@ -786,69 +786,75 @@ The four-layer attestation architecture (Section~\ref{sec:attestation}) and the 
 \label{tab:trust-tiers}
 \vspace{4pt}
 \scriptsize
-\begin{tabular}{@{}clp{3.5cm}l@{}}
+\begin{tabular}{@{}clp{4.2cm}@{}}
 \toprule
-\textbf{Tier} & \textbf{Name} & \textbf{Verification Guarantee} & \textbf{Provider Consent} \\
+\textbf{Tier} & \textbf{Name} & \textbf{Verification Guarantee} \\
 \midrule
-0 & \texttt{none} & No attestation & None \\
-1 & \texttt{self\_signed} & SE-signed attestation blob & Profile install \\
-2 & \texttt{hardware} & MDM SecurityInfo + Apple MDA certificate chain & Read-only MDM (bits 0,4,10) \\
-3 & \texttt{apple\_grade} & All of Tier~2 + ACME-attested SE key used for response signing & Read-only MDM + managed app install (bit 12) \\
+0 & \texttt{none} & No attestation \\
+1 & \texttt{self\_signed} & SE-signed attestation blob \\
+2 & \texttt{hardware} & MDM SecurityInfo + Apple MDA + SE key binding via MDA nonce \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Cryptographic Guarantees by Tier}
+\subsection{Cryptographic Guarantees}
 
 The tiers correspond to progressively stronger cryptographic claims about the provider's hardware and the provenance of inference outputs:
 
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-    \item \textbf{Tier~2 (\texttt{hardware}):} Apple's MDM framework independently confirms SIP, Secure Boot, and the Authenticated Root Volume. Apple's Enterprise Attestation Root CA signs a certificate chain confirming the device's serial number and identity. The provider signs each inference response with a Secure Enclave P-256 key, providing output integrity. However, the binding between the signing key and the Secure Enclave is enforced by SIP (which prevents binary replacement) rather than by a cryptographic certificate chain.
+    \item \textbf{Tier~0 (\texttt{none}):} No attestation is provided. The provider's identity is ephemeral and unverified. This tier exists for open testing but is rejected in production routing by default.
 
-    \item \textbf{Tier~3 (\texttt{apple\_grade}):} In addition to all Tier~2 guarantees, the provider's response signing key is the P-384 key generated during ACME \texttt{device-attest-01} enrollment. This key was verified by Apple's attestation servers to reside in the Secure Enclave of a specific physical device. The trust chain for every inference response becomes fully cryptographic:
-    \[
-    \text{response} \xrightarrow{\text{sign}} \text{SE P-384 key} \xrightarrow{\text{cert}} \text{step-ca} \xrightarrow{\text{attest}} \text{Apple Enterprise Root CA}
-    \]
-    Any party possessing Apple's public root certificate can independently verify this chain without trusting the coordinator.
+    \item \textbf{Tier~1 (\texttt{self\_signed}):} The provider generates a P-256 key in the Secure Enclave and signs an attestation blob containing hardware identifiers, SIP status, Secure Boot state, and Authenticated Root Volume hash. The coordinator verifies the signature but relies on the provider's own claim that the key resides in hardware.
+
+    \item \textbf{Tier~2 (\texttt{hardware}):} The strongest available tier, combining four independent verification mechanisms:
+    \begin{enumerate}[leftmargin=*,itemsep=1pt]
+        \item \textbf{MDM SecurityInfo:} Apple's MDM framework independently confirms SIP, Secure Boot, and Authenticated Root Volume status directly from the device firmware, bypassing the provider's software stack entirely.
+        \item \textbf{Apple MDA:} Apple's Enterprise Attestation Root CA signs a certificate chain encoding the device's serial number, UDID, macOS version, and SepOS version. This cryptographically proves the device is genuine Apple hardware with the reported security configuration.
+        \item \textbf{SE key binding via MDA nonce:} The coordinator computes $h = \text{SHA-256}(pk_{\text{SE}})$ where $pk_{\text{SE}}$ is the provider's Secure Enclave public key, and includes $h$ as the \texttt{DeviceAttestationNonce} in a subsequent MDA request. Apple embeds $\text{SHA-256}(h)$ as the \texttt{FreshnessCode} (OID \texttt{1.2.840.113635.100.8.11.1}) in the signed leaf certificate. This cryptographically binds the provider's signing key to Apple-verified genuine hardware.
+        \item \textbf{Periodic re-verification:} A challenge-response loop (every 5 minutes) verifies fresh SIP and Secure Boot status. If either is disabled after registration---which requires a reboot into Recovery Mode---the provider is immediately marked untrusted and excluded from routing.
+    \end{enumerate}
+    The provider signs each inference response with the bound Secure Enclave key: $\sigma = \text{ECDSA-P256}(\text{SHA-256}(\text{request\_id} \| \text{token\_count} \| \text{content}))$, providing per-response integrity that any party can verify.
 \end{itemize}
 
-\subsection{Provider Opt-In and Permission Scoping}
+\subsection{SE Key Binding Protocol}
 
-The transition from Tier~2 to Tier~3 requires the provider to grant an additional MDM permission: bit~12 (\texttt{InstallManagedApplications}). This enables the coordinator to install a signed, notarized application bundle that can access the ACME-attested key from the managed profile keychain---a macOS restriction that prevents non-managed applications from accessing profile-provisioned cryptographic identities.
+The MDA nonce mechanism deserves elaboration as it addresses a fundamental gap in macOS attestation. While Apple provides the ACME \texttt{device-attest-01} protocol for generating attested Secure Enclave keys, the resulting keys are stored in a platform-restricted keychain (the \emph{data protection keychain}) that is inaccessible to third-party applications---even with Developer ID signing and Apple notarization. This is a deliberate architectural restriction: \texttt{AllowAllAppsAccess} is silently ignored when \texttt{HardwareBound=true} in the ACME payload.
 
-This design separates the permission requirements by tier:
+Our protocol circumvents this limitation by using the MDA attestation nonce as a binding channel:
 
-\begin{itemize}[leftmargin=*,itemsep=1pt]
-    \item \textbf{Tier~2 providers} grant only read-only query permissions (bits 0, 4, 10). The MDM server cannot install software, modify settings, lock, or erase the device.
-    \item \textbf{Tier~3 providers} additionally grant bit~12, scoped to a single application bundle that is Developer ID signed and Apple-notarized. The installed application's sole function is to relay WebSocket frames through macOS's native TLS stack, which presents the ACME-attested Secure Enclave identity for mutual TLS authentication.
-\end{itemize}
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item Provider generates a Secure Enclave P-256 key $k$ and sends $pk_k$ to the coordinator
+    \item Coordinator computes nonce $n = \text{base64}(\text{SHA-256}(pk_k))$
+    \item Coordinator sends MDM \texttt{DeviceInformation} command with \texttt{DeviceAttestationNonce} = $n$
+    \item Device contacts Apple's attestation servers; Apple generates a fresh MDA certificate chain with $\text{FreshnessCode} = \text{SHA-256}(n)$
+    \item Coordinator verifies the certificate chain against Apple Enterprise Attestation Root CA
+    \item Coordinator verifies $\text{FreshnessCode} = \text{SHA-256}(n)$, confirming the binding
+\end{enumerate}
 
-Providers can revoke Tier~3 status at any time by removing the MDM profile, which also removes the managed application and its keychain access.
+The security argument: Apple's attestation servers will only generate the FreshnessCode for a genuine device that checks in via APNs. A software-only adversary cannot forge the MDA certificate chain (Assumption~3). Combined with SIP enforcement (preventing binary replacement) and Secure Boot (preventing bootloader tampering), this provides strong evidence that the signing key resides in genuine Apple hardware.
 
 \subsection{Consumer-Side Selection}
 
-Consumers specify their minimum trust tier as a parameter in the inference request. The coordinator's routing algorithm filters the candidate provider set by trust tier before applying the composite scoring function (Section~\ref{sec:scoring}). Tier~3 providers receive a $1.2\times$ scoring multiplier, reflecting the stronger cryptographic guarantees they provide.
+Consumers specify their minimum trust tier as a query parameter (\texttt{trust\_level}) in the inference request. The coordinator's routing algorithm filters the candidate provider set by trust tier before applying the composite scoring function (Section~\ref{sec:scoring}). In production deployments, the coordinator enforces \texttt{hardware} as the minimum, ensuring all routed requests are served by Apple-verified providers.
 
-Workloads with stringent privacy requirements (e.g., processing protected health information or privileged legal documents) can require \texttt{apple\_grade} trust, ensuring that every token in the response is signed by a key whose Secure Enclave residency is cryptographically verified by Apple. Workloads with lower sensitivity can accept \texttt{hardware} trust, which broadens the available provider set while still requiring Apple-verified security posture.
-
-\subsection{Comparison of Trust Properties}
+\subsection{Trust Property Summary}
 
 \begin{table}[h]
 \centering
-\caption{Trust properties by tier. ``Crypto'' indicates the property is established by a verifiable certificate chain; ``OS'' indicates it is enforced by the operating system and verified by Apple's MDM framework.}
+\caption{Trust properties by tier. ``Crypto'' indicates the property is established by a verifiable certificate chain rooted in Apple's CA; ``OS'' indicates enforcement by the operating system verified via MDM; ``Self'' indicates the property is self-reported by the provider.}
 \label{tab:tier-comparison}
 \vspace{4pt}
 \scriptsize
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}lccc@{}}
 \toprule
-\textbf{Property} & \textbf{Tier 0} & \textbf{Tier 1} & \textbf{Tier 2} & \textbf{Tier 3} \\
+\textbf{Property} & \textbf{none} & \textbf{self\_signed} & \textbf{hardware} \\
 \midrule
-Device is real Apple hardware & --- & --- & Crypto & Crypto \\
-SIP / Secure Boot enabled & --- & Self & OS + MDM & OS + MDM \\
-SE key identity & --- & Self & Self + OS & Crypto \\
-Response integrity (signed) & --- & --- & OS & Crypto \\
-Output traceable to Apple Root CA & --- & --- & --- & Crypto \\
-User-verifiable without coordinator & --- & --- & Partial & Full \\
+Device is real Apple hardware & --- & --- & Crypto \\
+SIP / Secure Boot enabled & --- & Self & OS + MDM \\
+SE key identity & --- & Self & Self + MDA nonce \\
+Response integrity (signed) & --- & --- & SE signature \\
+Device serial verified by Apple & --- & --- & Crypto \\
+Periodic security re-check & --- & --- & Every 5 min \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -948,7 +954,7 @@ Residual attack & Physical probing & Physical probing \\
 \end{tabular}
 \end{table}
 
-The key distinction is who owns the hardware. In PCC, Apple owns the servers and controls physical access. In our system, the hardware belongs to an independent provider who may be adversarial. The four-layer attestation architecture (Section~\ref{sec:attestation}) compensates for the absence of physical security by providing multiple independent verification paths, culminating in Apple-signed hardware provenance certificates. The result is that consumers get the same residual threat model---physical memory probing only---whether they use Apple's private cloud or our decentralized network.
+The key distinction is who owns the hardware. In PCC, Apple owns the servers and controls physical access. In our system, the hardware belongs to an independent provider who may be adversarial. The multi-layer attestation architecture (Section~\ref{sec:attestation}) compensates for the absence of physical security by providing multiple independent verification paths, culminating in Apple-signed hardware provenance certificates. The result is that consumers get the same residual threat model---physical memory probing only---whether they use Apple's private cloud or our decentralized network.
 
 % =====================================================================
 \section{Implementation}
@@ -1130,7 +1136,7 @@ Dense models exceeding 32B parameters favor cloud infrastructure: H100 clusters 
 
 \textbf{Direct MLX FFI.}\quad Replacing PyO3 with native Rust bindings to MLX's C++ API eliminates the Python interpreter, the GIL serialization bottleneck, the Python path isolation requirement, and the package injection attack surface.
 
-\textbf{General private compute.}\quad The access path elimination technique is not specific to inference. Any computation that can be embedded in a hardened process on Apple Silicon---fine-tuning on private data, evaluation on proprietary datasets, confidential data pipelines---can leverage the same security guarantees. The four-layer attestation architecture generalizes to any workload where computation must remain confidential from the machine's owner, positioning the decentralized network as a general-purpose private compute layer on consumer hardware.
+\textbf{General private compute.}\quad The access path elimination technique is not specific to inference. Any computation that can be embedded in a hardened process on Apple Silicon---fine-tuning on private data, evaluation on proprietary datasets, confidential data pipelines---can leverage the same security guarantees. The multi-layer attestation architecture generalizes to any workload where computation must remain confidential from the machine's owner, positioning the decentralized network as a general-purpose private compute layer on consumer hardware.
 
 % =====================================================================
 \section{Conclusion}
@@ -1138,7 +1144,7 @@ Dense models exceeding 32B parameters favor cloud infrastructure: H100 clusters 
 
 We have presented a decentralized inference system in which consumers get private AI computation on machines they do not own or control. The machine owners---who have root access and physical custody---cannot observe the prompts or responses processed on their hardware.
 
-The approach works by systematically eliminating every software path to inference data: in-process execution removes inter-process communication, kernel-enforced isolation blocks memory inspection, and operating system integrity guarantees are provably immutable at runtime (Theorem~\ref{thm:sip}). A four-layer attestation architecture---Secure Enclave signatures, MDM-based independent verification, ACME \texttt{device-attest-01} with Apple-signed certificate chains, and continuous challenge-response---provides defense-in-depth where each layer independently verifies properties that the others cannot.
+The approach works by systematically eliminating every software path to inference data: in-process execution removes inter-process communication, kernel-enforced isolation blocks memory inspection, and operating system integrity guarantees are provably immutable at runtime (Theorem~\ref{thm:sip}). A multi-layer attestation architecture---Secure Enclave signatures, MDM-based independent verification, Apple MDA with Apple-signed certificate chains, MDA nonce-based SE key binding, and continuous challenge-response---provides defense-in-depth where each layer independently verifies properties that the others cannot.
 
 The residual attack surface reduces to physical memory probing of LPDDR5x soldered into Apple's System-on-Chip package. This is the same threat model accepted by Apple's Private Cloud Compute for Siri and Apple Intelligence queries. Our system achieves equivalent privacy guarantees on a decentralized network of independently owned machines.
 
