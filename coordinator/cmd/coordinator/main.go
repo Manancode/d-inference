@@ -21,6 +21,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"log/slog"
 	"net/http"
 	"os"
@@ -128,6 +130,40 @@ func main() {
 
 		srv.SetMDMClient(mdmClient)
 		logger.Info("MDM verification enabled", "url", mdmURL)
+	}
+
+	// Configure step-ca root CA for ACME client cert verification.
+	// When providers present a TLS client cert issued by step-ca via
+	// device-attest-01, the coordinator verifies the chain and grants
+	// hardware trust (Apple-attested SE key binding).
+	if stepCARoot := os.Getenv("DGINF_STEP_CA_ROOT"); stepCARoot != "" {
+		rootPEM, err := os.ReadFile(stepCARoot)
+		if err != nil {
+			logger.Error("failed to read step-ca root CA", "path", stepCARoot, "error", err)
+		} else {
+			block, _ := pem.Decode(rootPEM)
+			if block != nil {
+				rootCert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					logger.Error("failed to parse step-ca root CA", "error", err)
+				} else {
+					// Try to load intermediate too
+					var intCert *x509.Certificate
+					stepCAInt := os.Getenv("DGINF_STEP_CA_INTERMEDIATE")
+					if stepCAInt != "" {
+						intPEM, err := os.ReadFile(stepCAInt)
+						if err == nil {
+							intBlock, _ := pem.Decode(intPEM)
+							if intBlock != nil {
+								intCert, _ = x509.ParseCertificate(intBlock.Bytes)
+							}
+						}
+					}
+					srv.SetStepCACerts(rootCert, intCert)
+					logger.Info("step-ca ACME client cert verification enabled", "root", stepCARoot)
+				}
+			}
+		}
 	}
 
 	// Start background eviction of stale providers.

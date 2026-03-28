@@ -16,14 +16,12 @@ type enrollRequest struct {
 
 var serialRegex = regexp.MustCompile(`^[A-Z0-9]{8,14}$`)
 
-// handleEnroll generates a per-device .mobileconfig with an ACME payload
-// for device-attest-01 enrollment. The ClientIdentifier is set to the
-// device's serial number so step-ca can bind the SE key to the device.
+// handleEnroll generates a per-device .mobileconfig containing both MDM
+// enrollment (SCEP + MDM payloads) and ACME device-attest-01 (SE key binding).
+// One profile, one install — the user doesn't need to install two profiles.
 //
 // No authentication required — the serial number is not secret.
-// Security comes from Apple's attestation during the ACME challenge:
-// step-ca validates that the device actually has a Secure Enclave and
-// the serial in Apple's attestation cert matches the ClientIdentifier.
+// Security comes from Apple's attestation during the ACME challenge.
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	var req enrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -41,11 +39,11 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info("generating ACME enrollment profile",
+	s.logger.Info("generating enrollment + attestation profile",
 		"serial_number", req.SerialNumber,
 	)
 
-	profile := generateACMEProfile(req.SerialNumber)
+	profile := generateCombinedProfile(req.SerialNumber)
 
 	w.Header().Set("Content-Type", "application/x-apple-aspen-config")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="DGInf-Enroll-%s.mobileconfig"`, req.SerialNumber))
@@ -53,29 +51,13 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(profile))
 }
 
-// generateACMEProfile creates a .mobileconfig containing only the ACME
-// payload for device-attest-01. This is separate from the MDM enrollment
-// profile — it only handles SE key attestation.
-func generateACMEProfile(serialNumber string) string {
-	payloadUUID := uuid.New().String()
+// generateCombinedProfile creates a .mobileconfig with three payloads:
+//   1. SCEP — MDM identity certificate (for enrollment)
+//   2. MDM — enrolls with MicroMDM (SecurityInfo verification)
+//   3. ACME — device-attest-01 (SE key binding via Apple attestation)
+func generateCombinedProfile(serialNumber string) string {
+	acmePayloadUUID := uuid.New().String()
 	profileUUID := uuid.New().String()
-
-	// macOS generates CN as "PayloadDisplayName (SerialNumber)" in the CSR.
-	// step-ca checks CN == ClientIdentifier. So we set PayloadDisplayName
-	// to the serial and ClientIdentifier to "SerialNumber (SerialNumber)"
-	// to match what macOS will generate as the CN.
-	//
-	// Actually: set PayloadDisplayName to serial so CN becomes "SERIAL (SERIAL)"
-	// and ClientIdentifier to "SERIAL (SERIAL)" to match.
-	//
-	// Simpler: just set PayloadDisplayName to empty-ish and use serial as ClientIdentifier.
-	// macOS with empty DisplayName might just use serial as CN.
-	//
-	// Safest: remove Subject entirely and set PayloadDisplayName = serial.
-	// Then CN = "F46GTCP40H (F46GTCP40H)" and ClientIdentifier = same.
-
-	displayName := serialNumber
-	clientID := serialNumber
 
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -83,19 +65,101 @@ func generateACMEProfile(serialNumber string) string {
 <dict>
   <key>PayloadContent</key>
   <array>
+    <!-- Payload 1: SCEP — MDM identity certificate -->
+    <dict>
+      <key>PayloadContent</key>
+      <dict>
+        <key>Challenge</key>
+        <string>micromdm</string>
+        <key>Key Type</key>
+        <string>RSA</string>
+        <key>Key Usage</key>
+        <integer>5</integer>
+        <key>Keysize</key>
+        <integer>2048</integer>
+        <key>Name</key>
+        <string>Device Management Identity Certificate</string>
+        <key>Subject</key>
+        <array>
+          <array>
+            <array>
+              <string>O</string>
+              <string>DGInf</string>
+            </array>
+          </array>
+          <array>
+            <array>
+              <string>CN</string>
+              <string>DGInf Identity</string>
+            </array>
+          </array>
+        </array>
+        <key>URL</key>
+        <string>https://inference-test.openinnovation.dev/scep</string>
+      </dict>
+      <key>PayloadDescription</key>
+      <string>Configures SCEP for MDM enrollment</string>
+      <key>PayloadDisplayName</key>
+      <string>SCEP</string>
+      <key>PayloadIdentifier</key>
+      <string>io.dginf.enroll.scep</string>
+      <key>PayloadOrganization</key>
+      <string>DGInf</string>
+      <key>PayloadType</key>
+      <string>com.apple.security.scep</string>
+      <key>PayloadUUID</key>
+      <string>D01D95F9-762E-4538-A9B3-4D949D55577C</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+    </dict>
+    <!-- Payload 2: MDM — enrollment with MicroMDM -->
+    <dict>
+      <key>AccessRights</key>
+      <integer>1041</integer>
+      <key>CheckInURL</key>
+      <string>https://inference-test.openinnovation.dev/mdm/checkin</string>
+      <key>CheckOutWhenRemoved</key>
+      <true/>
+      <key>IdentityCertificateUUID</key>
+      <string>D01D95F9-762E-4538-A9B3-4D949D55577C</string>
+      <key>PayloadDescription</key>
+      <string>Enrolls with the DGInf coordinator for security verification</string>
+      <key>PayloadIdentifier</key>
+      <string>io.dginf.enroll.mdm</string>
+      <key>PayloadOrganization</key>
+      <string>DGInf</string>
+      <key>PayloadType</key>
+      <string>com.apple.mdm</string>
+      <key>PayloadUUID</key>
+      <string>4DF05DBF-6D20-41A4-8072-A51D327258E7</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>ServerCapabilities</key>
+      <array>
+        <string>com.apple.mdm.per-user-connections</string>
+        <string>com.apple.mdm.bootstraptoken</string>
+      </array>
+      <key>ServerURL</key>
+      <string>https://inference-test.openinnovation.dev/mdm/connect</string>
+      <key>SignMessage</key>
+      <true/>
+      <key>Topic</key>
+      <string>com.apple.mgmt.External.10520cbe-9635-453d-ac4e-c79aab56f8ce</string>
+    </dict>
+    <!-- Payload 3: ACME device-attest-01 — SE key binding via Apple -->
     <dict>
       <key>PayloadType</key>
       <string>com.apple.security.acme</string>
       <key>PayloadVersion</key>
       <integer>1</integer>
       <key>PayloadIdentifier</key>
-      <string>io.dginf.acme.%s</string>
+      <string>io.dginf.enroll.acme.%s</string>
       <key>PayloadUUID</key>
       <string>%s</string>
       <key>PayloadDisplayName</key>
       <string>%s</string>
       <key>PayloadDescription</key>
-      <string>Generates a hardware-bound key in the Secure Enclave and obtains an Apple-attested certificate via ACME device-attest-01.</string>
+      <string>Generates a hardware-bound key in the Secure Enclave. Apple verifies your device is genuine and a certificate is issued binding the key to your Mac.</string>
       <key>PayloadOrganization</key>
       <string>DGInf</string>
       <key>DirectoryURL</key>
@@ -128,11 +192,11 @@ func generateACMEProfile(serialNumber string) string {
     </dict>
   </array>
   <key>PayloadDescription</key>
-  <string>DGInf Secure Enclave device attestation</string>
+  <string>DGInf provider enrollment and device attestation. Grants read-only security verification (SIP, SecureBoot) and generates an Apple-attested Secure Enclave key.</string>
   <key>PayloadDisplayName</key>
-  <string>DGInf Device Attestation</string>
+  <string>DGInf Provider Enrollment</string>
   <key>PayloadIdentifier</key>
-  <string>io.dginf.enroll.acme.%s</string>
+  <string>io.dginf.enroll.%s</string>
   <key>PayloadOrganization</key>
   <string>DGInf</string>
   <key>PayloadType</key>
@@ -142,5 +206,5 @@ func generateACMEProfile(serialNumber string) string {
   <key>PayloadVersion</key>
   <integer>1</integer>
 </dict>
-</plist>`, serialNumber, payloadUUID, displayName, clientID, serialNumber, serialNumber, profileUUID)
+</plist>`, serialNumber, acmePayloadUUID, serialNumber, serialNumber, serialNumber, serialNumber, profileUUID)
 }

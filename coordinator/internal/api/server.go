@@ -16,6 +16,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -58,8 +59,10 @@ type Server struct {
 	mux               *http.ServeMux
 	challengeInterval time.Duration // 0 means use DefaultChallengeInterval
 	settlementURL     string        // URL of the settlement sidecar (e.g. "http://localhost:8090")
-	mdmClient         *mdm.Client   // MicroMDM client for provider security verification
-	processedTxHashes map[string]bool // prevents double-crediting the same on-chain tx
+	mdmClient              *mdm.Client        // MicroMDM client for provider security verification
+	stepCARootCert         *x509.Certificate  // step-ca root CA for ACME cert verification
+	stepCAIntermediateCert *x509.Certificate  // step-ca intermediate CA
+	processedTxHashes      map[string]bool    // prevents double-crediting the same on-chain tx
 }
 
 // NewServer creates a configured Server with all routes mounted.
@@ -80,6 +83,12 @@ func NewServer(reg *registry.Registry, st store.Store, logger *slog.Logger) *Ser
 // SetSettlementURL configures the settlement service URL.
 func (s *Server) SetSettlementURL(url string) {
 	s.settlementURL = url
+}
+
+// SetStepCACerts configures the step-ca CA certificates for ACME client cert verification.
+func (s *Server) SetStepCACerts(root, intermediate *x509.Certificate) {
+	s.stepCARootCert = root
+	s.stepCAIntermediateCert = intermediate
 }
 
 // SetMDMClient configures the MicroMDM client for provider verification.

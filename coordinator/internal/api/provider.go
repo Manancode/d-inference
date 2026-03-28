@@ -99,13 +99,17 @@ func (s *Server) handleProviderWS(w http.ResponseWriter, r *http.Request) {
 	providerID := uuid.New().String()
 	s.logger.Info("provider websocket connected", "provider_id", providerID, "remote", r.RemoteAddr)
 
+	// Check for ACME client certificate (TLS client auth via nginx).
+	// If present and valid, the provider's SE key is Apple-attested.
+	acmeResult := s.extractAndVerifyClientCert(r)
+
 	// Run the read loop; on return the provider is disconnected.
-	s.providerReadLoop(r.Context(), conn, providerID)
+	s.providerReadLoop(r.Context(), conn, providerID, acmeResult)
 }
 
 // providerReadLoop reads messages from the provider WebSocket and dispatches
 // them. It runs until the connection closes or the context is cancelled.
-func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, providerID string) {
+func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, providerID string, acmeResult *ACMEVerificationResult) {
 	var provider *registry.Provider
 	tracker := newChallengeTracker()
 
@@ -139,6 +143,20 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 			regMsg := msg.Payload.(*protocol.RegisterMessage)
 			provider = s.registry.Register(providerID, conn, regMsg)
 			s.verifyProviderAttestation(providerID, provider, regMsg)
+
+			// If ACME client cert was verified, upgrade to hardware trust immediately.
+			// This proves the provider's SE key is Apple-attested — strongest verification.
+			if acmeResult != nil && acmeResult.Valid {
+				provider.TrustLevel = registry.TrustHardware
+				provider.ACMEVerified = true
+				s.logger.Info("ACME client cert verified — hardware trust via Apple SE attestation",
+					"provider_id", providerID,
+					"acme_serial", acmeResult.SerialNumber,
+					"acme_issuer", acmeResult.Issuer,
+					"acme_key_alg", acmeResult.PublicKeyAlg,
+				)
+			}
+
 			// Start challenge loop after registration
 			go s.challengeLoop(loopCtx, conn, providerID, provider, tracker)
 

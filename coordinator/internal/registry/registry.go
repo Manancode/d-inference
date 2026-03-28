@@ -74,6 +74,7 @@ type Provider struct {
 	MDAVerified       bool       // true if Apple Device Attestation cert chain verified
 	MDACertChain      [][]byte   // DER-encoded Apple MDA certificate chain (leaf first)
 	MDAResult         *attestation.MDAResult // parsed OIDs from Apple cert
+	ACMEVerified      bool       // true if ACME device-attest-01 client cert verified (SE key proven)
 	Status            ProviderStatus
 	Conn              *websocket.Conn
 	LastHeartbeat     time.Time
