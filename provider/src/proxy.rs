@@ -136,8 +136,16 @@ async fn handle_non_streaming_request(
     // Extract token usage info for billing
     let usage = extract_usage(&response_json);
 
-    // Sign the response with the Secure Enclave key
-    let sign_data = format!("{}:{}:{}", request_id, usage.completion_tokens, "non_stream");
+    // Sign the actual response content with the Secure Enclave key
+    let content = response_json
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let sign_data = format!("{}:{}:{}", request_id, usage.completion_tokens, content);
     let response_hash = security::sha256_hex(sign_data.as_bytes());
     let se_signature = security::se_sign(response_hash.as_bytes());
 
@@ -207,6 +215,8 @@ async fn handle_streaming_request(
     // disconnects or sends a cancel, we drop `stream` immediately —
     // this closes the HTTP connection and vllm-mlx stops generating.
     let mut stream = response.bytes_stream();
+    // Accumulate actual response content for signing
+    let mut response_content = String::new();
     let mut buffer = String::new();
     let mut total_completion_tokens: u64 = 0;
     let mut prompt_tokens: u64 = 0;
@@ -240,8 +250,8 @@ async fn handle_streaming_request(
                 let data = &line[6..];
 
                 if data == "[DONE]" {
-                    // Stream complete — sign and send final usage info
-                    let sign_data = format!("{}:{}:{}", request_id, total_completion_tokens, "stream_done");
+                    // Stream complete — sign the actual response content
+                    let sign_data = format!("{}:{}:{}", request_id, total_completion_tokens, response_content);
                     let response_hash = security::sha256_hex(sign_data.as_bytes());
                     let se_signature = security::se_sign(response_hash.as_bytes());
 
@@ -273,16 +283,24 @@ async fn handle_streaming_request(
                         }
                     }
 
-                    // Approximate token count from delta content chunks
+                    // Extract content from delta chunks for token counting and signing
                     if let Some(choices) = chunk_json.get("choices").and_then(|v| v.as_array()) {
                         for choice in choices {
-                            if choice
+                            if let Some(content) = choice
                                 .get("delta")
                                 .and_then(|d| d.get("content"))
                                 .and_then(|c| c.as_str())
-                                .is_some()
                             {
                                 total_completion_tokens += 1;
+                                response_content.push_str(content);
+                            }
+                            // Also capture reasoning/thinking content
+                            if let Some(reasoning) = choice
+                                .get("delta")
+                                .and_then(|d| d.get("reasoning_content"))
+                                .and_then(|c| c.as_str())
+                            {
+                                response_content.push_str(reasoning);
                             }
                         }
                     }
@@ -301,8 +319,8 @@ async fn handle_streaming_request(
     }
 
     // If we get here without [DONE], send completion with what we have
-    // Sign the response with the Secure Enclave key
-    let sign_data = format!("{}:{}:{}", request_id, total_completion_tokens, "stream_end");
+    // Sign the actual accumulated response content
+    let sign_data = format!("{}:{}:{}", request_id, total_completion_tokens, response_content);
     let response_hash = security::sha256_hex(sign_data.as_bytes());
     let se_signature = security::se_sign(response_hash.as_bytes());
 
