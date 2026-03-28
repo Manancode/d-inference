@@ -18,10 +18,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -295,6 +297,147 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		s.handleStreamingResponse(w, r, pr)
 	} else {
 		s.handleNonStreamingResponse(w, r, pr)
+	}
+}
+
+// handleTranscriptions handles POST /v1/audio/transcriptions.
+//
+// This is the OpenAI-compatible audio transcription endpoint. It accepts
+// multipart/form-data with an audio file and routes it to an STT-capable
+// provider.
+func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
+	// Parse multipart form (max 25MB audio)
+	if err := r.ParseMultipartForm(25 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid multipart form: "+err.Error()))
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "file field is required"))
+		return
+	}
+	defer file.Close()
+
+	model := r.FormValue("model")
+	if model == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "model is required"))
+		return
+	}
+
+	language := r.FormValue("language")
+
+	// Read the audio file into memory
+	audioBytes, err := io.ReadAll(file)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "failed to read audio file"))
+		return
+	}
+
+	// Determine audio format from filename extension
+	ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
+	if ext == "" {
+		ext = "wav"
+	}
+
+	// Find a provider that serves the requested STT model.
+	provider := s.registry.FindProviderWithTrust(model, "")
+	if provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
+			fmt.Sprintf("no provider available for STT model %q", model)))
+		return
+	}
+
+	// Build the transcription request.
+	requestID := uuid.New().String()
+	consumerKey := consumerKeyFromContext(r.Context())
+
+	transcriptionBody := protocol.TranscriptionRequestBody{
+		Model:  model,
+		Audio:  base64.StdEncoding.EncodeToString(audioBytes),
+		Format: ext,
+	}
+	if language != "" {
+		transcriptionBody.Language = &language
+	}
+
+	wireMsg := map[string]any{
+		"type":       protocol.TypeTranscriptionRequest,
+		"request_id": requestID,
+		"body":       transcriptionBody,
+	}
+
+	// Create pending request with transcription channel.
+	pr := &registry.PendingRequest{
+		RequestID:       requestID,
+		ProviderID:      provider.ID,
+		Model:           model,
+		ConsumerKey:     consumerKey,
+		ChunkCh:         make(chan string, 1),
+		CompleteCh:      make(chan protocol.UsageInfo, 1),
+		ErrorCh:         make(chan protocol.InferenceErrorMessage, 1),
+		TranscriptionCh: make(chan *protocol.TranscriptionCompleteMessage, 1),
+	}
+	provider.AddPending(pr)
+
+	// Send the request to the provider.
+	data, err := json.Marshal(wireMsg)
+	if err != nil {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to marshal request"))
+		return
+	}
+	if err := provider.Conn.Write(r.Context(), websocket.MessageText, data); err != nil {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+		s.logger.Error("failed to send transcription request", "request_id", requestID, "error", err)
+		writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "failed to send request to provider"))
+		return
+	}
+
+	s.logger.Info("transcription request dispatched",
+		"request_id", requestID,
+		"model", model,
+		"provider_id", provider.ID,
+		"audio_size", len(audioBytes),
+		"format", ext,
+	)
+
+	// Cleanup on return.
+	defer func() {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+	}()
+
+	// Wait for the transcription result.
+	ctx, cancel := context.WithTimeout(r.Context(), inferenceTimeout)
+	defer cancel()
+
+	select {
+	case result := <-pr.TranscriptionCh:
+		// Build OpenAI-compatible transcription response.
+		resp := map[string]any{
+			"text": result.Text,
+		}
+		if len(result.Segments) > 0 {
+			resp["segments"] = result.Segments
+		}
+		if result.Language != "" {
+			resp["language"] = result.Language
+		}
+		resp["duration"] = result.Usage.AudioSeconds
+		writeJSON(w, http.StatusOK, resp)
+
+	case errMsg := <-pr.ErrorCh:
+		statusCode := errMsg.StatusCode
+		if statusCode == 0 {
+			statusCode = http.StatusBadGateway
+		}
+		writeJSON(w, statusCode, errorResponse("provider_error", errMsg.Error))
+
+	case <-ctx.Done():
+		writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "transcription request timed out"))
 	}
 }
 

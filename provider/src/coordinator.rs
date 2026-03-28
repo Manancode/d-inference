@@ -24,6 +24,7 @@ use crate::hardware::HardwareInfo;
 use crate::models::ModelInfo;
 use crate::protocol::{
     CoordinatorMessage, ProviderMessage, ProviderStats, ProviderStatus,
+    TranscriptionRequestBody,
 };
 
 /// Messages from coordinator connection to the main loop.
@@ -34,6 +35,10 @@ pub enum CoordinatorEvent {
     InferenceRequest {
         request_id: String,
         body: serde_json::Value,
+    },
+    TranscriptionRequest {
+        request_id: String,
+        body: TranscriptionRequestBody,
     },
     Cancel {
         request_id: String,
@@ -253,6 +258,13 @@ impl CoordinatorClient {
                                     let _ = event_tx.send(CoordinatorEvent::InferenceRequest {
                                         request_id,
                                         body: decrypted_body,
+                                    }).await;
+                                }
+                                Ok(CoordinatorMessage::TranscriptionRequest { request_id, body }) => {
+                                    tracing::info!("Received transcription request: {request_id}");
+                                    let _ = event_tx.send(CoordinatorEvent::TranscriptionRequest {
+                                        request_id,
+                                        body,
                                     }).await;
                                 }
                                 Ok(CoordinatorMessage::Cancel { request_id }) => {
