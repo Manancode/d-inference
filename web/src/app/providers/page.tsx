@@ -256,7 +256,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
                 <span className="text-text-secondary">Hardware-bound P-256 identity</span>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                {provider.acme_verified ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-amber" />}
+                {provider.mda_verified ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-amber" />}
                 <span className="text-text-secondary">ACME device-attest-01 (Apple-proven SE key)</span>
               </div>
             </div>
