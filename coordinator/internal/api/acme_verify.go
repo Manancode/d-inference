@@ -28,6 +28,12 @@ func (s *Server) extractAndVerifyClientCert(r *http.Request) *ACMEVerificationRe
 	certEncoded := r.Header.Get("X-SSL-Client-Cert")
 	clientDN := r.Header.Get("X-SSL-Client-DN")
 
+	s.logger.Info("TLS client cert headers",
+		"verify", verifyStatus,
+		"cert_len", len(certEncoded),
+		"dn", clientDN,
+	)
+
 	if certEncoded == "" || verifyStatus == "" {
 		return nil // no client cert presented
 	}
