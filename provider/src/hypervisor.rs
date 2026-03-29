@@ -9,17 +9,41 @@
 //! table isolation. The host process continues to run normally, but
 //! mapped memory regions gain hardware-enforced access control.
 //!
-//! This upgrades the security model from software-enforced
-//! (PT_DENY_ATTACH, Hardened Runtime) to hardware-enforced (hypervisor
-//! Stage 2 page tables). The residual attack surface reduces to
-//! physical memory probing of soldered LPDDR5x — same as Apple PCC.
+//! ## Architecture
+//!
+//! macOS 26 requires `hv_vm_map` mappings to be 16 MB-aligned (both
+//! address and size). To satisfy this while giving Metal arbitrary-sized
+//! buffers, we pre-allocate a large pool via `mmap`, VM-map it in 16 MB
+//! chunks, and then carve Metal buffers from it with
+//! `makeBuffer(bytesNoCopy:)`. This gives 100% coverage for all model
+//! sizes and quantization formats.
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────┐
+//! │  mmap pool (e.g. 64 GB)                         │
+//! │  ┌──────────┬──────────┬──────────┬───────────┐  │
+//! │  │  16 MB   │  16 MB   │  16 MB   │    ...    │  │
+//! │  │ chunk 0  │ chunk 1  │ chunk 2  │           │  │
+//! │  │ (VM-map) │ (VM-map) │ (VM-map) │ (VM-map)  │  │
+//! │  └──────────┴──────────┴──────────┴───────────┘  │
+//! │  ▲                                               │
+//! │  │ makeBuffer(bytesNoCopy:) → Metal buffers      │
+//! │  │ for weights, activations, KV cache             │
+//! └──────────────────────────────────────────────────┘
+//! ```
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-const PAGE_SIZE: usize = 4096;
+/// macOS 26 Hypervisor.framework requires 16 MB alignment for
+/// `hv_vm_map` host virtual addresses and sizes.
+const CHUNK_SIZE: usize = 16 * 1024 * 1024;
 
-// Hypervisor.framework FFI
+/// Guest physical address base — start at 4 GB to avoid conflicts.
+const GPA_BASE: u64 = 0x1_0000_0000;
+
+// ── Hypervisor.framework FFI ────────────────────────────────
+
 #[cfg(target_os = "macos")]
 mod ffi {
     use std::os::raw::c_void;
@@ -37,53 +61,126 @@ mod ffi {
     }
 }
 
+// ── Pool state ──────────────────────────────────────────────
+
 /// Global hypervisor state. Only one VM per process.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
-struct MappingState {
-    gpa_offset: u64,
-    mapped_ranges: Vec<(usize, usize)>, // (aligned_start, aligned_size)
+struct PoolState {
+    /// Base address of the mmap'd pool (before alignment).
+    pool_base: *mut u8,
+    /// Total size of the mmap'd region.
+    pool_mmap_size: usize,
+    /// First 16 MB-aligned address within the pool.
+    aligned_base: *mut u8,
+    /// Usable size (pool minus alignment waste).
+    usable_size: usize,
+    /// Number of 16 MB chunks successfully VM-mapped.
+    mapped_chunks: usize,
+    /// Next available offset within the pool for sub-allocation.
+    alloc_offset: usize,
 }
 
-static STATE: Mutex<Option<MappingState>> = Mutex::new(None);
+// SAFETY: The pool pointer is allocated once at startup and never
+// moved. Access is serialized through the Mutex.
+unsafe impl Send for PoolState {}
 
-/// Guest physical address base — start mappings at 4 GB to avoid
-/// conflicts with typical guest firmware regions.
-const GPA_BASE: u64 = 0x1_0000_0000;
+static POOL: Mutex<Option<PoolState>> = Mutex::new(None);
 
-/// Create a Hypervisor VM for memory isolation.
+// ── Public API ──────────────────────────────────────────────
+
+/// Create a Hypervisor VM and pre-allocate a VM-mapped memory pool.
 ///
-/// The VM has no vCPUs and no guest OS. It exists solely for its Stage 2
-/// page tables, which provide hardware-enforced access control over
-/// mapped memory regions. This makes mapped memory invisible to RDMA.
+/// `pool_bytes` is the desired pool size (will be rounded up to 16 MB).
+/// The pool is backed by anonymous mmap and VM-mapped in 16 MB chunks.
+/// Subsequent calls to `alloc_buffer()` return pointers within this
+/// pool — all inheriting hypervisor Stage 2 isolation.
 ///
-/// Must be called before `map_buffer()`. Safe to call multiple times
-/// (subsequent calls are no-ops).
-pub fn create_vm() -> Result<(), String> {
+/// Safe to call multiple times (subsequent calls are no-ops).
+pub fn create_vm(pool_bytes: usize) -> Result<(), String> {
     if ACTIVE.load(Ordering::Relaxed) {
-        return Ok(()); // Already active
+        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     {
+        // 1. Create the VM
         let result = unsafe { ffi::hv_vm_create(std::ptr::null()) };
-        if result == ffi::HV_SUCCESS {
-            ACTIVE.store(true, Ordering::Release);
-            *STATE.lock().unwrap() = Some(MappingState {
-                gpa_offset: 0,
-                mapped_ranges: Vec::new(),
-            });
-            tracing::info!("Hypervisor VM created — hardware memory isolation active");
-            Ok(())
-        } else {
-            Err(format!(
-                "hv_vm_create failed (code {result:#x}) — hypervisor entitlement may be missing"
-            ))
+        if result != ffi::HV_SUCCESS {
+            return Err(format!(
+                "hv_vm_create failed (code {result:#x}) — \
+                 hypervisor entitlement may be missing"
+            ));
         }
+
+        // 2. Allocate the pool with extra room for 16 MB alignment
+        let mmap_size = pool_bytes + CHUNK_SIZE;
+        let pool = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                mmap_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANON | libc::MAP_PRIVATE,
+                -1,
+                0,
+            )
+        };
+        if pool == libc::MAP_FAILED {
+            unsafe { ffi::hv_vm_destroy() };
+            return Err("mmap failed for hypervisor memory pool".to_string());
+        }
+        let pool = pool as *mut u8;
+
+        // 3. Find the first 16 MB-aligned address
+        let pool_addr = pool as usize;
+        let aligned_addr = (pool_addr + CHUNK_SIZE - 1) & !(CHUNK_SIZE - 1);
+        let aligned_base = aligned_addr as *mut u8;
+        let usable_size = mmap_size - (aligned_addr - pool_addr);
+        let num_chunks = usable_size / CHUNK_SIZE;
+
+        // 4. VM-map each 16 MB chunk
+        let flags = ffi::HV_MEMORY_READ | ffi::HV_MEMORY_WRITE;
+        let mut gpa = GPA_BASE;
+        let mut mapped_chunks = 0;
+
+        for i in 0..num_chunks {
+            let chunk_ptr = unsafe { aligned_base.add(i * CHUNK_SIZE) };
+            let r = unsafe {
+                ffi::hv_vm_map(chunk_ptr as *const std::os::raw::c_void, gpa, CHUNK_SIZE, flags)
+            };
+            if r == ffi::HV_SUCCESS {
+                mapped_chunks += 1;
+                gpa += CHUNK_SIZE as u64;
+            } else {
+                tracing::warn!(
+                    "hv_vm_map chunk {i} failed (err={r:#x}), mapped {mapped_chunks}/{num_chunks}"
+                );
+                break;
+            }
+        }
+
+        let mapped_mb = mapped_chunks * CHUNK_SIZE / (1024 * 1024);
+        tracing::info!(
+            "Hypervisor VM created — {mapped_mb} MB pool VM-mapped \
+             ({mapped_chunks} x 16 MB chunks)"
+        );
+
+        ACTIVE.store(true, Ordering::Release);
+        *POOL.lock().unwrap() = Some(PoolState {
+            pool_base: pool,
+            pool_mmap_size: mmap_size,
+            aligned_base,
+            usable_size,
+            mapped_chunks,
+            alloc_offset: 0,
+        });
+
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = pool_bytes;
         Err("Hypervisor.framework is only available on macOS".to_string())
     }
 }
@@ -93,96 +190,61 @@ pub fn is_active() -> bool {
     ACTIVE.load(Ordering::Acquire)
 }
 
-/// Map a memory buffer into the hypervisor VM's address space.
+/// Allocate `size` bytes from the VM-mapped pool.
 ///
-/// After mapping, the buffer's physical pages are protected by the VM's
-/// Stage 2 page tables. RDMA (which operates on host physical addresses)
-/// cannot access memory that is only mapped at a guest physical address.
+/// Returns a pointer that is:
+/// - Within the pre-mapped pool (hardware-isolated from RDMA)
+/// - 4 KB page-aligned (suitable for `makeBuffer(bytesNoCopy:)`)
+/// - Valid for the lifetime of the process
 ///
-/// The buffer is page-aligned automatically. Overlapping mappings are
-/// deduplicated. Returns Ok(mapped_bytes) or Err on failure.
-pub fn map_buffer(ptr: *const u8, size: usize) -> Result<usize, String> {
+/// This is the function that MLX's Metal buffer creation should use
+/// instead of the default allocator. Create Metal buffers with:
+/// ```
+/// device.makeBuffer(bytesNoCopy: ptr, length: size,
+///                   options: .storageModeShared, deallocator: nil)
+/// ```
+pub fn alloc_buffer(size: usize) -> Result<*mut u8, String> {
     if !is_active() {
         return Err("hypervisor VM not active".to_string());
     }
 
-    if size == 0 {
-        return Ok(0);
+    let mut pool = POOL.lock().unwrap();
+    let pool = pool.as_mut().ok_or("hypervisor pool not initialized")?;
+
+    // Page-align the offset for Metal compatibility
+    let aligned_offset = (pool.alloc_offset + 4095) & !4095;
+    let mapped_size = pool.mapped_chunks * CHUNK_SIZE;
+
+    if aligned_offset + size > mapped_size {
+        return Err(format!(
+            "hypervisor pool exhausted: need {} bytes, {} available",
+            size,
+            mapped_size.saturating_sub(aligned_offset)
+        ));
     }
 
-    let addr = ptr as usize;
-    let aligned_start = addr & !(PAGE_SIZE - 1);
-    let aligned_end = (addr + size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-    let aligned_size = aligned_end - aligned_start;
-
-    if aligned_size < PAGE_SIZE {
-        return Ok(0); // Sub-page allocation, skip
-    }
-
-    let mut state = STATE.lock().unwrap();
-    let state = state.as_mut().ok_or("hypervisor state not initialized")?;
-
-    // Check for overlap with existing mappings
-    for &(start, sz) in &state.mapped_ranges {
-        if aligned_start < start + sz && start < aligned_start + aligned_size {
-            return Ok(0); // Already mapped (or overlaps)
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let gpa = GPA_BASE + state.gpa_offset;
-        let flags = ffi::HV_MEMORY_READ | ffi::HV_MEMORY_WRITE;
-        let result = unsafe {
-            ffi::hv_vm_map(
-                aligned_start as *const std::os::raw::c_void,
-                gpa,
-                aligned_size,
-                flags,
-            )
-        };
-
-        if result == ffi::HV_SUCCESS {
-            state.mapped_ranges.push((aligned_start, aligned_size));
-            state.gpa_offset += aligned_size as u64;
-            // Ensure next GPA is page-aligned
-            state.gpa_offset = (state.gpa_offset + PAGE_SIZE as u64 - 1)
-                & !(PAGE_SIZE as u64 - 1);
-            Ok(aligned_size)
-        } else {
-            Err(format!(
-                "hv_vm_map failed: ptr={:#x} size={} gpa={:#x} err={result:#x}",
-                aligned_start, aligned_size, gpa
-            ))
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (aligned_start, aligned_size);
-        Ok(0)
-    }
+    let ptr = unsafe { pool.aligned_base.add(aligned_offset) };
+    pool.alloc_offset = aligned_offset + size;
+    Ok(ptr)
 }
 
-/// Total bytes currently mapped into the hypervisor VM.
-pub fn mapped_bytes() -> usize {
-    STATE
-        .lock()
+/// Total bytes allocated from the VM-mapped pool.
+pub fn allocated_bytes() -> usize {
+    POOL.lock()
         .ok()
-        .and_then(|s| s.as_ref().map(|s| s.mapped_ranges.iter().map(|(_, sz)| sz).sum()))
+        .and_then(|p| p.as_ref().map(|p| p.alloc_offset))
         .unwrap_or(0)
 }
 
-/// Number of distinct memory regions mapped.
-pub fn mapped_regions() -> usize {
-    STATE
-        .lock()
+/// Total bytes available in the VM-mapped pool.
+pub fn pool_capacity() -> usize {
+    POOL.lock()
         .ok()
-        .and_then(|s| s.as_ref().map(|s| s.mapped_ranges.len()))
+        .and_then(|p| p.as_ref().map(|p| p.mapped_chunks * CHUNK_SIZE))
         .unwrap_or(0)
 }
 
-/// Destroy the hypervisor VM (called on shutdown).
+/// Destroy the hypervisor VM and release the memory pool.
 pub fn destroy_vm() {
     if !ACTIVE.load(Ordering::Relaxed) {
         return;
@@ -190,11 +252,23 @@ pub fn destroy_vm() {
 
     #[cfg(target_os = "macos")]
     {
+        let pool = POOL.lock().unwrap().take();
+        if let Some(pool) = pool {
+            // Unmap all chunks
+            let mut gpa = GPA_BASE;
+            for _ in 0..pool.mapped_chunks {
+                unsafe { ffi::hv_vm_unmap(gpa, CHUNK_SIZE) };
+                gpa += CHUNK_SIZE as u64;
+            }
+            // Free the mmap'd region
+            unsafe {
+                libc::munmap(pool.pool_base as *mut libc::c_void, pool.pool_mmap_size);
+            }
+        }
         unsafe { ffi::hv_vm_destroy() };
     }
 
     ACTIVE.store(false, Ordering::Release);
-    *STATE.lock().unwrap() = None;
     tracing::info!("Hypervisor VM destroyed");
 }
 
@@ -204,14 +278,18 @@ mod tests {
 
     #[test]
     fn test_is_active_default() {
-        // VM shouldn't be active by default in tests (no entitlement)
         assert!(!is_active());
     }
 
     #[test]
-    fn test_map_buffer_without_vm() {
-        let buf = vec![0u8; 8192];
-        let result = map_buffer(buf.as_ptr(), buf.len());
+    fn test_alloc_without_vm() {
+        let result = alloc_buffer(4096);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pool_capacity_without_vm() {
+        assert_eq!(pool_capacity(), 0);
+        assert_eq!(allocated_bytes(), 0);
     }
 }

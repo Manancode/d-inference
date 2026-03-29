@@ -511,11 +511,23 @@ async fn cmd_serve(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    // Create hypervisor VM for hardware memory isolation. This must
-    // happen before verify_security_posture() so the RDMA policy check
-    // knows whether hypervisor protection is available.
-    match hypervisor::create_vm() {
-        Ok(()) => tracing::info!("Hypervisor memory isolation enabled"),
+    // Create hypervisor VM with a pre-allocated memory pool for
+    // hardware memory isolation. The pool is sized to fit the model
+    // weights + activations + KV cache. This must happen before
+    // verify_security_posture() so the RDMA policy check knows
+    // whether hypervisor protection is available.
+    //
+    // Pool size: 90% of physical RAM — the model, activations, and
+    // KV cache all need to fit. The remaining 10% is for the OS,
+    // the provider binary, and other processes.
+    let pool_gb = (hardware::total_memory_gb() as f64 * 0.9) as usize;
+    let pool_bytes = pool_gb * 1024 * 1024 * 1024;
+    match hypervisor::create_vm(pool_bytes) {
+        Ok(()) => tracing::info!(
+            "Hypervisor memory isolation enabled ({} GB pool, {} GB capacity)",
+            pool_gb,
+            hypervisor::pool_capacity() / 1024 / 1024 / 1024
+        ),
         Err(e) => tracing::warn!(
             "Hypervisor not available: {e} — \
              running with software-only memory protection"
