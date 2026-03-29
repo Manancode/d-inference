@@ -49,6 +49,7 @@ type AttestationBlob struct {
 	HardwareModel            string `json:"hardwareModel"`
 	OSVersion                string `json:"osVersion"`
 	PublicKey                string `json:"publicKey"`
+	RDMADisabled             bool   `json:"rdmaDisabled"`
 	SecureBootEnabled        bool   `json:"secureBootEnabled"`
 	SecureEnclaveAvailable   bool   `json:"secureEnclaveAvailable"`
 	SerialNumber             string `json:"serialNumber,omitempty"`
@@ -98,6 +99,7 @@ type VerificationResult struct {
 	SecureEnclaveAvailable   bool
 	SIPEnabled               bool
 	SecureBootEnabled        bool
+	RDMADisabled             bool
 	AuthenticatedRootEnabled bool
 	SystemVolumeHash         string
 	Timestamp                time.Time
@@ -129,6 +131,7 @@ func Verify(signed SignedAttestation) VerificationResult {
 		SecureEnclaveAvailable:  signed.Attestation.SecureEnclaveAvailable,
 		SIPEnabled:              signed.Attestation.SIPEnabled,
 		SecureBootEnabled:       signed.Attestation.SecureBootEnabled,
+		RDMADisabled:            signed.Attestation.RDMADisabled,
 		AuthenticatedRootEnabled: signed.Attestation.AuthenticatedRootEnabled,
 		SystemVolumeHash:        signed.Attestation.SystemVolumeHash,
 	}
@@ -211,6 +214,10 @@ func Verify(signed SignedAttestation) VerificationResult {
 		result.Valid = false
 		result.Error = "Secure Boot not enabled"
 	}
+	// RDMA status in the attestation blob is informational — old enclave binaries
+	// don't include this field (defaults to false). The real RDMA check happens in
+	// the challenge-response flow where the provider reports fresh rdma_ctl status.
+	// TEMPORARY: once all providers run v0.2.0+ enclave, enforce this.
 	// ARV is informational — not all environments report it reliably
 	// (e.g. multi-boot Macs, older macOS). Logged but not enforced.
 	result.AuthenticatedRootEnabled = signed.Attestation.AuthenticatedRootEnabled
@@ -288,6 +295,7 @@ func marshalSortedJSON(blob AttestationBlob) ([]byte, error) {
 		"hardwareModel":            blob.HardwareModel,
 		"osVersion":                blob.OSVersion,
 		"publicKey":                blob.PublicKey,
+		"rdmaDisabled":             blob.RDMADisabled,
 		"secureBootEnabled":        blob.SecureBootEnabled,
 		"secureEnclaveAvailable":   blob.SecureEnclaveAvailable,
 		"sipEnabled":               blob.SIPEnabled,

@@ -49,6 +49,7 @@ public struct AttestationBlob: Codable {
     public let hardwareModel: String           // e.g. "Mac15,8"
     public let osVersion: String               // e.g. "15.3.0"
     public let publicKey: String               // base64 raw P-256 public key (64 bytes: X||Y)
+    public let rdmaDisabled: Bool              // RDMA must be disabled — if enabled, remote memory access bypasses all protections
     public let secureBootEnabled: Bool
     public let secureEnclaveAvailable: Bool
     public let serialNumber: String?           // Hardware serial number for MDM cross-reference
@@ -105,6 +106,7 @@ public final class AttestationService {
             hardwareModel: getHardwareModel(),
             osVersion: getOSVersion(),
             publicKey: identity.publicKeyBase64,
+            rdmaDisabled: checkRDMADisabled(),
             secureBootEnabled: checkSecureBootEnabled(),
             secureEnclaveAvailable: SecureEnclave.isAvailable,
             serialNumber: getSerialNumber(),
@@ -222,6 +224,32 @@ func getSerialNumber() -> String? {
         }
     }
     return nil
+}
+
+/// Check if RDMA (Remote Direct Memory Access) is disabled.
+///
+/// RDMA over Thunderbolt 5 allows another Mac to directly read this
+/// process's memory, bypassing PT_DENY_ATTACH, Hardened Runtime, and SIP.
+/// RDMA is disabled by default; enabling requires Recovery OS access.
+/// Returns true if RDMA is disabled (safe) or rdma_ctl is not available.
+func checkRDMADisabled() -> Bool {
+    let pipe = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/rdma_ctl")
+    process.arguments = ["status"]
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    do {
+        try process.run()
+    } catch {
+        // rdma_ctl not available — RDMA not supported on this Mac
+        return true
+    }
+    process.waitUntilExit()
+
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let output = String(data: data, encoding: .utf8) ?? ""
+    return output.trimmingCharacters(in: .whitespacesAndNewlines) == "disabled"
 }
 
 /// Check if System Integrity Protection (SIP) is enabled.

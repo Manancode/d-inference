@@ -149,10 +149,20 @@ export default function ChatPage() {
             onThinking: (token) => {
               appendToThinking(chatId!, assistantId, token);
             },
-            onDone: (trust) => {
+            onMetrics: (metrics) => {
+              updateMessage(chatId!, assistantId, {
+                tps: metrics.tps,
+                ttft: metrics.ttft,
+                tokenCount: metrics.tokenCount,
+              });
+            },
+            onDone: (trust, metrics) => {
               updateMessage(chatId!, assistantId, {
                 streaming: false,
                 trust,
+                tps: metrics.tps,
+                ttft: metrics.ttft,
+                tokenCount: metrics.tokenCount,
               });
               setIsStreaming(false);
             },
@@ -236,27 +246,8 @@ export default function ChatPage() {
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="divide-y divide-border-dim/50">
-            {activeChat.messages.map((msg, idx) => (
-              <ChatMessage
-                key={msg.id}
-                message={msg}
-                onRetry={
-                  msg.role === "assistant" &&
-                  !msg.streaming &&
-                  (msg.content.startsWith("Error:") ||
-                    msg.content.startsWith("Connection error:"))
-                    ? () => {
-                        const prevUser = activeChat.messages
-                          .slice(0, idx)
-                          .reverse()
-                          .find((m) => m.role === "user");
-                        if (prevUser) {
-                          handleSend(prevUser.content);
-                        }
-                      }
-                    : undefined
-                }
-              />
+            {activeChat.messages.map((msg) => (
+              <ChatMessage key={msg.id} message={msg} />
             ))}
           </div>
           <div className="h-4" />

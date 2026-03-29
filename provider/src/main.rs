@@ -41,7 +41,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "dginf-provider", about = "DGInf provider agent for Apple Silicon Macs")]
+#[command(name = "dginf-provider", about = "DGInf provider agent for Apple Silicon Macs", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -163,6 +163,13 @@ enum Command {
 
     /// Show or create provider wallet (stored in macOS Keychain)
     Wallet,
+
+    /// Check for updates and install the latest version
+    Update {
+        /// Coordinator URL to check for latest version
+        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        coordinator: String,
+    },
 }
 
 fn setup_logging(verbose: bool) {
@@ -213,6 +220,7 @@ async fn main() -> Result<()> {
         Command::Stop => cmd_stop().await,
         Command::Logs { lines, watch } => cmd_logs(lines, watch).await,
         Command::Wallet => cmd_wallet().await,
+        Command::Update { coordinator } => cmd_update(coordinator).await,
     }
 }
 
@@ -2160,6 +2168,130 @@ async fn cmd_wallet() -> Result<()> {
     println!("To delete: dginf-provider unenroll (removes wallet + all data)");
 
     Ok(())
+}
+
+async fn cmd_update(coordinator: String) -> Result<()> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    println!("DGInf Provider Update");
+    println!();
+    println!("  Current version: {current_version}");
+
+    // Check coordinator for latest version
+    let base_url = coordinator.trim_end_matches('/');
+    let version_url = format!("{base_url}/api/version");
+
+    print!("  Checking for updates... ");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    let resp = match client.get(&version_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            println!("failed");
+            anyhow::bail!("Could not reach coordinator: {e}");
+        }
+    };
+
+    if !resp.status().is_success() {
+        println!("failed");
+        anyhow::bail!("Coordinator returned {}", resp.status());
+    }
+
+    let info: serde_json::Value = resp.json().await?;
+    let latest = info["version"].as_str().unwrap_or("unknown");
+    let download_url = info["download_url"].as_str().unwrap_or("");
+
+    println!("done");
+    println!("  Latest version:  {latest}");
+
+    if latest == current_version {
+        println!();
+        println!("  Already up to date!");
+        return Ok(());
+    }
+
+    // Compare versions: simple semver check
+    if !is_newer_version(current_version, latest) {
+        println!();
+        println!("  Already up to date!");
+        return Ok(());
+    }
+
+    println!();
+    println!("  Update available: {current_version} → {latest}");
+
+    if download_url.is_empty() {
+        println!();
+        println!("  To update, run:");
+        println!("    curl -fsSL {base_url}/install.sh | bash");
+        return Ok(());
+    }
+
+    // Download the bundle
+    println!("  Downloading update...");
+    let tmp_path = "/tmp/dginf-bundle.tar.gz";
+    let download = client.get(download_url).send().await?;
+    if !download.status().is_success() {
+        anyhow::bail!("Download failed: {}", download.status());
+    }
+    let bytes = download.bytes().await?;
+    std::fs::write(tmp_path, &bytes)?;
+    println!("  Downloaded {} MB", bytes.len() / 1_048_576);
+
+    // Extract and install
+    let dginf_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot find home directory"))?
+        .join(".dginf");
+    let bin_dir = dginf_dir.join("bin");
+
+    println!("  Installing...");
+    let status = std::process::Command::new("tar")
+        .args(["xzf", tmp_path, "-C", &dginf_dir.to_string_lossy()])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("tar extraction failed");
+    }
+
+    // Move binaries to bin dir
+    let _ = std::fs::rename(dginf_dir.join("dginf-provider"), bin_dir.join("dginf-provider"));
+    let _ = std::fs::rename(dginf_dir.join("dginf-enclave"), bin_dir.join("dginf-enclave"));
+
+    // Make executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in &["dginf-provider", "dginf-enclave"] {
+            let path = bin_dir.join(name);
+            if path.exists() {
+                let mut perms = std::fs::metadata(&path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&path, perms)?;
+            }
+        }
+    }
+
+    std::fs::remove_file(tmp_path).ok();
+
+    println!();
+    println!("  Updated to {latest}!");
+    println!();
+    println!("  If the provider is running, restart it:");
+    println!("    dginf-provider stop && dginf-provider start");
+
+    Ok(())
+}
+
+/// Compare two semver strings: returns true if `latest` is newer than `current`.
+fn is_newer_version(current: &str, latest: &str) -> bool {
+    let parse = |v: &str| -> (u32, u32, u32) {
+        let parts: Vec<&str> = v.split('.').collect();
+        let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(latest) > parse(current)
 }
 
 async fn cmd_logs(lines: usize, watch: bool) -> Result<()> {

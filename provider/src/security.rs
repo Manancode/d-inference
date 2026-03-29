@@ -87,6 +87,47 @@ pub fn check_sip_enabled() -> bool {
     }
 }
 
+/// Check if RDMA (Remote Direct Memory Access) is disabled.
+///
+/// RDMA over Thunderbolt 5 allows another Mac to directly read this
+/// process's memory at 80 Gb/s, bypassing PT_DENY_ATTACH, Hardened
+/// Runtime, and SIP entirely. RDMA is disabled by default; enabling
+/// requires booting into Recovery OS and running `rdma_ctl enable`.
+///
+/// Returns true if RDMA is disabled (safe) or if rdma_ctl is not
+/// available (older macOS without RDMA support).
+pub fn check_rdma_disabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        match Command::new("/usr/bin/rdma_ctl").arg("status").output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let disabled = stdout.trim() == "disabled";
+                if disabled {
+                    tracing::info!("RDMA check: RDMA is disabled (safe)");
+                } else {
+                    tracing::error!(
+                        "RDMA check: RDMA is ENABLED — remote memory access possible, refusing to serve"
+                    );
+                }
+                disabled
+            }
+            Err(e) => {
+                // rdma_ctl not found means RDMA is not supported on this Mac
+                // (pre-macOS 26.2 or hardware without Thunderbolt 5 RDMA support).
+                tracing::debug!("RDMA check: rdma_ctl not available ({e}), assuming safe");
+                true
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        tracing::debug!("RDMA check: not applicable on this platform");
+        true
+    }
+}
+
 /// Verify all security prerequisites before accepting inference work.
 ///
 /// Returns Ok(()) if all checks pass, Err with reason if any fail.
@@ -96,6 +137,10 @@ pub fn check_sip_enabled() -> bool {
 pub fn verify_security_posture() -> Result<(), String> {
     if !check_sip_enabled() {
         return Err("SIP is disabled — cannot safely serve inference requests".to_string());
+    }
+
+    if !check_rdma_disabled() {
+        return Err("RDMA is enabled — remote memory access possible, refusing to serve".to_string());
     }
 
     // Verify app bundle signature if running from a .app bundle.

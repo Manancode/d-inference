@@ -92,6 +92,10 @@ pub enum ProviderMessage {
         nonce: String,
         signature: String,
         public_key: String,
+        /// Fresh RDMA status at time of challenge response.
+        /// If false (RDMA enabled), coordinator should mark provider untrusted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rdma_disabled: Option<bool>,
         /// Fresh SIP status at time of challenge response.
         /// If false, coordinator should mark provider untrusted.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -503,6 +507,7 @@ mod tests {
             nonce: "dGVzdG5vbmNl".to_string(),
             signature: "c2lnbmF0dXJl".to_string(),
             public_key: "cHVia2V5".to_string(),
+            rdma_disabled: Some(true),
             sip_enabled: Some(true),
             secure_boot_enabled: Some(true),
         };

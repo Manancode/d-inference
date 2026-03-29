@@ -259,6 +259,7 @@ func createTestAttestationJSON(t *testing.T, encryptionKey string) json.RawMessa
 		"hardwareModel":            "Mac15,8",
 		"osVersion":                "15.3.0",
 		"publicKey":                pubKeyB64,
+		"rdmaDisabled":             true,
 		"secureBootEnabled":        true,
 		"secureEnclaveAvailable":   true,
 		"sipEnabled":               true,

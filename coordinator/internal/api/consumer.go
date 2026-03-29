@@ -713,6 +713,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleVersion returns the latest provider CLI version and download URL.
+// Providers call GET /api/version to check if they need to update.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	scheme := "https"
+	if r.TLS == nil && !strings.Contains(r.Host, "openinnovation.dev") {
+		scheme = "http"
+	}
+	downloadURL := fmt.Sprintf("%s://%s/dl/dginf-bundle-macos-arm64.tar.gz", scheme, r.Host)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":      LatestProviderVersion,
+		"download_url": downloadURL,
+	})
+}
+
 // --- payment handlers ---
 
 // depositRequest is the JSON body for POST /v1/payments/deposit.

@@ -49,6 +49,10 @@ func consumerKeyFromContext(ctx context.Context) string {
 	return ""
 }
 
+// LatestProviderVersion is the current version of the provider CLI.
+// Update this when uploading a new provider bundle.
+var LatestProviderVersion = "0.2.0"
+
 // Server is the main HTTP/WS server for the coordinator. It ties together
 // the provider registry, key store, payment ledger, and HTTP routing.
 type Server struct {
@@ -147,6 +151,12 @@ func (s *Server) routes() {
 	// Attestation verification — public, no auth needed.
 	// Users can independently verify Apple's MDA certificate chain.
 	s.mux.HandleFunc("GET /v1/providers/attestation", s.handleProviderAttestation)
+
+	// Platform stats — no auth needed. Frontend dashboard uses this.
+	s.mux.HandleFunc("GET /v1/stats", s.handleStats)
+
+	// Provider version check — no auth needed. Providers call this to check for updates.
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 }
 
 // Handler returns the root http.Handler with global middleware applied.

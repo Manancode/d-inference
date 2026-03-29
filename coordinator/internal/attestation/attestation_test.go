@@ -93,6 +93,7 @@ func TestVerifyMissingSIP(t *testing.T) {
 		SecureEnclaveAvailable:   true,
 		SIPEnabled:               false, // SIP disabled
 		SecureBootEnabled:        true,
+		RDMADisabled:             true,
 		AuthenticatedRootEnabled: true,
 	}
 
@@ -123,6 +124,7 @@ func TestVerifyMissingSecureEnclave(t *testing.T) {
 		SecureEnclaveAvailable:   false, // no SE
 		SIPEnabled:               true,
 		SecureBootEnabled:        true,
+		RDMADisabled:             true,
 		AuthenticatedRootEnabled: true,
 	}
 
@@ -167,6 +169,7 @@ func TestVerifyWithEncryptionKey(t *testing.T) {
 		HardwareModel:            "Mac15,8",
 		OSVersion:                "15.3.0",
 		PublicKey:                base64.StdEncoding.EncodeToString(pubKeyBytes),
+		RDMADisabled:             true,
 		SecureBootEnabled:        true,
 		SecureEnclaveAvailable:   true,
 		SIPEnabled:               true,
@@ -269,6 +272,7 @@ func TestMarshalSortedJSON(t *testing.T) {
 		HardwareModel:          "Mac15,8",
 		ChipName:               "Apple M3 Max",
 		OSVersion:              "15.3.0",
+		RDMADisabled:           true,
 		SecureEnclaveAvailable: true,
 		SIPEnabled:             true,
 		SecureBootEnabled:      true,
@@ -281,10 +285,10 @@ func TestMarshalSortedJSON(t *testing.T) {
 
 	jsonStr := string(data)
 
-	// Verify key ordering: chip < hardware < os < public < secureBoot < secureEnclave < sip < timestamp
+	// Verify key ordering: chip < hardware < os < public < rdma < secureBoot < secureEnclave < sip < timestamp
 	// (encryptionPublicKey is omitted when empty)
 	keys := []string{
-		"chipName", "hardwareModel", "osVersion", "publicKey",
+		"chipName", "hardwareModel", "osVersion", "publicKey", "rdmaDisabled",
 		"secureBootEnabled", "secureEnclaveAvailable", "sipEnabled", "timestamp",
 	}
 	lastIdx := -1
@@ -315,6 +319,7 @@ func TestMarshalSortedJSONWithEncryptionKey(t *testing.T) {
 		HardwareModel:          "Mac15,8",
 		ChipName:               "Apple M3 Max",
 		OSVersion:              "15.3.0",
+		RDMADisabled:           true,
 		SecureEnclaveAvailable: true,
 		SIPEnabled:             true,
 		SecureBootEnabled:      true,
@@ -329,7 +334,7 @@ func TestMarshalSortedJSONWithEncryptionKey(t *testing.T) {
 
 	// encryptionPublicKey sorts between chipName and hardwareModel
 	keys := []string{
-		"chipName", "encryptionPublicKey", "hardwareModel", "osVersion", "publicKey",
+		"chipName", "encryptionPublicKey", "hardwareModel", "osVersion", "publicKey", "rdmaDisabled",
 		"secureBootEnabled", "secureEnclaveAvailable", "sipEnabled", "timestamp",
 	}
 	lastIdx := -1
@@ -366,6 +371,7 @@ func createTestAttestation(t *testing.T) SignedAttestation {
 		SecureEnclaveAvailable:   true,
 		SIPEnabled:               true,
 		SecureBootEnabled:        true,
+		RDMADisabled:             true,
 		AuthenticatedRootEnabled: true,
 	}
 

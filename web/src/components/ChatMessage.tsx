@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { TrustBadge } from "./TrustBadge";
 import { VerificationPanel } from "./VerificationPanel";
 import type { Message } from "@/lib/store";
-import { User, Bot, Copy, Check, ChevronRight, Brain, Volume2, RotateCcw } from "lucide-react";
+import { User, Bot, Copy, Check, ChevronRight, Brain, Gauge, Clock, Hash } from "lucide-react";
 import { useState, useCallback } from "react";
 
 function CodeBlock({
@@ -97,6 +97,73 @@ function ThinkingBlock({
   );
 }
 
+function StreamMetrics({
+  tps,
+  ttft,
+  tokenCount,
+  streaming,
+}: {
+  tps?: number;
+  ttft?: number;
+  tokenCount?: number;
+  streaming?: boolean;
+}) {
+  if (!tps && !ttft) return null;
+
+  return (
+    <div
+      className={`flex items-center gap-3 mt-2 py-1.5 px-2.5 rounded-lg text-[11px] font-mono ${
+        streaming
+          ? "bg-accent-green/8 border border-accent-green/15"
+          : "bg-bg-tertiary border border-border-dim"
+      }`}
+    >
+      <span
+        className={`flex items-center gap-1 ${
+          streaming ? "text-accent-green" : "text-text-secondary"
+        }`}
+      >
+        <Gauge size={11} />
+        <span className="tabular-nums font-semibold">
+          {tps ? tps.toFixed(1) : "—"}
+        </span>
+        <span className="text-text-tertiary">tok/s</span>
+      </span>
+
+      <span className="text-border-default">|</span>
+
+      <span
+        className={`flex items-center gap-1 ${
+          streaming ? "text-accent-amber" : "text-text-secondary"
+        }`}
+      >
+        <Clock size={11} />
+        <span className="tabular-nums font-semibold">
+          {ttft ? (ttft < 1000 ? `${Math.round(ttft)}ms` : `${(ttft / 1000).toFixed(2)}s`) : "—"}
+        </span>
+        <span className="text-text-tertiary">TTFT</span>
+      </span>
+
+      <span className="text-border-default">|</span>
+
+      <span className="flex items-center gap-1 text-text-secondary">
+        <Hash size={11} />
+        <span className="tabular-nums font-semibold">
+          {tokenCount || 0}
+        </span>
+        <span className="text-text-tertiary">tokens</span>
+      </span>
+
+      {streaming && (
+        <span className="ml-auto flex items-center gap-1 text-accent-green">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
+          <span className="text-[10px]">live</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const markdownComponents: any = {
   code({ className, children, ...props }: any) {
@@ -115,11 +182,54 @@ const markdownComponents: any = {
   },
 };
 
-export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: () => void }) {
+/**
+ * Parse legacy messages that have think blocks baked into content.
+ * Handles both "<think>...</think>" and "Thinking Process:...\n</think>" formats.
+ */
+function parseThinkFromContent(content: string, existingThinking?: string): { thinking: string; content: string } {
+  if (existingThinking || !content) return { thinking: existingThinking || "", content };
+
+  const trimmed = content.trimStart();
+
+  // Format: <think>...</think>
+  if (trimmed.startsWith("<think>")) {
+    const closeIdx = trimmed.indexOf("</think>");
+    if (closeIdx !== -1) {
+      const thinking = trimmed.slice(7, closeIdx).trim();
+      const rest = trimmed.slice(closeIdx + 8).replace(/^\n+/, "");
+      return { thinking, content: rest };
+    }
+  }
+
+  // Format: Thinking Process:...\n</think>
+  if (trimmed.startsWith("Thinking Process:") || trimmed.startsWith("Thinking Process\n")) {
+    const closeIdx = trimmed.indexOf("</think>");
+    if (closeIdx !== -1) {
+      const thinkStart = trimmed.indexOf(":") !== -1 && trimmed.indexOf(":") < 20
+        ? trimmed.indexOf(":") + 1
+        : trimmed.indexOf("\n") + 1;
+      const thinking = trimmed.slice(thinkStart, closeIdx).trim();
+      const rest = trimmed.slice(closeIdx + 8).replace(/^\n+/, "");
+      return { thinking, content: rest };
+    }
+  }
+
+  return { thinking: "", content };
+}
+
+export function ChatMessage({ message }: { message: Message }) {
   const isUser = message.role === "user";
-  const hasThinking = !isUser && message.thinking && message.thinking.length > 0;
+
+  // Parse think blocks from legacy stored messages
+  const parsed = !isUser && !message.streaming
+    ? parseThinkFromContent(message.content, message.thinking)
+    : { thinking: message.thinking || "", content: message.content };
+
+  const displayContent = parsed.content;
+  const displayThinking = parsed.thinking;
+
+  const hasThinking = !isUser && displayThinking.length > 0;
   const isThinking = message.streaming && !message.content && !!message.thinking;
-  const isError = !isUser && !message.streaming && message.content.startsWith("Error:") || message.content.startsWith("Transcription error:") || message.content.startsWith("Connection error:");
 
   return (
     <div className={`message-animate py-5`}>
@@ -149,28 +259,10 @@ export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: 
               {message.trust && <TrustBadge trust={message.trust} />}
             </div>
 
-            {/* Audio player for messages with audio */}
-            {message.audioUrl && (
-              <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-bg-tertiary border border-border-dim">
-                <Volume2 size={14} className="text-accent-purple shrink-0" />
-                <audio
-                  controls
-                  src={message.audioUrl}
-                  className="h-8 flex-1"
-                  style={{ minWidth: 0 }}
-                />
-                {message.audioDuration != null && (
-                  <span className="text-[10px] font-mono text-text-tertiary shrink-0">
-                    {Math.round(message.audioDuration)}s
-                  </span>
-                )}
-              </div>
-            )}
-
             {/* Thinking block */}
             {hasThinking && (
               <ThinkingBlock
-                thinking={message.thinking!}
+                thinking={displayThinking}
                 streaming={isThinking}
               />
             )}
@@ -188,27 +280,26 @@ export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: 
                 message.streaming && !isThinking ? "streaming-cursor" : ""
               }`}
             >
-              {message.content ? (
+              {displayContent ? (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={markdownComponents}
                 >
-                  {message.content}
+                  {displayContent}
                 </ReactMarkdown>
               ) : message.streaming && !hasThinking ? (
                 <span className="text-text-tertiary text-sm streaming-cursor" />
               ) : null}
             </div>
 
-            {/* Retry button on error messages */}
-            {isError && onRetry && (
-              <button
-                onClick={onRetry}
-                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mono text-text-tertiary hover:text-accent-purple hover:bg-accent-purple/10 border border-border-dim hover:border-accent-purple/30 transition-all"
-              >
-                <RotateCcw size={12} />
-                Retry
-              </button>
+            {/* Live streaming metrics */}
+            {!isUser && (message.streaming || message.tps) && (
+              <StreamMetrics
+                tps={message.tps}
+                ttft={message.ttft}
+                tokenCount={message.tokenCount}
+                streaming={message.streaming}
+              />
             )}
           </div>
         </div>

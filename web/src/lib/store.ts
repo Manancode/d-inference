@@ -17,11 +17,9 @@ export interface Message {
   trust?: TrustMetadata;
   streaming?: boolean;
   timestamp: number;
-  // Audio transcription
-  audioUrl?: string;
-  audioBase64?: string; // persists across reloads for retry
-  audioMimeType?: string;
-  audioDuration?: number;
+  tps?: number;
+  ttft?: number;
+  tokenCount?: number;
 }
 
 interface AppState {

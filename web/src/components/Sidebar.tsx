@@ -10,6 +10,7 @@ import {
   Cpu,
   X,
   Shield,
+  Activity,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -92,6 +93,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="p-3 border-t border-border-dim space-y-0.5">
         {[
+          { href: "/stats", icon: Activity, label: "Stats" },
           { href: "/models", icon: Cpu, label: "Models" },
           { href: "/providers", icon: Shield, label: "Providers" },
           { href: "/billing", icon: CreditCard, label: "Billing" },

@@ -102,15 +102,16 @@ type SecurityInfoResponse struct {
 
 // VerificationResult from cross-checking MDM with attestation.
 type VerificationResult struct {
-	DeviceEnrolled    bool
-	UDID              string
-	SerialNumber      string
-	MDMSIPEnabled     bool
-	MDMSecureBootFull bool
-	MDMAuthRootVolume bool
-	SIPMatch          bool   // MDM SIP matches attestation SIP
-	SecureBootMatch   bool   // MDM SecureBoot matches attestation
-	Error             string
+	DeviceEnrolled       bool
+	UDID                 string
+	SerialNumber         string
+	MDMSIPEnabled        bool
+	MDMSecureBootFull    bool
+	MDMAuthRootVolume    bool
+	MDMRecoveryLocked    bool   // Recovery Lock prevents Recovery OS access (blocks rdma_ctl enable)
+	SIPMatch             bool   // MDM SIP matches attestation SIP
+	SecureBootMatch      bool   // MDM SecureBoot matches attestation
+	Error                string
 }
 
 // LookupDevice checks if a device with the given serial number is enrolled.
@@ -470,6 +471,7 @@ func (c *Client) VerifyProvider(serialNumber string, attestationSIP, attestation
 	result.MDMSIPEnabled = secInfo.SystemIntegrityProtectionEnabled
 	result.MDMSecureBootFull = secInfo.SecureBootLevel == "full"
 	result.MDMAuthRootVolume = secInfo.AuthenticatedRootVolumeEnabled
+	result.MDMRecoveryLocked = secInfo.IsRecoveryLockEnabled
 
 	// Step 5: Cross-check against attestation
 	result.SIPMatch = result.MDMSIPEnabled == attestationSIP
@@ -484,6 +486,9 @@ func (c *Client) VerifyProvider(serialNumber string, attestationSIP, attestation
 	} else if !result.SecureBootMatch {
 		result.Error = "attestation SecureBoot does not match MDM — provider may be lying"
 	}
+	// Recovery Lock is recommended but not enforced yet — log a warning.
+	// When enforced, providers without Recovery Lock could enable RDMA via Recovery OS.
+	// TODO: enforce once Recovery Lock is deployed to all provider machines.
 
 	return result, nil
 }
@@ -519,6 +524,12 @@ func parseSecurityInfoPlist(data []byte) *SecurityInfoResponse {
 	if bytes.Contains(data, []byte("<key>FDE_Enabled</key>")) {
 		result.FileVaultEnabled = bytes.Contains(data, []byte("FDE_Enabled</key>\n\t\t<true")) ||
 			bytes.Contains(data, []byte("FDE_Enabled</key><true"))
+		found = true
+	}
+	if bytes.Contains(data, []byte("<key>IsRecoveryLockEnabled</key>")) {
+		result.IsRecoveryLockEnabled = bytes.Contains(data, []byte("IsRecoveryLockEnabled</key>\n\t\t<true")) ||
+			bytes.Contains(data, []byte("IsRecoveryLockEnabled</key>\n\t<true")) ||
+			bytes.Contains(data, []byte("IsRecoveryLockEnabled</key><true"))
 		found = true
 	}
 

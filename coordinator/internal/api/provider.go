@@ -357,12 +357,30 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 		return
 	}
 
+	// Verify fresh RDMA status. RDMA over Thunderbolt 5 allows another Mac
+	// to directly read inference process memory, bypassing all software
+	// protections (PT_DENY_ATTACH, Hardened Runtime, SIP). This check is
+	// required — providers must report RDMA status (v0.2.0+).
+	if resp.RDMADisabled == nil {
+		s.handleChallengeFailure(providerID, "RDMA status not reported — provider must update to v0.2.0+")
+		return
+	}
+	if !*resp.RDMADisabled {
+		s.logger.Error("provider RDMA enabled in challenge response — remote memory access possible, marking untrusted",
+			"provider_id", providerID,
+		)
+		s.registry.MarkUntrusted(providerID)
+		s.handleChallengeFailure(providerID, "RDMA enabled")
+		return
+	}
+
 	// Challenge passed.
 	s.registry.RecordChallengeSuccess(providerID)
 	s.logger.Info("attestation challenge verified",
 		"provider_id", providerID,
 		"sip_enabled", resp.SIPEnabled,
 		"secure_boot_enabled", resp.SecureBootEnabled,
+		"rdma_disabled", resp.RDMADisabled,
 	)
 }
 
