@@ -58,4 +58,7 @@ coordinator/dginf-coordinator-linux
 # Temp directories
 tmp/
 
+# Papers (private — submitted separately)
+papers/
+
 d-inf-docs/
