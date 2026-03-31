@@ -8,7 +8,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "DGInf",
-            path: "Sources/DGInf"
+            path: "Sources/DGInf",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "DGInfTests",

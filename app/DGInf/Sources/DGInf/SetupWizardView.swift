@@ -133,22 +133,15 @@ struct SetupWizardView: View {
     // MARK: - Step 1: Welcome
 
     private var welcomeStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Welcome to DGInf")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Decentralized Private Inference")
-                .font(.title3)
-                .foregroundColor(.secondary)
-
-            Text("DGInf turns your Mac into a private inference provider. Your GPU serves AI models while cryptographic protections ensure nobody — not even you — can read the prompts being processed.")
-                .font(.body)
+        let guide = GuideMessages.welcome(chipName: viewModel.chipName, memoryGB: viewModel.memoryGB)
+        return VStack(alignment: .leading, spacing: 16) {
+            GuideAvatarView(
+                mood: .greeting,
+                message: guide.message,
+                detail: guide.detail
+            )
 
             Divider()
-
-            Text("Your Hardware")
-                .font(.headline)
 
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -201,14 +194,14 @@ struct SetupWizardView: View {
     // MARK: - Step 2: Security
 
     private var securityStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Security Check")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            Text("DGInf requires several macOS security features to ensure prompts are protected during inference.")
-                .font(.body)
-                .foregroundColor(.secondary)
+        let allPassed = viewModel.securityManager.sipEnabled && viewModel.securityManager.secureEnclaveAvailable
+        let guide = GuideMessages.security(allPassed: allPassed)
+        return VStack(alignment: .leading, spacing: 16) {
+            GuideAvatarView(
+                mood: allPassed ? .excited : .explaining,
+                message: guide.message,
+                detail: guide.detail
+            )
 
             VStack(alignment: .leading, spacing: 12) {
                 securityRow(
@@ -247,14 +240,13 @@ struct SetupWizardView: View {
     // MARK: - Step 3: MDM Enrollment
 
     private var mdmStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("MDM Enrollment")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            Text("Device enrollment lets the coordinator independently verify your Mac's security posture. This is required for hardware trust — without it, your provider won't receive inference requests.")
-                .font(.body)
-                .foregroundColor(.secondary)
+        let guide = GuideMessages.mdm(enrolled: viewModel.securityManager.mdmEnrolled)
+        return VStack(alignment: .leading, spacing: 16) {
+            GuideAvatarView(
+                mood: viewModel.securityManager.mdmEnrolled ? .excited : .explaining,
+                message: guide.message,
+                detail: guide.detail
+            )
 
             HStack(spacing: 8) {
                 Image(systemName: viewModel.securityManager.mdmEnrolled ? "checkmark.circle.fill" : "circle")
@@ -291,14 +283,15 @@ struct SetupWizardView: View {
     // MARK: - Step 4: Model Selection
 
     private var modelStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Select a Model")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            Text("Choose a model to serve. Smaller models are faster to download and use less memory.")
-                .font(.body)
-                .foregroundColor(.secondary)
+        let guide = isDownloadingModel
+            ? GuideMessages.downloading(modelName: selectedModelId.components(separatedBy: "/").last ?? "model")
+            : GuideMessages.model(memoryGB: viewModel.memoryGB)
+        return VStack(alignment: .leading, spacing: 16) {
+            GuideAvatarView(
+                mood: isDownloadingModel ? .thinking : .explaining,
+                message: guide.message,
+                detail: guide.detail
+            )
 
             ScrollView {
                 VStack(spacing: 8) {
@@ -339,14 +332,14 @@ struct SetupWizardView: View {
     // MARK: - Step 5: Verify
 
     private var verifyStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Verification")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            Text("Running diagnostics to make sure everything is configured correctly.")
-                .font(.body)
-                .foregroundColor(.secondary)
+        let passed = doctorOutput.contains("8/8") || doctorOutput.contains("7/8")
+        let guide = GuideMessages.verify(passed: !doctorOutput.isEmpty && passed)
+        return VStack(alignment: .leading, spacing: 16) {
+            GuideAvatarView(
+                mood: doctorOutput.isEmpty ? .thinking : (passed ? .excited : .concerned),
+                message: doctorOutput.isEmpty ? "Let me check everything..." : guide.message,
+                detail: doctorOutput.isEmpty ? "Running diagnostics now." : guide.detail
+            )
 
             if doctorOutput.isEmpty && !isProcessing {
                 Button("Run Diagnostics") {
@@ -388,16 +381,11 @@ struct SetupWizardView: View {
 
     private var startStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Ready to Go!")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.green)
-
-            Text("Your Mac is configured as a DGInf inference provider. Click Done to start serving.")
-                .font(.body)
+            GuideAvatarView(
+                mood: .celebrating,
+                message: GuideMessages.ready.message,
+                detail: GuideMessages.ready.detail
+            )
 
             VStack(alignment: .leading, spacing: 8) {
                 if !selectedModelId.isEmpty {
