@@ -152,7 +152,7 @@ export const useStore = create<AppState>()(
         })),
     }),
     {
-      name: "dginf-store",
+      name: "eigeninference-store",
       partialize: (state) => ({
         chats: state.chats.map((c) => ({
           ...c,

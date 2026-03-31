@@ -4,15 +4,23 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { useStore } from "@/lib/store";
 import { streamChat, fetchModels } from "@/lib/api";
 import { useToastStore } from "@/hooks/useToast";
+import { useAuth } from "@/hooks/useAuth";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { TopBar } from "@/components/TopBar";
-import { Shield, Zap, Lock, Globe } from "lucide-react";
+import { Sparkles, Lock, Cpu, Globe } from "lucide-react";
 import type { Message } from "@/lib/store";
 
 function generateId() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
+
+const SUGGESTED_PROMPTS = [
+  { label: "Explain quantum computing", prompt: "Explain quantum computing in simple terms" },
+  { label: "Write a Python script", prompt: "Write a Python script that reads a CSV and generates a summary report" },
+  { label: "Compare ML frameworks", prompt: "Compare PyTorch and JAX for research use cases" },
+  { label: "Explain zero-knowledge proofs", prompt: "What are zero-knowledge proofs and how are they used in blockchain?" },
+];
 
 export default function ChatPage() {
   const {
@@ -28,6 +36,7 @@ export default function ChatPage() {
     setModels,
   } = useStore();
 
+  const { authenticated } = useAuth();
   const addToast = useToastStore((s) => s.addToast);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -35,57 +44,20 @@ export default function ChatPage() {
 
   const activeChat = chats.find((c) => c.id === activeChatId);
 
-  // Auto-provision: generate API key if none exists or stale, then load models
+  // Load models on mount
   useEffect(() => {
-    async function generateKey(coordUrl: string) {
-      try {
-        const res = await fetch("/api/auth/keys", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-coordinator-url": coordUrl,
-          },
-        });
-        if (res.ok) {
-          const { api_key } = await res.json();
-          localStorage.setItem("dginf_api_key", api_key);
-          return true;
-        }
-      } catch {
-        // coordinator not reachable
-      }
-      return false;
-    }
+    if (!authenticated) return;
 
     async function bootstrap() {
-      const coordUrl =
-        localStorage.getItem("dginf_coordinator_url") ||
-        process.env.NEXT_PUBLIC_COORDINATOR_URL ||
-        "https://inference-test.openinnovation.dev";
-
-      if (!localStorage.getItem("dginf_api_key")) {
-        await generateKey(coordUrl);
-      }
-
       try {
         const models = await fetchModels();
         setModels(models);
-      } catch (e) {
-        // If 401, the stored key is stale (coordinator restarted) — regenerate
-        if (String(e).includes("401")) {
-          localStorage.removeItem("dginf_api_key");
-          if (await generateKey(coordUrl)) {
-            try {
-              setModels(await fetchModels());
-            } catch {
-              // still failing
-            }
-          }
-        }
+      } catch {
+        // coordinator may be unreachable
       }
     }
     bootstrap();
-  }, [setModels]);
+  }, [setModels, authenticated]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -198,6 +170,7 @@ export default function ChatPage() {
       appendToThinking,
       updateChatTitle,
       selectedModel,
+      addToast,
     ]
   );
 
@@ -212,31 +185,47 @@ export default function ChatPage() {
 
       {!activeChat || activeChat.messages.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center max-w-md px-6">
-            <div className="w-16 h-16 rounded-2xl bg-accent-purple/10 border border-accent-purple/20 flex items-center justify-center mx-auto mb-6">
-              <Shield size={28} className="text-accent-purple" />
+          <div className="text-center max-w-lg px-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-amber/10 text-accent-amber text-xs font-medium mb-4">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent-amber animate-pulse" />
+              Research Preview
             </div>
-            <h2 className="text-xl font-semibold text-text-primary mb-2">
-              DGInf
+            <h2 className="text-3xl font-bold text-text-primary tracking-tight mb-2">
+              Eigen<span className="font-normal text-text-secondary">Inference</span>
             </h2>
-            <p className="text-sm text-text-tertiary mb-8 leading-relaxed">
-              Private inference through decentralized,
+            <p className="text-base text-text-tertiary mb-10 leading-relaxed">
+              Private AI inference through hardware-attested providers.
               <br />
-              hardware-attested Apple Silicon providers.
+              <span className="text-xs">This is an experimental research project — results may vary.</span>
             </p>
 
-            <div className="flex flex-wrap justify-center gap-2">
+            <div className="grid grid-cols-2 gap-3 mb-8">
+              {SUGGESTED_PROMPTS.map(({ label, prompt }) => (
+                <button
+                  key={label}
+                  onClick={() => handleSend(prompt)}
+                  className="text-left px-4 py-3 rounded-xl bg-bg-secondary hover:bg-bg-tertiary
+                             text-sm text-text-secondary hover:text-text-primary
+                             shadow-sm hover:shadow-md transition-all"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap justify-center gap-3">
               {[
                 { icon: Lock, label: "End-to-end encrypted" },
-                { icon: Shield, label: "Secure Enclave attested" },
-                { icon: Zap, label: "Apple Silicon native" },
+                { icon: Sparkles, label: "Secure Enclave attested" },
+                { icon: Cpu, label: "Apple Silicon native" },
                 { icon: Globe, label: "Decentralized network" },
               ].map(({ icon: Icon, label }) => (
                 <span
                   key={label}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-bg-tertiary border border-border-dim text-[11px] text-text-tertiary font-mono"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                             bg-bg-secondary text-xs text-text-tertiary"
                 >
-                  <Icon size={11} />
+                  <Icon size={12} />
                   {label}
                 </span>
               ))}
@@ -245,7 +234,7 @@ export default function ChatPage() {
         </div>
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <div className="divide-y divide-border-dim/50">
+          <div className="space-y-1">
             {activeChat.messages.map((msg) => (
               <ChatMessage key={msg.id} message={msg} />
             ))}

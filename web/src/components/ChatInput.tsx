@@ -55,7 +55,6 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
     }
   }, [input]);
 
-  // Close model dropdown on outside click
   useEffect(() => {
     if (!modelOpen) return;
     const handler = () => setModelOpen(false);
@@ -63,7 +62,6 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
     return () => document.removeEventListener("click", handler);
   }, [modelOpen]);
 
-  // Transcribe audio and put text in the input box
   const doTranscribe = useCallback(
     async (blob: Blob) => {
       setIsTranscribing(true);
@@ -82,10 +80,9 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
         setIsTranscribing(false);
       }
     },
-    [models, selectedModel]
+    [models]
   );
 
-  // Recording controls
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -131,13 +128,11 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
     setRecordingDuration(0);
   }, []);
 
-  // File upload handler
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
       doTranscribe(file);
-      // Reset file input
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
     [doTranscribe]
@@ -154,14 +149,15 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
   };
 
   return (
-    <div className="border-t border-border-dim bg-bg-secondary/80 backdrop-blur-sm">
-      <div className="max-w-3xl mx-auto px-6 py-4">
-        <div className="relative flex flex-col gap-2 bg-bg-tertiary border border-border-subtle rounded-xl focus-within:border-accent-purple/40 transition-colors">
+    <div className="bg-bg-primary/80 backdrop-blur-sm">
+      <div className="max-w-4xl mx-auto px-6 py-4">
+        <div className="relative flex flex-col gap-2 bg-bg-secondary rounded-2xl shadow-lg
+                        focus-within:shadow-xl focus-within:ring-1 focus-within:ring-accent-brand/20 transition-all">
           {/* Recording indicator */}
           {recording && (
             <div className="flex items-center gap-3 px-4 pt-3">
               <span className="w-2.5 h-2.5 rounded-full bg-danger animate-pulse" />
-              <span className="text-sm text-danger font-mono">
+              <span className="text-sm text-danger font-medium">
                 Recording {formatDuration(recordingDuration)}
               </span>
               <button
@@ -176,8 +172,8 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
           {/* Transcribing indicator */}
           {isTranscribing && (
             <div className="flex items-center gap-3 px-4 pt-3">
-              <span className="w-2.5 h-2.5 rounded-full bg-accent-purple animate-pulse" />
-              <span className="text-sm text-accent-purple font-mono">
+              <span className="w-2.5 h-2.5 rounded-full bg-accent-brand animate-pulse" />
+              <span className="text-sm text-accent-brand font-medium">
                 Transcribing audio...
               </span>
             </div>
@@ -190,32 +186,31 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Send a message or record audio..."
+              placeholder="Send a message..."
               rows={1}
-              className="w-full bg-transparent px-4 pt-3 pb-1 text-text-primary placeholder:text-text-tertiary text-[15px] resize-none outline-none"
+              className="w-full bg-transparent px-4 pt-4 pb-1 text-text-primary placeholder:text-text-tertiary text-[15px] resize-none outline-none"
             />
           )}
 
           {/* Bottom bar */}
-          <div className="flex items-center justify-between px-3 pb-2.5">
+          <div className="flex items-center justify-between px-3 pb-3">
             {/* Left: model selector + audio buttons */}
             <div className="flex items-center gap-1">
-              {/* Model selector */}
               <div className="relative">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setModelOpen(!modelOpen);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-mono text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-all"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-all"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-accent-green" />
-                  {displayModel}
-                  <ChevronDown size={10} />
+                  <span className="font-mono">{displayModel}</span>
+                  <ChevronDown size={12} />
                 </button>
 
                 {modelOpen && models.length > 0 && (
-                  <div className="absolute bottom-full left-0 mb-1 w-72 bg-bg-elevated border border-border-subtle rounded-lg shadow-xl overflow-hidden z-50">
+                  <div className="absolute bottom-full left-0 mb-1 w-80 bg-bg-secondary border border-border-subtle rounded-xl shadow-xl overflow-hidden z-50">
                     {models.map((m) => {
                       const name = m.id.split("/").pop() || m.id;
                       const isStt = m.model_type === "stt";
@@ -226,9 +221,9 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                             setSelectedModel(m.id);
                             setModelOpen(false);
                           }}
-                          className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-bg-hover transition-colors ${
+                          className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-bg-hover transition-colors ${
                             selectedModel === m.id
-                              ? "text-accent-green bg-accent-green-dim/20"
+                              ? "text-accent-brand bg-accent-brand-dim/20"
                               : "text-text-secondary"
                           }`}
                         >
@@ -236,12 +231,12 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                             {name}
                           </span>
                           {isStt && (
-                            <span className="text-[10px] text-accent-purple px-1.5 py-0.5 bg-accent-purple/10 rounded">
+                            <span className="text-xs text-accent-brand px-1.5 py-0.5 bg-accent-brand/10 rounded">
                               STT
                             </span>
                           )}
                           {m.quantization && (
-                            <span className="text-[10px] text-text-tertiary px-1.5 py-0.5 bg-bg-tertiary rounded">
+                            <span className="text-xs text-text-tertiary px-1.5 py-0.5 bg-bg-tertiary rounded">
                               {m.quantization}
                             </span>
                           )}
@@ -252,7 +247,6 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                 )}
               </div>
 
-              {/* Audio file upload */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -263,29 +257,28 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={busy || recording}
-                className="flex items-center justify-center w-7 h-7 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-bg-hover disabled:opacity-30 transition-all"
+                className="flex items-center justify-center w-8 h-8 rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-bg-hover disabled:opacity-30 transition-all"
                 title="Upload audio file"
               >
-                <Paperclip size={14} />
+                <Paperclip size={16} />
               </button>
 
-              {/* Mic button */}
               {recording ? (
                 <button
                   onClick={stopRecording}
-                  className="flex items-center justify-center w-7 h-7 rounded-md bg-danger/20 text-danger hover:bg-danger/30 transition-colors"
+                  className="flex items-center justify-center w-8 h-8 rounded-lg bg-danger/20 text-danger hover:bg-danger/30 transition-colors"
                   title="Stop recording"
                 >
-                  <MicOff size={14} />
+                  <MicOff size={16} />
                 </button>
               ) : (
                 <button
                   onClick={startRecording}
                   disabled={busy}
-                  className="flex items-center justify-center w-7 h-7 rounded-md text-text-tertiary hover:text-accent-purple hover:bg-accent-purple/10 disabled:opacity-30 transition-all"
+                  className="flex items-center justify-center w-8 h-8 rounded-lg text-text-tertiary hover:text-accent-brand hover:bg-accent-brand/10 disabled:opacity-30 transition-all"
                   title="Record audio"
                 >
-                  <Mic size={14} />
+                  <Mic size={16} />
                 </button>
               )}
             </div>
@@ -294,25 +287,21 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
             {isStreaming ? (
               <button
                 onClick={onStop}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-danger/20 hover:bg-danger/30 text-danger transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger transition-colors"
               >
-                <Square size={14} />
+                <Square size={16} />
               </button>
             ) : (
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || busy}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent-purple hover:bg-accent-purple/80 text-white disabled:opacity-30 disabled:hover:bg-accent-purple transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-accent-brand hover:bg-accent-brand-hover text-white disabled:opacity-30 disabled:hover:bg-accent-brand transition-colors"
               >
-                <Send size={14} />
+                <Send size={16} />
               </button>
             )}
           </div>
         </div>
-
-        <p className="text-center text-[10px] font-mono text-text-tertiary mt-2 tracking-wider">
-          Private inference via hardware-attested providers
-        </p>
       </div>
     </div>
   );

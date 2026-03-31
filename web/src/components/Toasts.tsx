@@ -10,15 +10,15 @@ const icons = {
 };
 
 const colors = {
-  error: "bg-red-50 border-red-200 text-red-800",
-  success: "bg-emerald-50 border-emerald-200 text-emerald-800",
-  info: "bg-blue-50 border-blue-200 text-blue-800",
+  error: "bg-accent-red-dim border-accent-red/25 text-accent-red",
+  success: "bg-accent-green-dim border-accent-green/25 text-accent-green",
+  info: "bg-accent-brand-dim border-accent-brand/25 text-accent-brand",
 };
 
 const iconColors = {
-  error: "text-red-500",
-  success: "text-emerald-500",
-  info: "text-blue-500",
+  error: "text-accent-red",
+  success: "text-accent-green",
+  info: "text-accent-brand",
 };
 
 export function Toasts() {

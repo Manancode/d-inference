@@ -24,7 +24,7 @@ export function UsageChart({ usage }: Props) {
   const maxCost = Math.max(...days.map(([, v]) => v), 1);
 
   return (
-    <div className="rounded-xl border border-border-dim bg-bg-secondary p-5">
+    <div className="rounded-xl bg-bg-secondary p-5 shadow-sm">
       <h3 className="text-sm font-medium text-text-primary mb-4">
         Spend Over Time
       </h3>
@@ -37,18 +37,18 @@ export function UsageChart({ usage }: Props) {
               className="flex-1 flex flex-col items-center gap-1 group"
             >
               {/* Tooltip */}
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-mono text-text-secondary whitespace-nowrap">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-mono text-text-secondary whitespace-nowrap">
                 ${(cost / 1_000_000).toFixed(4)}
               </div>
               {/* Bar */}
               <div className="w-full flex items-end justify-center" style={{ height: "100%" }}>
                 <div
-                  className="w-full max-w-[28px] rounded-t bg-accent-purple/60 hover:bg-accent-purple transition-colors"
+                  className="w-full max-w-[28px] rounded-t bg-accent-brand/60 hover:bg-accent-brand transition-colors"
                   style={{ height: `${pct}%` }}
                 />
               </div>
               {/* Label */}
-              <span className="text-[9px] font-mono text-text-tertiary truncate w-full text-center">
+              <span className="text-xs font-mono text-text-tertiary truncate w-full text-center">
                 {day}
               </span>
             </div>

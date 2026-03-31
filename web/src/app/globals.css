@@ -2,28 +2,64 @@
 
 button, a, [role="button"], summary { cursor: pointer; }
 
+/* ─── Light mode (default) ─── */
 :root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f8fa;
-  --bg-tertiary: #f0f0f4;
-  --bg-elevated: #e8e8ee;
-  --bg-hover: #eaeaf0;
-  --border-dim: #e2e2ea;
-  --border-subtle: #d0d0dc;
-  --border-default: #b8b8c8;
-  --text-primary: #1a1a2e;
-  --text-secondary: #55556e;
-  --text-tertiary: #8888a0;
-  --accent-green: #059669;
+  --bg-primary:     #ffffff;
+  --bg-secondary:   #f9fafb;
+  --bg-tertiary:    #f3f4f6;
+  --bg-elevated:    #e5e7eb;
+  --bg-hover:       #f0f1f3;
+  --border-dim:     #e5e7eb;
+  --border-subtle:  #d1d5db;
+  --border-default: #9ca3af;
+  --text-primary:   #111827;
+  --text-secondary: #4b5563;
+  --text-tertiary:  #9ca3af;
+  --accent-brand:   #6366f1;
+  --accent-brand-dim: #eef2ff;
+  --accent-brand-hover: #4f46e5;
+  --accent-green:   #10b981;
   --accent-green-dim: #d1fae5;
-  --accent-purple: #7c3aed;
-  --accent-purple-dim: #ede9fe;
-  --accent-amber: #d97706;
+  --accent-amber:   #f59e0b;
   --accent-amber-dim: #fef3c7;
-  --accent-red: #dc2626;
-  --danger: #dc2626;
-  --font-sans: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+  --accent-red:     #ef4444;
+  --accent-red-dim: #fee2e2;
+  --danger:         #ef4444;
+  --shadow-sm:      0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md:      0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg:      0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-xl:      0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains), 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ─── Dark mode ─── */
+.dark {
+  --bg-primary:     #0f1117;
+  --bg-secondary:   #161922;
+  --bg-tertiary:    #1e2130;
+  --bg-elevated:    #282d3e;
+  --bg-hover:       #2a2f42;
+  --border-dim:     #1e2130;
+  --border-subtle:  #2a2f42;
+  --border-default: #3d4460;
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary:  #64748b;
+  --accent-brand:   #818cf8;
+  --accent-brand-dim: #1e1b4b;
+  --accent-brand-hover: #6366f1;
+  --accent-green:   #34d399;
+  --accent-green-dim: #064e3b;
+  --accent-amber:   #fbbf24;
+  --accent-amber-dim: #451a03;
+  --accent-red:     #f87171;
+  --accent-red-dim: #450a0a;
+  --danger:         #f87171;
+  --shadow-sm:      0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md:      0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg:      0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  --shadow-xl:      0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
 }
 
 @theme inline {
@@ -38,15 +74,21 @@ button, a, [role="button"], summary { cursor: pointer; }
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
+  --color-accent-brand: var(--accent-brand);
+  --color-accent-brand-dim: var(--accent-brand-dim);
+  --color-accent-brand-hover: var(--accent-brand-hover);
   --color-accent-green: var(--accent-green);
   --color-accent-green-dim: var(--accent-green-dim);
-  --color-accent-purple: var(--accent-purple);
-  --color-accent-purple-dim: var(--accent-purple-dim);
   --color-accent-amber: var(--accent-amber);
   --color-accent-amber-dim: var(--accent-amber-dim);
   --color-accent-red: var(--accent-red);
+  --color-accent-red-dim: var(--accent-red-dim);
   --color-danger: var(--danger);
-  --font-sans: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains), 'SF Mono', 'Fira Code', monospace;
 }
 
@@ -74,17 +116,17 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Trust badge glow */
+/* ─── Trust badge glow ─── */
 @keyframes trust-pulse {
-  0%, 100% { box-shadow: 0 0 6px rgba(5, 150, 105, 0.2); }
-  50% { box-shadow: 0 0 14px rgba(5, 150, 105, 0.4); }
+  0%, 100% { box-shadow: 0 0 6px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 14px rgba(16, 185, 129, 0.4); }
 }
 
 .trust-glow-hardware {
   animation: trust-pulse 3s ease-in-out infinite;
 }
 
-/* Streaming cursor blink */
+/* ─── Streaming cursor blink ─── */
 @keyframes cursor-blink {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
@@ -93,12 +135,12 @@ body {
 .streaming-cursor::after {
   content: '▊';
   animation: cursor-blink 0.8s steps(1) infinite;
-  color: var(--accent-purple);
+  color: var(--accent-brand);
   font-size: 0.85em;
   margin-left: 1px;
 }
 
-/* Markdown code blocks */
+/* ─── Markdown prose ─── */
 .prose pre {
   background: var(--bg-tertiary) !important;
   border: 1px solid var(--border-dim);
@@ -116,7 +158,7 @@ body {
   background: var(--bg-tertiary);
   padding: 0.15em 0.4em;
   border-radius: 4px;
-  color: var(--accent-purple);
+  color: var(--accent-brand);
 }
 
 .prose pre code {
@@ -143,21 +185,38 @@ body {
   margin-top: 1em;
   margin-bottom: 0.5em;
   font-weight: 600;
+  color: var(--text-primary);
 }
 
 .prose a {
-  color: var(--accent-purple);
+  color: var(--accent-brand);
   text-decoration: underline;
 }
 
 .prose blockquote {
-  border-left: 3px solid var(--accent-purple-dim);
+  border-left: 3px solid var(--accent-brand-dim);
   padding-left: 1em;
   color: var(--text-secondary);
   margin: 0.5em 0;
 }
 
-/* Fade-in for messages */
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.prose th, .prose td {
+  border: 1px solid var(--border-dim);
+  padding: 0.5em 0.75em;
+  text-align: left;
+}
+
+.prose th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+
+/* ─── Animations ─── */
 @keyframes message-enter {
   from {
     opacity: 0;
@@ -173,7 +232,6 @@ body {
   animation: message-enter 0.3s ease-out;
 }
 
-/* Slide in sidebar */
 @keyframes slide-in {
   from { transform: translateX(-100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -183,17 +241,37 @@ body {
   animation: slide-in 0.2s ease-out;
 }
 
-/* Syntax highlighting — light theme */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* ─── Syntax highlighting (theme-aware) ─── */
 .hljs {
   background: transparent !important;
   color: var(--text-primary) !important;
 }
 
-.hljs-keyword { color: #7c3aed; }
-.hljs-string { color: #059669; }
-.hljs-number { color: #d97706; }
+.hljs-keyword { color: var(--accent-brand); }
+.hljs-string { color: var(--accent-green); }
+.hljs-number { color: var(--accent-amber); }
 .hljs-comment { color: var(--text-tertiary); font-style: italic; }
-.hljs-function { color: #2563eb; }
-.hljs-built_in { color: #b45309; }
-.hljs-attr { color: #b45309; }
-.hljs-title { color: #2563eb; }
+.hljs-function { color: #3b82f6; }
+.hljs-built_in { color: #d97706; }
+.hljs-attr { color: #d97706; }
+.hljs-title { color: #3b82f6; }
+
+.dark .hljs-function { color: #60a5fa; }
+.dark .hljs-built_in { color: #fbbf24; }
+.dark .hljs-attr { color: #fbbf24; }
+.dark .hljs-title { color: #60a5fa; }
+
+/* ─── Focus ring utility ─── */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent-brand);
+  outline-offset: 2px;
+}

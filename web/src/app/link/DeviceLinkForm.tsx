@@ -51,7 +51,7 @@ export function DeviceLinkForm() {
         }
 
         setStatus("success");
-      } catch (err) {
+      } catch {
         setErrorMsg("Network error. Please check your connection.");
         setStatus("error");
       }

@@ -9,7 +9,6 @@ const config = {
     label: "Apple Attested",
     color: "text-accent-green",
     bg: "bg-accent-green-dim/40",
-    border: "border-accent-green/30",
     glow: "trust-glow-hardware",
   },
   hardware: {
@@ -17,7 +16,6 @@ const config = {
     label: "Hardware Attested",
     color: "text-accent-green",
     bg: "bg-accent-green-dim/40",
-    border: "border-accent-green/30",
     glow: "trust-glow-hardware",
   },
   self_signed: {
@@ -25,7 +23,6 @@ const config = {
     label: "Self-Signed",
     color: "text-accent-amber",
     bg: "bg-accent-amber-dim/40",
-    border: "border-accent-amber/30",
     glow: "",
   },
   none: {
@@ -33,7 +30,6 @@ const config = {
     label: "Unverified",
     color: "text-text-tertiary",
     bg: "bg-bg-elevated",
-    border: "border-border-dim",
     glow: "",
   },
 };
@@ -55,7 +51,7 @@ export function TrustBadge({
   if (compact) {
     return (
       <span
-        className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider ${c.color} ${c.glow}`}
+        className={`inline-flex items-center gap-1 text-xs ${c.color} ${c.glow}`}
         title={`${c.label}${trust.secureEnclave ? " · Secure Enclave" : ""}${trust.mdaVerified ? " · Apple MDA" : ""}`}
       >
         <Icon size={12} />
@@ -65,9 +61,9 @@ export function TrustBadge({
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider ${c.color} ${c.bg} border ${c.border} ${c.glow}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${c.color} ${c.bg} ${c.glow}`}
     >
-      <Icon size={11} />
+      <Icon size={12} />
       {c.label}
       {trust.secureEnclave && (
         <span className="opacity-60">· SE</span>
