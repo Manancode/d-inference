@@ -93,16 +93,24 @@ func main() {
 
 	srv := api.NewServer(reg, st, logger)
 
-	// Configure billing service (Stripe + EVM + Solana + Referrals).
+	// Configure billing service.
+	//
+	// Day-1 launch: Solana USDC + Referrals only.
+	// Stripe is wired but not activated until we flip the env vars on.
+	// EVM support (Tempo, Ethereum, Base) is in the code at tag evm-full-billing
+	// but not configured here — re-enable by setting DGINF_TEMPO_RPC_URL etc.
 	billingCfg := billing.Config{
+		// Solana — primary payment rail for launch
+		SolanaRPCURL:         os.Getenv("DGINF_SOLANA_RPC_URL"),
+		SolanaDepositAddress: os.Getenv("DGINF_SOLANA_DEPOSIT_ADDRESS"),
+		SolanaUSDCMint:       envOr("DGINF_SOLANA_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"), // mainnet USDC
+		SolanaPrivateKey:     os.Getenv("DGINF_SOLANA_PRIVATE_KEY"),
+
+		// Stripe — present but not activated day-1 (set env vars to enable)
 		StripeSecretKey:     os.Getenv("DGINF_STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("DGINF_STRIPE_WEBHOOK_SECRET"),
 		StripeSuccessURL:    envOr("DGINF_STRIPE_SUCCESS_URL", "https://inference-test.openinnovation.dev/billing/success"),
 		StripeCancelURL:     envOr("DGINF_STRIPE_CANCEL_URL", "https://inference-test.openinnovation.dev/billing/cancel"),
-		SolanaRPCURL:        os.Getenv("DGINF_SOLANA_RPC_URL"),
-		SolanaDepositAddress: os.Getenv("DGINF_SOLANA_DEPOSIT_ADDRESS"),
-		SolanaUSDCMint:      envOr("DGINF_SOLANA_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"), // mainnet USDC
-		SolanaPrivateKey:    os.Getenv("DGINF_SOLANA_PRIVATE_KEY"),
 	}
 
 	// Parse referral share percentage
@@ -110,42 +118,6 @@ func main() {
 		if v, err := strconv.ParseInt(refShareStr, 10, 64); err == nil {
 			billingCfg.ReferralSharePercent = v
 		}
-	}
-
-	// Configure EVM chains from environment
-	// Tempo chain (primary — pathUSD stablecoin)
-	if tempoRPC := os.Getenv("DGINF_TEMPO_RPC_URL"); tempoRPC != "" {
-		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
-			Chain:          billing.ChainTempo,
-			RPCURL:         tempoRPC,
-			DepositAddress: os.Getenv("DGINF_TEMPO_DEPOSIT_ADDRESS"),
-			USDCContract:   os.Getenv("DGINF_TEMPO_PATHUSD_CONTRACT"),
-			PrivateKey:     os.Getenv("DGINF_TEMPO_PRIVATE_KEY"),
-		})
-	}
-
-	// Ethereum chain (USDC)
-	if ethRPC := os.Getenv("DGINF_ETH_RPC_URL"); ethRPC != "" {
-		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
-			Chain:          billing.ChainEthereum,
-			RPCURL:         ethRPC,
-			DepositAddress: os.Getenv("DGINF_ETH_DEPOSIT_ADDRESS"),
-			USDCContract:   envOr("DGINF_ETH_USDC_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // mainnet USDC
-			PrivateKey:     os.Getenv("DGINF_ETH_PRIVATE_KEY"),
-			ChainID:        1,
-		})
-	}
-
-	// Base chain (USDC)
-	if baseRPC := os.Getenv("DGINF_BASE_RPC_URL"); baseRPC != "" {
-		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
-			Chain:          billing.ChainBase,
-			RPCURL:         baseRPC,
-			DepositAddress: os.Getenv("DGINF_BASE_DEPOSIT_ADDRESS"),
-			USDCContract:   envOr("DGINF_BASE_USDC_CONTRACT", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), // Base mainnet USDC
-			PrivateKey:     os.Getenv("DGINF_BASE_PRIVATE_KEY"),
-			ChainID:        8453,
-		})
 	}
 
 	ledger := payments.NewLedger(st)
