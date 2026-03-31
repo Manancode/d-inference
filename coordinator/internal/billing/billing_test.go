@@ -396,3 +396,118 @@ func TestStripeWebhookInvalidSignature(t *testing.T) {
 	}
 }
 
+// --- Deposit Address Tests ---
+
+func TestDepositAddressGeneration(t *testing.T) {
+	svc, st := newTestService(t)
+
+	addr, err := svc.GetOrCreateDepositAddress("consumer-1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if addr == "" {
+		t.Fatal("expected non-empty address")
+	}
+	// Solana addresses are base58-encoded ed25519 pubkeys, typically 32-44 chars
+	if len(addr) < 20 || len(addr) > 50 {
+		t.Fatalf("address length %d looks wrong: %s", len(addr), addr)
+	}
+
+	// Same consumer should get the same address
+	addr2, err := svc.GetOrCreateDepositAddress("consumer-1")
+	if err != nil {
+		t.Fatalf("re-get: %v", err)
+	}
+	if addr2 != addr {
+		t.Fatalf("expected same address %s, got %s", addr, addr2)
+	}
+
+	// Different consumer should get a different address
+	addr3, err := svc.GetOrCreateDepositAddress("consumer-2")
+	if err != nil {
+		t.Fatalf("create for consumer-2: %v", err)
+	}
+	if addr3 == addr {
+		t.Fatal("different consumers should get different addresses")
+	}
+
+	// Verify ownership lookup
+	owner, err := st.GetAccountByDepositAddress(addr, "solana")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if owner != "consumer-1" {
+		t.Fatalf("expected consumer-1, got %s", owner)
+	}
+}
+
+func TestDepositOwnershipVerification(t *testing.T) {
+	svc, _ := newTestService(t)
+
+	addr1, _ := svc.GetOrCreateDepositAddress("consumer-1")
+	_, _ = svc.GetOrCreateDepositAddress("consumer-2")
+
+	// Consumer 1 verifying their own address — should pass
+	if err := svc.VerifyDepositOwnership("consumer-1", addr1); err != nil {
+		t.Fatalf("own address should pass: %v", err)
+	}
+
+	// Consumer 2 trying to claim consumer 1's address — should fail
+	if err := svc.VerifyDepositOwnership("consumer-2", addr1); err == nil {
+		t.Fatal("expected error when verifying someone else's deposit address")
+	}
+
+	// Unknown address — should fail
+	if err := svc.VerifyDepositOwnership("consumer-1", "unknownAddr123"); err == nil {
+		t.Fatal("expected error for unknown address")
+	}
+}
+
+func TestIsExternalIDProcessed(t *testing.T) {
+	svc, st := newTestService(t)
+
+	// Not processed yet
+	if svc.IsExternalIDProcessed("tx-abc") {
+		t.Fatal("expected not processed")
+	}
+
+	// Create a completed billing session with that external ID
+	_ = st.CreateBillingSession(&store.BillingSession{
+		ID:            "session-1",
+		AccountID:     "consumer-1",
+		PaymentMethod: "solana",
+		ExternalID:    "tx-abc",
+		Status:        "pending",
+	})
+
+	// Still not processed (pending, not completed)
+	if svc.IsExternalIDProcessed("tx-abc") {
+		t.Fatal("pending session should not count as processed")
+	}
+
+	// Complete it
+	_ = st.CompleteBillingSession("session-1")
+
+	// Now it should be processed
+	if !svc.IsExternalIDProcessed("tx-abc") {
+		t.Fatal("completed session should be processed")
+	}
+}
+
+func TestBase58Encode(t *testing.T) {
+	// Known test vector: empty input
+	if base58Encode([]byte{}) != "" {
+		t.Fatal("empty input should produce empty output")
+	}
+
+	// Single zero byte should produce "1"
+	if base58Encode([]byte{0}) != "1" {
+		t.Fatalf("expected '1', got %s", base58Encode([]byte{0}))
+	}
+
+	// Known value: byte 0x01 should produce "2"
+	if base58Encode([]byte{1}) != "2" {
+		t.Fatalf("expected '2', got %s", base58Encode([]byte{1}))
+	}
+}
+

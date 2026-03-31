@@ -144,6 +144,17 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_billing_sessions_account ON billing_sessions(account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_billing_sessions_external ON billing_sessions(external_id)`,
+
+		// Deposit addresses — unique per-consumer addresses for each chain
+		`CREATE TABLE IF NOT EXISTS deposit_addresses (
+			account_id TEXT NOT NULL,
+			chain TEXT NOT NULL,
+			address TEXT NOT NULL,
+			encrypted_key TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (account_id, chain)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_addr ON deposit_addresses(address, chain)`,
 	}
 
 	for _, m := range migrations {
@@ -615,4 +626,68 @@ func (s *PostgresStore) CompleteBillingSession(sessionID string) error {
 		return fmt.Errorf("store: billing session %q not found or already completed", sessionID)
 	}
 	return nil
+}
+
+// IsExternalIDProcessed returns true if a completed billing session with this external ID exists.
+func (s *PostgresStore) IsExternalIDProcessed(externalID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count int
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM billing_sessions WHERE external_id = $1 AND status = 'completed'`,
+		externalID,
+	).Scan(&count)
+	return count > 0
+}
+
+// --- Deposit Addresses ---
+
+// SetDepositAddress stores a consumer's unique deposit address for a chain.
+func (s *PostgresStore) SetDepositAddress(accountID, chain, address, encryptedKey string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO deposit_addresses (account_id, chain, address, encrypted_key)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (account_id, chain) DO NOTHING`,
+		accountID, chain, address, encryptedKey,
+	)
+	if err != nil {
+		return fmt.Errorf("store: set deposit address: %w", err)
+	}
+	return nil
+}
+
+// GetDepositAddress returns the deposit address for a consumer on a chain.
+func (s *PostgresStore) GetDepositAddress(accountID, chain string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var address string
+	err := s.pool.QueryRow(ctx,
+		`SELECT address FROM deposit_addresses WHERE account_id = $1 AND chain = $2`,
+		accountID, chain,
+	).Scan(&address)
+	if err != nil {
+		return "", fmt.Errorf("store: deposit address not found: %w", err)
+	}
+	return address, nil
+}
+
+// GetAccountByDepositAddress looks up which consumer owns a deposit address.
+func (s *PostgresStore) GetAccountByDepositAddress(address, chain string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`SELECT account_id FROM deposit_addresses WHERE address = $1 AND chain = $2`,
+		address, chain,
+	).Scan(&accountID)
+	if err != nil {
+		return "", fmt.Errorf("store: account not found for deposit address: %w", err)
+	}
+	return accountID, nil
 }

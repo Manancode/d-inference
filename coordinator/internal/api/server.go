@@ -176,7 +176,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/billing/deposit/solana", s.requireAuth(s.handleSolanaDeposit))
 	s.mux.HandleFunc("POST /v1/billing/withdraw/solana", s.requireAuth(s.handleSolanaWithdraw))
 
-	// Deposit addresses (all chains)
+	// Deposit address (per-consumer unique address)
 	s.mux.HandleFunc("GET /v1/billing/deposit/addresses", s.requireAuth(s.handleDepositAddresses))
 
 	// Payment methods info

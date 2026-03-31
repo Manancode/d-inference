@@ -39,6 +39,10 @@ type MemoryStore struct {
 
 	// Billing sessions
 	billingSessions map[string]*BillingSession // sessionID → session
+
+	// Deposit addresses
+	depositAddresses    map[string]DepositAddress // "accountID:chain" → address
+	depositAddrToAcct   map[string]string         // "address:chain" → accountID
 }
 
 // NewMemory creates a new MemoryStore. If adminKey is non-empty it is
@@ -55,6 +59,8 @@ func NewMemory(adminKey string) *MemoryStore {
 		referrals:          make(map[string]string),
 		referralCounts:     make(map[string]int),
 		billingSessions:    make(map[string]*BillingSession),
+		depositAddresses:   make(map[string]DepositAddress),
+		depositAddrToAcct:  make(map[string]string),
 	}
 	if adminKey != "" {
 		s.keys[adminKey] = true
@@ -366,4 +372,61 @@ func (s *MemoryStore) CompleteBillingSession(sessionID string) error {
 	now := time.Now()
 	session.CompletedAt = &now
 	return nil
+}
+
+// IsExternalIDProcessed returns true if a completed billing session with this external ID exists.
+func (s *MemoryStore) IsExternalIDProcessed(externalID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, session := range s.billingSessions {
+		if session.ExternalID == externalID && session.Status == "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Deposit Addresses ---
+
+// SetDepositAddress stores a consumer's unique deposit address for a chain.
+func (s *MemoryStore) SetDepositAddress(accountID, chain, address, encryptedKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := accountID + ":" + chain
+	s.depositAddresses[key] = DepositAddress{
+		AccountID:    accountID,
+		Chain:        chain,
+		Address:      address,
+		EncryptedKey: encryptedKey,
+		CreatedAt:    time.Now(),
+	}
+	s.depositAddrToAcct[address+":"+chain] = accountID
+	return nil
+}
+
+// GetDepositAddress returns the deposit address for a consumer on a chain.
+func (s *MemoryStore) GetDepositAddress(accountID, chain string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	key := accountID + ":" + chain
+	da, ok := s.depositAddresses[key]
+	if !ok {
+		return "", fmt.Errorf("no deposit address for account %q on chain %q", accountID, chain)
+	}
+	return da.Address, nil
+}
+
+// GetAccountByDepositAddress looks up which consumer owns a deposit address.
+func (s *MemoryStore) GetAccountByDepositAddress(address, chain string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	acct, ok := s.depositAddrToAcct[address+":"+chain]
+	if !ok {
+		return "", fmt.Errorf("no account found for deposit address %q on chain %q", address, chain)
+	}
+	return acct, nil
 }

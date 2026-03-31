@@ -82,6 +82,22 @@ type Store interface {
 
 	// CompleteBillingSession marks a session as completed and sets the completion time.
 	CompleteBillingSession(sessionID string) error
+
+	// IsExternalIDProcessed returns true if a billing session with this external ID
+	// has already been completed. Used to prevent double-crediting the same on-chain tx.
+	IsExternalIDProcessed(externalID string) bool
+
+	// --- Deposit Addresses ---
+
+	// SetDepositAddress stores a consumer's unique deposit address for a chain.
+	// The encryptedKey is the private key (encrypted) needed for future sweeping.
+	SetDepositAddress(accountID, chain, address, encryptedKey string) error
+
+	// GetDepositAddress returns the deposit address for a consumer on a chain.
+	GetDepositAddress(accountID, chain string) (string, error)
+
+	// GetAccountByDepositAddress looks up which consumer owns a deposit address.
+	GetAccountByDepositAddress(address, chain string) (string, error)
 }
 
 // UsageRecord captures a single inference usage event.
@@ -143,6 +159,15 @@ type ReferralStats struct {
 	Code                 string `json:"code"`
 	TotalReferred        int    `json:"total_referred"`
 	TotalRewardsMicroUSD int64  `json:"total_rewards_micro_usd"`
+}
+
+// DepositAddress is a unique per-consumer deposit address for a specific chain.
+type DepositAddress struct {
+	AccountID    string    `json:"account_id"`
+	Chain        string    `json:"chain"`
+	Address      string    `json:"address"`
+	EncryptedKey string    `json:"-"` // never exposed via API
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // BillingSession tracks an in-progress payment via any method (Stripe, EVM, Solana).

@@ -217,7 +217,7 @@ func (s *Server) handleStripeSessionStatus(w http.ResponseWriter, r *http.Reques
 // --- Solana Deposit/Withdraw Handlers ---
 
 // handleSolanaDeposit handles POST /v1/billing/deposit/solana.
-// Verifies a Solana USDC-SPL transfer and credits the consumer's balance.
+// Verifies a Solana USDC-SPL transfer to the consumer's unique deposit address.
 func (s *Server) handleSolanaDeposit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TxSignature  string `json:"tx_signature"`
@@ -238,8 +238,8 @@ func (s *Server) handleSolanaDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for double-crediting
-	if s.billing.CheckProcessedTx(req.TxSignature) {
+	// Check for double-crediting — DB-backed, survives restarts
+	if s.billing.IsExternalIDProcessed(req.TxSignature) {
 		writeJSON(w, http.StatusConflict, errorResponse("duplicate_deposit", "tx_signature has already been processed"))
 		return
 	}
@@ -254,12 +254,22 @@ func (s *Server) handleSolanaDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark as processed
-	s.billing.MarkProcessedTx(req.TxSignature)
+	// Verify the deposit went to THIS consumer's deposit address — prevents
+	// claiming someone else's transaction.
+	if err := s.billing.VerifyDepositOwnership(consumerKey, result.To); err != nil {
+		s.logger.Warn("solana: deposit ownership check failed",
+			"consumer_key", consumerKey[:min(8, len(consumerKey))]+"...",
+			"tx_to", result.To,
+			"error", err,
+		)
+		writeJSON(w, http.StatusForbidden, errorResponse("ownership_error",
+			"this transaction was sent to a deposit address that does not belong to your account"))
+		return
+	}
 
-	// Create billing session
+	// Create billing session (marks external_id as processed in DB)
 	sessionID := uuid.New().String()
-	_ = s.billing.Store().CreateBillingSession(&store.BillingSession{
+	if err := s.billing.Store().CreateBillingSession(&store.BillingSession{
 		ID:             sessionID,
 		AccountID:      consumerKey,
 		PaymentMethod:  "solana",
@@ -269,7 +279,11 @@ func (s *Server) handleSolanaDeposit(w http.ResponseWriter, r *http.Request) {
 		Status:         "completed",
 		ReferralCode:   req.ReferralCode,
 		CreatedAt:      time.Now(),
-	})
+	}); err != nil {
+		// If session creation fails due to duplicate external_id, it's a race condition double-submit
+		writeJSON(w, http.StatusConflict, errorResponse("duplicate_deposit", "tx_signature has already been processed"))
+		return
+	}
 
 	// Credit balance
 	if err := s.billing.CreditDeposit(consumerKey, result.AmountMicroUSD, store.LedgerDeposit,
@@ -292,12 +306,12 @@ func (s *Server) handleSolanaDeposit(w http.ResponseWriter, r *http.Request) {
 	)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":          "deposited",
-		"chain":           "solana",
-		"tx_signature":    req.TxSignature,
-		"from":            result.From,
+		"status":           "deposited",
+		"chain":            "solana",
+		"tx_signature":     req.TxSignature,
+		"from":             result.From,
 		"amount_micro_usd": result.AmountMicroUSD,
-		"amount_usd":      fmt.Sprintf("%.6f", float64(result.AmountMicroUSD)/1_000_000),
+		"amount_usd":       fmt.Sprintf("%.6f", float64(result.AmountMicroUSD)/1_000_000),
 		"balance_micro_usd": s.billing.Ledger().Balance(consumerKey),
 	})
 }
@@ -365,15 +379,29 @@ func (s *Server) handleSolanaWithdraw(w http.ResponseWriter, r *http.Request) {
 // --- Deposit Addresses ---
 
 // handleDepositAddresses handles GET /v1/billing/deposit/addresses.
-// Returns all configured deposit addresses for crypto payments.
+// Returns the consumer's unique deposit address, generating one if needed.
+// Each consumer gets their own Solana address so deposits can't be stolen.
 func (s *Server) handleDepositAddresses(w http.ResponseWriter, r *http.Request) {
 	if s.billing == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"evm": map[string]string{}, "solana": ""})
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("billing_error", "billing not configured"))
 		return
 	}
 
-	addrs := s.billing.DepositAddresses()
-	writeJSON(w, http.StatusOK, addrs)
+	consumerKey := consumerKeyFromContext(r.Context())
+
+	addr, err := s.billing.GetOrCreateDepositAddress(consumerKey)
+	if err != nil {
+		s.logger.Error("billing: create deposit address failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to create deposit address"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"solana": addr,
+		"chain":  "solana",
+		"token":  "USDC",
+		"note":   "Send USDC to this address. After sending, submit the transaction signature to POST /v1/billing/deposit/solana to credit your account.",
+	})
 }
 
 // --- Referral Handlers ---
