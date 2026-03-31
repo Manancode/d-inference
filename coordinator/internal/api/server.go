@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dginf/coordinator/internal/billing"
 	"github.com/dginf/coordinator/internal/mdm"
 	"github.com/dginf/coordinator/internal/payments"
 	"github.com/dginf/coordinator/internal/registry"
@@ -54,11 +55,12 @@ func consumerKeyFromContext(ctx context.Context) string {
 var LatestProviderVersion = "0.2.0"
 
 // Server is the main HTTP/WS server for the coordinator. It ties together
-// the provider registry, key store, payment ledger, and HTTP routing.
+// the provider registry, key store, payment ledger, billing service, and HTTP routing.
 type Server struct {
 	registry          *registry.Registry
 	store             store.Store
 	ledger            *payments.Ledger
+	billing           *billing.Service
 	logger            *slog.Logger
 	mux               *http.ServeMux
 	challengeInterval time.Duration // 0 means use DefaultChallengeInterval
@@ -93,6 +95,11 @@ func (s *Server) SetSettlementURL(url string) {
 func (s *Server) SetStepCACerts(root, intermediate *x509.Certificate) {
 	s.stepCARootCert = root
 	s.stepCAIntermediateCert = intermediate
+}
+
+// SetBilling configures the billing service for multi-chain payments and referrals.
+func (s *Server) SetBilling(svc *billing.Service) {
+	s.billing = svc
 }
 
 // SetMDMClient configures the MicroMDM client for provider verification.
@@ -157,6 +164,33 @@ func (s *Server) routes() {
 
 	// Provider version check — no auth needed. Providers call this to check for updates.
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+
+	// --- Billing endpoints (multi-chain payments + referrals) ---
+
+	// Stripe
+	s.mux.HandleFunc("POST /v1/billing/stripe/create-session", s.requireAuth(s.handleStripeCreateSession))
+	s.mux.HandleFunc("POST /v1/billing/stripe/webhook", s.handleStripeWebhook) // no auth — Stripe signs it
+	s.mux.HandleFunc("GET /v1/billing/stripe/session", s.requireAuth(s.handleStripeSessionStatus))
+
+	// EVM (Ethereum, Tempo, Base)
+	s.mux.HandleFunc("POST /v1/billing/deposit/evm", s.requireAuth(s.handleEVMDeposit))
+	s.mux.HandleFunc("POST /v1/billing/withdraw/evm", s.requireAuth(s.handleEVMWithdraw))
+
+	// Solana
+	s.mux.HandleFunc("POST /v1/billing/deposit/solana", s.requireAuth(s.handleSolanaDeposit))
+	s.mux.HandleFunc("POST /v1/billing/withdraw/solana", s.requireAuth(s.handleSolanaWithdraw))
+
+	// Deposit addresses (all chains)
+	s.mux.HandleFunc("GET /v1/billing/deposit/addresses", s.requireAuth(s.handleDepositAddresses))
+
+	// Payment methods info
+	s.mux.HandleFunc("GET /v1/billing/methods", s.handleBillingMethods) // no auth needed
+
+	// Referral system
+	s.mux.HandleFunc("POST /v1/referral/register", s.requireAuth(s.handleReferralRegister))
+	s.mux.HandleFunc("POST /v1/referral/apply", s.requireAuth(s.handleReferralApply))
+	s.mux.HandleFunc("GET /v1/referral/stats", s.requireAuth(s.handleReferralStats))
+	s.mux.HandleFunc("GET /v1/referral/info", s.requireAuth(s.handleReferralInfo))
 }
 
 // Handler returns the root http.Handler with global middleware applied.

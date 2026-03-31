@@ -487,9 +487,14 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 		s.ledger.CreditProvider(providerWallet, providerPayout, pr.Model, msg.RequestID)
 	}
 
-	// Record platform fee as a separate ledger entry for accounting.
+	// Record platform fee, distributing referral rewards if applicable.
 	platformFee := payments.PlatformFee(totalCost)
 	if platformFee > 0 {
+		// Check if consumer has a referrer and distribute reward.
+		// The referral service deducts the referrer's share from the platform fee.
+		if s.billing != nil && s.billing.Referral() != nil {
+			platformFee = s.billing.Referral().DistributeReferralReward(pr.ConsumerKey, platformFee, msg.RequestID)
+		}
 		_ = s.store.Credit("platform", platformFee, store.LedgerPlatformFee, msg.RequestID)
 	}
 

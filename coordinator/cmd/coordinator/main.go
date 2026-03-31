@@ -30,9 +30,13 @@ import (
 	"syscall"
 	"time"
 
+	"strconv"
+
 	"github.com/dginf/coordinator/internal/api"
 	"github.com/dginf/coordinator/internal/attestation"
+	"github.com/dginf/coordinator/internal/billing"
 	"github.com/dginf/coordinator/internal/mdm"
+	"github.com/dginf/coordinator/internal/payments"
 	"github.com/dginf/coordinator/internal/registry"
 	"github.com/dginf/coordinator/internal/store"
 )
@@ -88,6 +92,75 @@ func main() {
 	}
 
 	srv := api.NewServer(reg, st, logger)
+
+	// Configure billing service (Stripe + EVM + Solana + Referrals).
+	billingCfg := billing.Config{
+		StripeSecretKey:     os.Getenv("DGINF_STRIPE_SECRET_KEY"),
+		StripeWebhookSecret: os.Getenv("DGINF_STRIPE_WEBHOOK_SECRET"),
+		StripeSuccessURL:    envOr("DGINF_STRIPE_SUCCESS_URL", "https://inference-test.openinnovation.dev/billing/success"),
+		StripeCancelURL:     envOr("DGINF_STRIPE_CANCEL_URL", "https://inference-test.openinnovation.dev/billing/cancel"),
+		SolanaRPCURL:        os.Getenv("DGINF_SOLANA_RPC_URL"),
+		SolanaDepositAddress: os.Getenv("DGINF_SOLANA_DEPOSIT_ADDRESS"),
+		SolanaUSDCMint:      envOr("DGINF_SOLANA_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"), // mainnet USDC
+		SolanaPrivateKey:    os.Getenv("DGINF_SOLANA_PRIVATE_KEY"),
+	}
+
+	// Parse referral share percentage
+	if refShareStr := os.Getenv("DGINF_REFERRAL_SHARE_PCT"); refShareStr != "" {
+		if v, err := strconv.ParseInt(refShareStr, 10, 64); err == nil {
+			billingCfg.ReferralSharePercent = v
+		}
+	}
+
+	// Configure EVM chains from environment
+	// Tempo chain (primary — pathUSD stablecoin)
+	if tempoRPC := os.Getenv("DGINF_TEMPO_RPC_URL"); tempoRPC != "" {
+		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
+			Chain:          billing.ChainTempo,
+			RPCURL:         tempoRPC,
+			DepositAddress: os.Getenv("DGINF_TEMPO_DEPOSIT_ADDRESS"),
+			USDCContract:   os.Getenv("DGINF_TEMPO_PATHUSD_CONTRACT"),
+			PrivateKey:     os.Getenv("DGINF_TEMPO_PRIVATE_KEY"),
+		})
+	}
+
+	// Ethereum chain (USDC)
+	if ethRPC := os.Getenv("DGINF_ETH_RPC_URL"); ethRPC != "" {
+		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
+			Chain:          billing.ChainEthereum,
+			RPCURL:         ethRPC,
+			DepositAddress: os.Getenv("DGINF_ETH_DEPOSIT_ADDRESS"),
+			USDCContract:   envOr("DGINF_ETH_USDC_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // mainnet USDC
+			PrivateKey:     os.Getenv("DGINF_ETH_PRIVATE_KEY"),
+			ChainID:        1,
+		})
+	}
+
+	// Base chain (USDC)
+	if baseRPC := os.Getenv("DGINF_BASE_RPC_URL"); baseRPC != "" {
+		billingCfg.EVMChains = append(billingCfg.EVMChains, billing.EVMChainConfig{
+			Chain:          billing.ChainBase,
+			RPCURL:         baseRPC,
+			DepositAddress: os.Getenv("DGINF_BASE_DEPOSIT_ADDRESS"),
+			USDCContract:   envOr("DGINF_BASE_USDC_CONTRACT", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), // Base mainnet USDC
+			PrivateKey:     os.Getenv("DGINF_BASE_PRIVATE_KEY"),
+			ChainID:        8453,
+		})
+	}
+
+	ledger := payments.NewLedger(st)
+	billingSvc := billing.NewService(st, ledger, logger, billingCfg)
+	srv.SetBilling(billingSvc)
+
+	// Log which billing methods are active
+	methods := billingSvc.SupportedMethods()
+	if len(methods) > 0 {
+		var names []string
+		for _, m := range methods {
+			names = append(names, string(m.Method))
+		}
+		logger.Info("billing enabled", "methods", names, "referral_share_pct", billingCfg.ReferralSharePercent)
+	}
 
 	// Configure MDM client for provider security verification.
 	// When set, the coordinator independently verifies SIP/SecureBoot via MicroMDM

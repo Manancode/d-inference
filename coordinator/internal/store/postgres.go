@@ -113,6 +113,37 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ledger_account ON ledger_entries(account_id, created_at DESC)`,
+
+		// Referral system tables
+		`CREATE TABLE IF NOT EXISTS referrers (
+			account_id TEXT PRIMARY KEY,
+			code TEXT UNIQUE NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_referrers_code ON referrers(code)`,
+
+		`CREATE TABLE IF NOT EXISTS referrals (
+			referred_account TEXT PRIMARY KEY,
+			referrer_code TEXT NOT NULL REFERENCES referrers(code),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals(referrer_code)`,
+
+		// Billing sessions table
+		`CREATE TABLE IF NOT EXISTS billing_sessions (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			payment_method TEXT NOT NULL,
+			chain TEXT NOT NULL DEFAULT '',
+			amount_micro_usd BIGINT NOT NULL,
+			external_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			referral_code TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			completed_at TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_sessions_account ON billing_sessions(account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_sessions_external ON billing_sessions(external_id)`,
 	}
 
 	for _, m := range migrations {
@@ -417,4 +448,171 @@ func (s *PostgresStore) KeyCount() int {
 		return 0
 	}
 	return count
+}
+
+// --- Referral System ---
+
+// CreateReferrer registers an account as a referrer with the given code.
+func (s *PostgresStore) CreateReferrer(accountID, code string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO referrers (account_id, code) VALUES ($1, $2)`,
+		accountID, code,
+	)
+	if err != nil {
+		return fmt.Errorf("store: create referrer: %w", err)
+	}
+	return nil
+}
+
+// GetReferrerByCode returns the referrer for a given referral code.
+func (s *PostgresStore) GetReferrerByCode(code string) (*Referrer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var ref Referrer
+	err := s.pool.QueryRow(ctx,
+		`SELECT account_id, code, created_at FROM referrers WHERE code = $1`, code,
+	).Scan(&ref.AccountID, &ref.Code, &ref.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("store: referrer not found: %w", err)
+	}
+	return &ref, nil
+}
+
+// GetReferrerByAccount returns the referrer record for an account.
+func (s *PostgresStore) GetReferrerByAccount(accountID string) (*Referrer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var ref Referrer
+	err := s.pool.QueryRow(ctx,
+		`SELECT account_id, code, created_at FROM referrers WHERE account_id = $1`, accountID,
+	).Scan(&ref.AccountID, &ref.Code, &ref.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("store: referrer not found: %w", err)
+	}
+	return &ref, nil
+}
+
+// RecordReferral records that referredAccountID was referred by referrerCode.
+func (s *PostgresStore) RecordReferral(referrerCode, referredAccountID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO referrals (referred_account, referrer_code) VALUES ($1, $2)`,
+		referredAccountID, referrerCode,
+	)
+	if err != nil {
+		return fmt.Errorf("store: record referral: %w", err)
+	}
+	return nil
+}
+
+// GetReferrerForAccount returns the referrer code that referred this account.
+func (s *PostgresStore) GetReferrerForAccount(accountID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var code string
+	err := s.pool.QueryRow(ctx,
+		`SELECT referrer_code FROM referrals WHERE referred_account = $1`, accountID,
+	).Scan(&code)
+	if err != nil {
+		return "", nil // no referrer is not an error
+	}
+	return code, nil
+}
+
+// GetReferralStats returns referral statistics for a code.
+func (s *PostgresStore) GetReferralStats(code string) (*ReferralStats, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Verify code exists
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`SELECT account_id FROM referrers WHERE code = $1`, code,
+	).Scan(&accountID)
+	if err != nil {
+		return nil, fmt.Errorf("store: referral code not found: %w", err)
+	}
+
+	// Count referred accounts
+	var totalReferred int
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM referrals WHERE referrer_code = $1`, code,
+	).Scan(&totalReferred)
+
+	// Sum referral rewards from ledger
+	var totalRewards int64
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_micro_usd), 0) FROM ledger_entries
+		 WHERE account_id = $1 AND entry_type = $2`,
+		accountID, string(LedgerReferralReward),
+	).Scan(&totalRewards)
+
+	return &ReferralStats{
+		Code:                 code,
+		TotalReferred:        totalReferred,
+		TotalRewardsMicroUSD: totalRewards,
+	}, nil
+}
+
+// --- Billing Sessions ---
+
+// CreateBillingSession stores a new billing session.
+func (s *PostgresStore) CreateBillingSession(session *BillingSession) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO billing_sessions (id, account_id, payment_method, chain, amount_micro_usd, external_id, status, referral_code)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		session.ID, session.AccountID, session.PaymentMethod, session.Chain,
+		session.AmountMicroUSD, session.ExternalID, session.Status, session.ReferralCode,
+	)
+	if err != nil {
+		return fmt.Errorf("store: create billing session: %w", err)
+	}
+	return nil
+}
+
+// GetBillingSession retrieves a billing session by ID.
+func (s *PostgresStore) GetBillingSession(sessionID string) (*BillingSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var bs BillingSession
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, account_id, payment_method, chain, amount_micro_usd, external_id, status, referral_code, created_at, completed_at
+		 FROM billing_sessions WHERE id = $1`, sessionID,
+	).Scan(&bs.ID, &bs.AccountID, &bs.PaymentMethod, &bs.Chain,
+		&bs.AmountMicroUSD, &bs.ExternalID, &bs.Status, &bs.ReferralCode,
+		&bs.CreatedAt, &bs.CompletedAt)
+	if err != nil {
+		return nil, fmt.Errorf("store: billing session not found: %w", err)
+	}
+	return &bs, nil
+}
+
+// CompleteBillingSession marks a session as completed.
+func (s *PostgresStore) CompleteBillingSession(sessionID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE billing_sessions SET status = 'completed', completed_at = NOW()
+		 WHERE id = $1 AND status = 'pending'`, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("store: complete billing session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("store: billing session %q not found or already completed", sessionID)
+	}
+	return nil
 }
