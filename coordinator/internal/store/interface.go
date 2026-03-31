@@ -194,6 +194,7 @@ type ModelPrice struct {
 type User struct {
 	AccountID           string    `json:"account_id"`            // internal account ID (used in ledger)
 	PrivyUserID         string    `json:"privy_user_id"`         // Privy DID (e.g. "did:privy:abc123")
+	Email               string    `json:"email,omitempty"`       // from Privy linked accounts
 	SolanaWalletAddress string    `json:"solana_wallet_address"` // embedded wallet public address
 	SolanaWalletID      string    `json:"solana_wallet_id"`      // Privy's internal wallet ID (for signing API)
 	CreatedAt           time.Time `json:"created_at"`

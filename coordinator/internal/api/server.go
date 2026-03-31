@@ -67,6 +67,7 @@ type Server struct {
 	challengeInterval time.Duration // 0 means use DefaultChallengeInterval
 	settlementURL     string        // URL of the settlement sidecar (e.g. "http://localhost:8090")
 	privyAuth              *auth.PrivyAuth     // Privy JWT authentication (nil if not configured)
+	adminEmails            map[string]bool     // emails that have admin access
 	mdmClient              *mdm.Client        // MicroMDM client for provider security verification
 	stepCARootCert         *x509.Certificate  // step-ca root CA for ACME cert verification
 	stepCAIntermediateCert *x509.Certificate  // step-ca intermediate CA
@@ -107,6 +108,14 @@ func (s *Server) SetBilling(svc *billing.Service) {
 // SetPrivyAuth configures Privy JWT authentication for consumer endpoints.
 func (s *Server) SetPrivyAuth(pa *auth.PrivyAuth) {
 	s.privyAuth = pa
+}
+
+// SetAdminEmails configures which Privy accounts have admin access.
+func (s *Server) SetAdminEmails(emails []string) {
+	s.adminEmails = make(map[string]bool, len(emails))
+	for _, e := range emails {
+		s.adminEmails[strings.ToLower(strings.TrimSpace(e))] = true
+	}
 }
 
 // SetMDMClient configures the MicroMDM client for provider verification.

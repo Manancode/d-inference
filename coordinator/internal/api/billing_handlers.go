@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dginf/coordinator/internal/auth"
@@ -548,17 +549,12 @@ func (s *Server) handleGetPricing(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAdminPricing handles PUT /v1/admin/pricing.
-// Sets platform default prices for a model. Requires the admin API key
-// (DGINF_ADMIN_KEY). These defaults apply to all users who haven't set
-// custom prices.
+// Sets platform default prices for a model. Requires a Privy account with
+// an admin email. These defaults apply to all users who haven't set custom prices.
 func (s *Server) handleAdminPricing(w http.ResponseWriter, r *http.Request) {
-	// Admin check: the raw token must be the admin key (first key seeded at startup).
-	// This is a simple check — the admin key is not linked to a Privy account.
-	token := extractBearerToken(r)
-	adminAccount := s.store.GetKeyAccount(token)
-	if adminAccount != "" {
-		// Linked keys are regular users, not admin.
-		writeJSON(w, http.StatusForbidden, errorResponse("forbidden", "admin endpoint requires the admin API key"))
+	user := auth.UserFromContext(r.Context())
+	if user == nil || !s.isAdmin(user) {
+		writeJSON(w, http.StatusForbidden, errorResponse("forbidden", "admin access required"))
 		return
 	}
 
@@ -702,6 +698,14 @@ func (s *Server) resolveAccountID(r *http.Request) string {
 		return user.AccountID
 	}
 	return consumerKeyFromContext(r.Context())
+}
+
+// isAdmin checks if the user has admin privileges (email in admin list).
+func (s *Server) isAdmin(user *store.User) bool {
+	if user == nil || user.Email == "" || len(s.adminEmails) == 0 {
+		return false
+	}
+	return s.adminEmails[strings.ToLower(user.Email)]
 }
 
 // requirePrivyUser checks that the request is authenticated via Privy (not just API key).

@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -123,6 +124,13 @@ func main() {
 	ledger := payments.NewLedger(st)
 	billingSvc := billing.NewService(st, ledger, logger, billingCfg)
 	srv.SetBilling(billingSvc)
+
+	// Configure admin accounts.
+	if adminEmails := os.Getenv("DGINF_ADMIN_EMAILS"); adminEmails != "" {
+		emails := strings.Split(adminEmails, ",")
+		srv.SetAdminEmails(emails)
+		logger.Info("admin accounts configured", "emails", emails)
+	}
 
 	// Configure Privy authentication.
 	if privyAppID := os.Getenv("DGINF_PRIVY_APP_ID"); privyAppID != "" {

@@ -164,10 +164,15 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS users (
 			account_id TEXT PRIMARY KEY,
 			privy_user_id TEXT UNIQUE NOT NULL,
+			email TEXT NOT NULL DEFAULT '',
 			solana_wallet_address TEXT NOT NULL DEFAULT '',
 			solana_wallet_id TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`DO $$ BEGIN
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+		EXCEPTION WHEN others THEN NULL;
+		END $$`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_privy ON users(privy_user_id)`,
 	}
 
@@ -778,9 +783,9 @@ func (s *PostgresStore) CreateUser(user *User) error {
 	defer cancel()
 
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO users (account_id, privy_user_id, solana_wallet_address, solana_wallet_id)
-		 VALUES ($1, $2, $3, $4)`,
-		user.AccountID, user.PrivyUserID, user.SolanaWalletAddress, user.SolanaWalletID,
+		`INSERT INTO users (account_id, privy_user_id, email, solana_wallet_address, solana_wallet_id)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		user.AccountID, user.PrivyUserID, user.Email, user.SolanaWalletAddress, user.SolanaWalletID,
 	)
 	if err != nil {
 		return fmt.Errorf("store: create user: %w", err)
@@ -795,9 +800,9 @@ func (s *PostgresStore) GetUserByPrivyID(privyUserID string) (*User, error) {
 
 	var u User
 	err := s.pool.QueryRow(ctx,
-		`SELECT account_id, privy_user_id, solana_wallet_address, solana_wallet_id, created_at
+		`SELECT account_id, privy_user_id, email, solana_wallet_address, solana_wallet_id, created_at
 		 FROM users WHERE privy_user_id = $1`, privyUserID,
-	).Scan(&u.AccountID, &u.PrivyUserID, &u.SolanaWalletAddress, &u.SolanaWalletID, &u.CreatedAt)
+	).Scan(&u.AccountID, &u.PrivyUserID, &u.Email, &u.SolanaWalletAddress, &u.SolanaWalletID, &u.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("store: user not found: %w", err)
 	}
@@ -811,9 +816,9 @@ func (s *PostgresStore) GetUserByAccountID(accountID string) (*User, error) {
 
 	var u User
 	err := s.pool.QueryRow(ctx,
-		`SELECT account_id, privy_user_id, solana_wallet_address, solana_wallet_id, created_at
+		`SELECT account_id, privy_user_id, email, solana_wallet_address, solana_wallet_id, created_at
 		 FROM users WHERE account_id = $1`, accountID,
-	).Scan(&u.AccountID, &u.PrivyUserID, &u.SolanaWalletAddress, &u.SolanaWalletID, &u.CreatedAt)
+	).Scan(&u.AccountID, &u.PrivyUserID, &u.Email, &u.SolanaWalletAddress, &u.SolanaWalletID, &u.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("store: user not found: %w", err)
 	}

@@ -111,20 +111,19 @@ func (p *PrivyAuth) GetOrCreateUser(privyUserID string) (*store.User, error) {
 		return user, nil
 	}
 
-	// Fetch user details from Privy to get wallet info.
-	walletAddr, walletID, err := p.fetchUserWallets(privyUserID)
+	// Fetch user details from Privy to get wallet and email info.
+	details, err := p.fetchUserDetails(privyUserID)
 	if err != nil {
-		p.logger.Error("privy: failed to fetch user wallets", "privy_user_id", privyUserID, "error", err)
-		// Create user without wallet — they can link one later.
-		walletAddr = ""
-		walletID = ""
+		p.logger.Error("privy: failed to fetch user details", "privy_user_id", privyUserID, "error", err)
+		details = &privyUserDetails{}
 	}
 
 	user = &store.User{
 		AccountID:           uuid.New().String(),
 		PrivyUserID:         privyUserID,
-		SolanaWalletAddress: walletAddr,
-		SolanaWalletID:      walletID,
+		Email:               details.Email,
+		SolanaWalletAddress: details.WalletAddress,
+		SolanaWalletID:      details.WalletID,
 	}
 
 	if err := p.store.CreateUser(user); err != nil {
@@ -138,7 +137,8 @@ func (p *PrivyAuth) GetOrCreateUser(privyUserID string) (*store.User, error) {
 	p.logger.Info("privy: created user",
 		"privy_user_id", privyUserID,
 		"account_id", user.AccountID,
-		"has_wallet", walletAddr != "",
+		"email", details.Email,
+		"has_wallet", details.WalletAddress != "",
 	)
 
 	return user, nil
@@ -159,44 +159,58 @@ type linkedAccount struct {
 	ID string `json:"id,omitempty"`
 }
 
-// fetchUserWallets calls Privy's REST API to get the user's embedded Solana wallet.
-func (p *PrivyAuth) fetchUserWallets(privyUserID string) (address, walletID string, err error) {
+// privyUserDetails holds extracted info from the Privy user API.
+type privyUserDetails struct {
+	Email         string
+	WalletAddress string
+	WalletID      string
+}
+
+// fetchUserDetails calls Privy's REST API to get the user's email and wallet.
+func (p *PrivyAuth) fetchUserDetails(privyUserID string) (*privyUserDetails, error) {
 	if p.appSecret == "" {
-		return "", "", fmt.Errorf("privy: app_secret required for REST API calls")
+		return nil, fmt.Errorf("privy: app_secret required for REST API calls")
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET",
 		"https://auth.privy.io/api/v1/users/"+privyUserID, nil)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	req.SetBasicAuth(p.appID, p.appSecret)
 	req.Header.Set("privy-app-id", p.appID)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("privy: API request failed: %w", err)
+		return nil, fmt.Errorf("privy: API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", "", fmt.Errorf("privy: API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("privy: API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var userResp privyUserResponse
 	if err := json.NewDecoder(resp.Body).Decode(&userResp); err != nil {
-		return "", "", fmt.Errorf("privy: decode user response: %w", err)
+		return nil, fmt.Errorf("privy: decode user response: %w", err)
 	}
 
-	// Find the embedded Solana wallet.
+	details := &privyUserDetails{}
+
 	for _, acct := range userResp.LinkedAccounts {
-		if acct.Type == "wallet" && acct.ChainType == "solana" {
-			return acct.Address, acct.ID, nil
+		switch acct.Type {
+		case "email":
+			details.Email = acct.Address
+		case "wallet":
+			if acct.ChainType == "solana" {
+				details.WalletAddress = acct.Address
+				details.WalletID = acct.ID
+			}
 		}
 	}
 
-	return "", "", fmt.Errorf("privy: no Solana wallet found for user %s", privyUserID)
+	return details, nil
 }
 
 // ContextKey for storing user in request context.
