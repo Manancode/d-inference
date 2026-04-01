@@ -99,6 +99,10 @@ func (s *Server) handleProviderWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Raise the read limit to 10 MB. The default 32 KB is too small for
+	// image generation responses which carry base64-encoded PNGs (~1-3 MB).
+	conn.SetReadLimit(10 * 1024 * 1024)
+
 	providerID := uuid.New().String()
 	s.logger.Info("provider websocket connected", "provider_id", providerID, "remote", r.RemoteAddr)
 
@@ -200,6 +204,10 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 		case protocol.TypeTranscriptionComplete:
 			tcMsg := msg.Payload.(*protocol.TranscriptionCompleteMessage)
 			s.handleTranscriptionComplete(providerID, provider, tcMsg)
+
+		case protocol.TypeImageGenerationComplete:
+			igMsg := msg.Payload.(*protocol.ImageGenerationCompleteMessage)
+			s.handleImageGenerationComplete(providerID, provider, igMsg)
 
 		case protocol.TypeAttestationResponse:
 			respMsg := msg.Payload.(*protocol.AttestationResponseMessage)
@@ -559,6 +567,9 @@ func (s *Server) handleInferenceError(providerID string, provider *registry.Prov
 	if pr.TranscriptionCh != nil {
 		close(pr.TranscriptionCh)
 	}
+	if pr.ImageGenerationCh != nil {
+		close(pr.ImageGenerationCh)
+	}
 
 	// Record job failure for reputation tracking.
 	s.registry.RecordJobFailure(providerID)
@@ -607,6 +618,84 @@ func (s *Server) handleTranscriptionComplete(providerID string, provider *regist
 		"generation_tokens", msg.Usage.GenerationTokens,
 		"duration_secs", msg.DurationSecs,
 		"text_length", len(msg.Text),
+	)
+}
+
+func (s *Server) handleImageGenerationComplete(providerID string, provider *registry.Provider, msg *protocol.ImageGenerationCompleteMessage) {
+	if provider == nil {
+		s.logger.Warn("image generation complete from unregistered provider", "provider_id", providerID)
+		return
+	}
+	pr := provider.RemovePending(msg.RequestID)
+	if pr == nil {
+		s.logger.Warn("image generation complete for unknown request", "provider_id", providerID, "request_id", msg.RequestID)
+		return
+	}
+
+	// Send the result to the waiting consumer handler.
+	if pr.ImageGenerationCh != nil {
+		select {
+		case pr.ImageGenerationCh <- msg:
+		default:
+			s.logger.Warn("dropped image generation result, consumer channel full", "request_id", msg.RequestID)
+		}
+	}
+
+	// Record job success.
+	s.registry.RecordJobSuccess(providerID, time.Duration(msg.DurationSecs*float64(time.Second)))
+
+	// Calculate per-image cost.
+	totalCost := payments.CalculateImageCost(msg.Usage.Model, msg.Usage.Width, msg.Usage.Height, msg.Usage.ImagesGenerated)
+	providerPayout := payments.ProviderPayout(totalCost)
+
+	// Charge consumer (best-effort — image already generated).
+	if err := s.ledger.Charge(pr.ConsumerKey, totalCost, msg.RequestID); err != nil {
+		s.logger.Warn("could not charge consumer for image generation",
+			"consumer_key", pr.ConsumerKey,
+			"cost_micro_usd", totalCost,
+			"error", err,
+		)
+	}
+
+	// Record usage entry.
+	s.ledger.RecordUsage(pr.ConsumerKey, payments.UsageEntry{
+		JobID:        msg.RequestID,
+		Model:        pr.Model,
+		CostMicroUSD: totalCost,
+		Timestamp:    time.Now(),
+	})
+
+	// Credit the provider.
+	providerWallet := ""
+	if p := s.registry.GetProvider(providerID); p != nil {
+		providerWallet = p.WalletAddress
+	}
+	if providerWallet != "" {
+		s.ledger.CreditProvider(providerWallet, providerPayout, pr.Model, msg.RequestID)
+	}
+
+	// Platform fee with referral distribution.
+	platformFee := payments.PlatformFee(totalCost)
+	if platformFee > 0 {
+		if s.billing != nil && s.billing.Referral() != nil {
+			platformFee = s.billing.Referral().DistributeReferralReward(pr.ConsumerKey, platformFee, msg.RequestID)
+		}
+		_ = s.store.Credit("platform", platformFee, store.LedgerPlatformFee, msg.RequestID)
+	}
+
+	// Mark provider idle.
+	s.registry.SetProviderIdle(providerID)
+
+	s.logger.Info("image generation complete",
+		"request_id", msg.RequestID,
+		"provider_id", providerID,
+		"images_generated", msg.Usage.ImagesGenerated,
+		"width", msg.Usage.Width,
+		"height", msg.Usage.Height,
+		"steps", msg.Usage.Steps,
+		"duration_secs", msg.DurationSecs,
+		"cost_micro_usd", totalCost,
+		"provider_payout_micro_usd", providerPayout,
 	)
 }
 

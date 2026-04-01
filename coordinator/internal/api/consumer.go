@@ -472,6 +472,198 @@ func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleImageGenerations handles POST /v1/images/generations.
+//
+// This is the OpenAI-compatible image generation endpoint. It accepts a JSON
+// body with model, prompt, size, etc. and routes it to an image-capable provider.
+func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) {
+	var req protocol.ImageGenerationRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
+		return
+	}
+
+	if req.Model == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "model is required"))
+		return
+	}
+	if req.Prompt == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "prompt is required"))
+		return
+	}
+	if req.N == 0 {
+		req.N = 1
+	}
+	if req.N < 0 || req.N > 4 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "n must be between 1 and 4"))
+		return
+	}
+	if req.Steps != nil && *req.Steps <= 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "steps must be positive"))
+		return
+	}
+	if req.Size == "" {
+		req.Size = "1024x1024"
+	}
+
+	// Validate image dimensions — cap at 2048x2048 to keep responses under transport limits.
+	sizeParts := strings.SplitN(req.Size, "x", 2)
+	if len(sizeParts) != 2 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "size must be WxH (e.g. 1024x1024)"))
+		return
+	}
+	imgW, _ := strconv.Atoi(sizeParts[0])
+	imgH, _ := strconv.Atoi(sizeParts[1])
+	if imgW <= 0 || imgH <= 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "size dimensions must be positive"))
+		return
+	}
+	if imgW > 2048 || imgH > 2048 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "maximum image dimension is 2048x2048"))
+		return
+	}
+
+	// Find a provider that serves the requested image model.
+	requestedTrust := registry.TrustLevel(r.URL.Query().Get("trust_level"))
+	provider := s.registry.FindProviderWithTrust(req.Model, requestedTrust)
+	if provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
+			fmt.Sprintf("no provider available for image model %q", req.Model)))
+		return
+	}
+
+	requestID := uuid.New().String()
+	consumerKey := consumerKeyFromContext(r.Context())
+
+	bodyJSON, _ := json.Marshal(req)
+
+	// E2E encryption — prompts are sensitive.
+	if provider.PublicKey == "" {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("encryption_required",
+			"no provider with E2E encryption available for this model"))
+		return
+	}
+
+	providerPubKey, err := e2e.ParsePublicKey(provider.PublicKey)
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"provider public key invalid"))
+		return
+	}
+
+	sessionKeys, err := e2e.GenerateSessionKeys()
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"failed to generate session keys"))
+		return
+	}
+
+	encrypted, err := e2e.Encrypt(bodyJSON, providerPubKey, sessionKeys)
+	if err != nil {
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("encryption_error",
+			"failed to encrypt image generation request"))
+		return
+	}
+
+	// Build the upload URL for the provider to POST generated images to.
+	// Derive from the incoming request's Host header.
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	uploadURL := fmt.Sprintf("%s://%s/v1/provider/image-upload?request_id=%s", scheme, r.Host, requestID)
+
+	wireMsg := map[string]any{
+		"type":       protocol.TypeImageGenerationRequest,
+		"request_id": requestID,
+		"upload_url":  uploadURL,
+		"encrypted_body": map[string]string{
+			"ephemeral_public_key": encrypted.EphemeralPublicKey,
+			"ciphertext":           encrypted.Ciphertext,
+		},
+	}
+
+	// Create pending request with image generation channel.
+	pr := &registry.PendingRequest{
+		RequestID:         requestID,
+		ProviderID:        provider.ID,
+		Model:             req.Model,
+		ConsumerKey:       consumerKey,
+		ChunkCh:           make(chan string, 1),
+		CompleteCh:        make(chan protocol.UsageInfo, 1),
+		ErrorCh:           make(chan protocol.InferenceErrorMessage, 1),
+		ImageGenerationCh: make(chan *protocol.ImageGenerationCompleteMessage, 1),
+	}
+	if sessionKeys != nil {
+		pr.SessionPrivKey = &sessionKeys.PrivateKey
+	}
+	provider.AddPending(pr)
+
+	// Send the request to the provider.
+	data, err := json.Marshal(wireMsg)
+	if err != nil {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to marshal request"))
+		return
+	}
+	if err := provider.Conn.Write(r.Context(), websocket.MessageText, data); err != nil {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+		s.logger.Error("failed to send image generation request", "request_id", requestID, "error", err)
+		writeJSON(w, http.StatusBadGateway, errorResponse("provider_error", "failed to send request to provider"))
+		return
+	}
+
+	s.logger.Info("image generation request dispatched",
+		"request_id", requestID,
+		"model", req.Model,
+		"provider_id", provider.ID,
+		"size", req.Size,
+		"n", req.N,
+	)
+
+	// Cleanup on return.
+	defer func() {
+		provider.RemovePending(requestID)
+		s.registry.SetProviderIdle(provider.ID)
+	}()
+
+	// Wait for the image generation result.
+	ctx, cancel := context.WithTimeout(r.Context(), inferenceTimeout)
+	defer cancel()
+
+	select {
+	case <-pr.ImageGenerationCh:
+		// Retrieve images uploaded by the provider via HTTP.
+		uploadedImages := s.getUploadedImages(requestID)
+		imageData := make([]map[string]string, len(uploadedImages))
+		for i, imgBytes := range uploadedImages {
+			imageData[i] = map[string]string{
+				"b64_json": base64.StdEncoding.EncodeToString(imgBytes),
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"created": time.Now().Unix(),
+			"data":    imageData,
+		})
+
+	case errMsg := <-pr.ErrorCh:
+		statusCode := errMsg.StatusCode
+		if statusCode == 0 {
+			statusCode = http.StatusBadGateway
+		}
+		writeJSON(w, statusCode, errorResponse("provider_error", errMsg.Error))
+
+	case <-ctx.Done():
+		writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "image generation request timed out"))
+	}
+}
+
 // handleStreamingResponse writes SSE events to the consumer as they arrive
 // from the provider. Each chunk is forwarded in real time, providing
 // token-by-token streaming to the consumer.

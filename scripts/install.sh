@@ -188,15 +188,14 @@ fi
 echo ""
 echo "→ [5/7] Downloading inference model..."
 
-# Fetch model catalog from coordinator and auto-select by RAM
+# Fetch model catalog from coordinator and auto-select by RAM.
 # Text models need 16GB+ to produce quality output.
 # Machines with <16GB serve transcription (STT) instead.
+# Image generation is opt-in via DGINF_IMAGE_MODEL env var (requires
+# gRPCServerCLI provisioning not yet in this installer).
 CATALOG_JSON=$(curl -fsSL "$BASE_URL/v1/models/catalog" 2>/dev/null || echo "")
 
 if [ -n "$CATALOG_JSON" ] && echo "$CATALOG_JSON" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-    # Select the best model by type:
-    #   >=16 GB: pick the largest text model that fits
-    #   <16 GB:  pick a transcription model (small, high-quality specialized task)
     SELECTED=$(echo "$CATALOG_JSON" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)

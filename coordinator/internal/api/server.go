@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dginf/coordinator/internal/auth"
@@ -72,6 +73,12 @@ type Server struct {
 	stepCARootCert         *x509.Certificate  // step-ca root CA for ACME cert verification
 	stepCAIntermediateCert *x509.Certificate  // step-ca intermediate CA
 	processedTxHashes      map[string]bool    // prevents double-crediting the same on-chain tx
+
+	// imageUploads stores generated images keyed by request_id.
+	// Providers upload images via HTTP POST, then send a small WebSocket
+	// completion message. The consumer handler retrieves images from here.
+	imageUploads           map[string][][]byte // request_id → list of PNG images
+	imageUploadsMu         sync.Mutex
 }
 
 // NewServer creates a configured Server with all routes mounted.
@@ -84,6 +91,7 @@ func NewServer(reg *registry.Registry, st store.Store, logger *slog.Logger) *Ser
 		mux:               http.NewServeMux(),
 		settlementURL:     "http://localhost:8090",
 		processedTxHashes: make(map[string]bool),
+		imageUploads:      make(map[string][][]byte),
 	}
 	s.routes()
 	return s
@@ -153,7 +161,12 @@ func (s *Server) routes() {
 	// Consumer endpoints — API key auth required.
 	s.mux.HandleFunc("POST /v1/chat/completions", s.requireAuth(s.handleChatCompletions))
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.requireAuth(s.handleTranscriptions))
+	s.mux.HandleFunc("POST /v1/images/generations", s.requireAuth(s.handleImageGenerations))
 	s.mux.HandleFunc("GET /v1/models", s.requireAuth(s.handleListModels))
+
+	// Provider image upload — providers POST generated images here (no API key auth,
+	// providers authenticate via request_id which is a secret between coordinator and provider).
+	s.mux.HandleFunc("POST /v1/provider/image-upload", s.handleImageUpload)
 
 	// MDM webhook — MicroMDM sends command responses here.
 	s.mux.HandleFunc("POST /v1/mdm/webhook", s.HandleMDMWebhook)
@@ -364,4 +377,40 @@ func extractBearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
+}
+
+// handleImageUpload accepts image data uploaded by providers via HTTP POST.
+// This avoids sending large base64 images over the WebSocket (which has size limits).
+// The provider uploads images here after generating them, then sends a small
+// image_generation_complete message over the WebSocket with just usage metadata.
+func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
+	requestID := r.URL.Query().Get("request_id")
+	if requestID == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "request_id is required"))
+		return
+	}
+
+	// Read image data (limit to 20 MB)
+	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
+	imageData, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "failed to read image data"))
+		return
+	}
+
+	s.imageUploadsMu.Lock()
+	s.imageUploads[requestID] = append(s.imageUploads[requestID], imageData)
+	s.imageUploadsMu.Unlock()
+
+	s.logger.Debug("image uploaded", "request_id", requestID, "size", len(imageData))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// getUploadedImages retrieves and removes stored images for a request.
+func (s *Server) getUploadedImages(requestID string) [][]byte {
+	s.imageUploadsMu.Lock()
+	defer s.imageUploadsMu.Unlock()
+	images := s.imageUploads[requestID]
+	delete(s.imageUploads, requestID)
+	return images
 }

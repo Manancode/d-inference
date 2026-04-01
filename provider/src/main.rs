@@ -891,6 +891,79 @@ async fn cmd_serve(
         false
     };
 
+    // Start image generation bridge on be_port + 2 if configured.
+    // DGINF_IMAGE_MODEL: model ID for the image bridge (e.g. "flux-klein-4b").
+    // DGINF_IMAGE_MODEL_PATH: model directory for gRPCServerCLI (optional).
+    let image_port = be_port + 2;
+    let image_model = std::env::var("DGINF_IMAGE_MODEL").unwrap_or_default();
+    let image_model_id = std::env::var("DGINF_IMAGE_MODEL_ID")
+        .unwrap_or_else(|_| image_model.clone());
+    let image_model_path = std::env::var("DGINF_IMAGE_MODEL_PATH").unwrap_or_default();
+    let image_available = if !image_model.is_empty() {
+        tracing::info!("Starting image bridge on port {image_port} for model: {image_model}");
+
+        let mut bridge_cmd = std::process::Command::new(&python_cmd);
+
+        // Set PYTHONPATH so the image bridge package is importable.
+        // Look for it next to the binary, in ~/.dginf, or in the source tree.
+        let bridge_paths: Vec<String> = [
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("image-bridge").to_string_lossy().to_string())),
+            dirs::home_dir().map(|d| d.join(".dginf/image-bridge").to_string_lossy().to_string()),
+        ]
+        .iter()
+        .filter_map(|p| p.clone())
+        .collect();
+
+        if let Ok(existing) = std::env::var("PYTHONPATH") {
+            let mut all = bridge_paths;
+            all.push(existing);
+            bridge_cmd.env("PYTHONPATH", all.join(":"));
+        } else if !bridge_paths.is_empty() {
+            bridge_cmd.env("PYTHONPATH", bridge_paths.join(":"));
+        }
+
+        bridge_cmd.args([
+            "-m", "dginf_image_bridge",
+            "--port", &image_port.to_string(),
+            "--model", &image_model,
+        ]);
+        if !image_model_path.is_empty() {
+            bridge_cmd.args(["--model-path", &image_model_path]);
+        }
+        bridge_cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        match bridge_cmd.spawn() {
+            Ok(_child) => {
+                let mut ready = false;
+                for _ in 0..60 {
+                    if std::net::TcpStream::connect(format!("127.0.0.1:{image_port}")).is_ok() {
+                        ready = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                if ready {
+                    tracing::info!("Image bridge ready on port {image_port}");
+                    true
+                } else {
+                    tracing::error!("Image bridge failed to start within 60s");
+                    false
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn image bridge: {e}");
+                false
+            }
+        }
+    } else {
+        tracing::info!("No image model configured (set DGINF_IMAGE_MODEL to enable)");
+        false
+    };
+
     // Security hardening: prevent debugger attachment AFTER all subprocesses
     // are spawned. PT_DENY_ATTACH poisons mach_task_self_ in the process
     // memory, which causes child Python processes to crash with SIGBUS.
@@ -928,6 +1001,19 @@ async fn cmd_serve(
                 estimated_memory_gb: 4.0,
             });
             tracing::info!("Advertising STT model: {stt_model_id}");
+        }
+
+        // Advertise image model if available
+        if image_available && !image_model_id.is_empty() {
+            available_models.push(models::ModelInfo {
+                id: image_model_id.clone(),
+                model_type: Some("image".to_string()),
+                parameters: None,
+                quantization: None,
+                size_bytes: 0,
+                estimated_memory_gb: 8.0,
+            });
+            tracing::info!("Advertising image model: {image_model_id}");
         }
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
         let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(64);
@@ -1187,6 +1273,28 @@ async fn cmd_serve(
                                 let handle = tokio::spawn(async move {
                                     proxy::handle_transcription_request(
                                         rid.clone(), body, stt_url, tx, token_clone,
+                                    ).await;
+                                    let _ = done_tx.send(rid).await;
+                                });
+
+                                inflight.insert(request_id, (cancel_token, handle));
+                            }
+                            coordinator::CoordinatorEvent::ImageGenerationRequest { request_id, body, upload_url } => {
+                                last_request_time = tokio::time::Instant::now();
+
+                                let tx = outbound_tx.clone();
+                                let cancel_token = CancellationToken::new();
+                                let token_clone = cancel_token.clone();
+                                let done_tx = done_tx.clone();
+                                let rid = request_id.clone();
+                                let image_url = proxy_backend_url.clone().replace(
+                                    &format!(":{}", be_port),
+                                    &format!(":{}", be_port + 2),
+                                );
+
+                                let handle = tokio::spawn(async move {
+                                    proxy::handle_image_generation_request(
+                                        rid.clone(), body, image_url, upload_url, tx, token_clone,
                                     ).await;
                                     let _ = done_tx.send(rid).await;
                                 });
