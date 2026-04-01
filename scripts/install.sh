@@ -196,9 +196,6 @@ echo "→ [5/7] Downloading inference model..."
 CATALOG_JSON=$(curl -fsSL "$BASE_URL/v1/models/catalog" 2>/dev/null || echo "")
 
 if [ -n "$CATALOG_JSON" ] && echo "$CATALOG_JSON" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-    # Select the best model by type:
-    #   >=16 GB: pick the largest text model that fits
-    #   <16 GB:  pick a transcription model (small, high-quality specialized task)
     SELECTED=$(echo "$CATALOG_JSON" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)

@@ -506,6 +506,23 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 		req.Size = "1024x1024"
 	}
 
+	// Validate image dimensions — cap at 2048x2048 to keep responses under transport limits.
+	sizeParts := strings.SplitN(req.Size, "x", 2)
+	if len(sizeParts) != 2 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "size must be WxH (e.g. 1024x1024)"))
+		return
+	}
+	imgW, _ := strconv.Atoi(sizeParts[0])
+	imgH, _ := strconv.Atoi(sizeParts[1])
+	if imgW <= 0 || imgH <= 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "size dimensions must be positive"))
+		return
+	}
+	if imgW > 2048 || imgH > 2048 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "maximum image dimension is 2048x2048"))
+		return
+	}
+
 	// Find a provider that serves the requested image model.
 	requestedTrust := registry.TrustLevel(r.URL.Query().Get("trust_level"))
 	provider := s.registry.FindProviderWithTrust(req.Model, requestedTrust)
@@ -552,9 +569,18 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Build the upload URL for the provider to POST generated images to.
+	// Derive from the incoming request's Host header.
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	uploadURL := fmt.Sprintf("%s://%s/v1/provider/image-upload?request_id=%s", scheme, r.Host, requestID)
+
 	wireMsg := map[string]any{
 		"type":       protocol.TypeImageGenerationRequest,
 		"request_id": requestID,
+		"upload_url":  uploadURL,
 		"encrypted_body": map[string]string{
 			"ephemeral_public_key": encrypted.EphemeralPublicKey,
 			"ciphertext":           encrypted.Ciphertext,
@@ -612,11 +638,14 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	select {
-	case result := <-pr.ImageGenerationCh:
-		// Build OpenAI-compatible image generation response.
-		imageData := make([]map[string]string, len(result.Images))
-		for i, img := range result.Images {
-			imageData[i] = map[string]string{"b64_json": img.B64JSON}
+	case <-pr.ImageGenerationCh:
+		// Retrieve images uploaded by the provider via HTTP.
+		uploadedImages := s.getUploadedImages(requestID)
+		imageData := make([]map[string]string, len(uploadedImages))
+		for i, imgBytes := range uploadedImages {
+			imageData[i] = map[string]string{
+				"b64_json": base64.StdEncoding.EncodeToString(imgBytes),
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"created": time.Now().Unix(),

@@ -43,6 +43,7 @@ pub enum CoordinatorEvent {
     ImageGenerationRequest {
         request_id: String,
         body: ImageGenerationRequestBody,
+        upload_url: String,
     },
     Cancel {
         request_id: String,
@@ -303,7 +304,7 @@ impl CoordinatorClient {
                                         }
                                     }
                                 }
-                                Ok(CoordinatorMessage::ImageGenerationRequest { request_id, body, encrypted_body }) => {
+                                Ok(CoordinatorMessage::ImageGenerationRequest { request_id, upload_url, body, encrypted_body }) => {
                                     tracing::info!("Received image generation request: {request_id}");
 
                                     // Decrypt E2E encrypted body if present
@@ -326,6 +327,7 @@ impl CoordinatorClient {
                                             let _ = event_tx.send(CoordinatorEvent::ImageGenerationRequest {
                                                 request_id,
                                                 body: parsed_body,
+                                                upload_url,
                                             }).await;
                                         }
                                         Err(e) => {

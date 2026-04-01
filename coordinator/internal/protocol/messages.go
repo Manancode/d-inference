@@ -278,16 +278,14 @@ type ImageGenerationRequestBody struct {
 }
 
 // ImageGenerationRequestMessage tells a provider to generate images.
+// Includes an upload_url where the provider should POST the generated images
+// via HTTP (instead of sending them over the WebSocket, which has size limits).
 type ImageGenerationRequestMessage struct {
 	Type          string                       `json:"type"`
 	RequestID     string                       `json:"request_id"`
+	UploadURL     string                       `json:"upload_url"`     // HTTP endpoint for image upload
 	Body          ImageGenerationRequestBody   `json:"body,omitempty"`
 	EncryptedBody *EncryptedPayload            `json:"encrypted_body,omitempty"`
-}
-
-// ImageData is a single generated image in the response.
-type ImageData struct {
-	B64JSON string `json:"b64_json"`
 }
 
 // ImageGenerationUsage carries usage info for billing image generation requests.
@@ -300,10 +298,11 @@ type ImageGenerationUsage struct {
 }
 
 // ImageGenerationCompleteMessage signals the provider finished generating images.
+// The actual image data is uploaded separately via HTTP to the upload_url.
+// This message only carries metadata so it stays small on the WebSocket.
 type ImageGenerationCompleteMessage struct {
 	Type         string               `json:"type"`
 	RequestID    string               `json:"request_id"`
-	Images       []ImageData          `json:"images"`
 	Usage        ImageGenerationUsage `json:"usage"`
 	DurationSecs float64              `json:"duration_secs"` // processing time
 }

@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::crypto::NodeKeyPair;
 use crate::protocol::{
-    ImageDataPayload, ImageGenerationRequestBody, ImageGenerationUsage, ProviderMessage,
+    ImageGenerationRequestBody, ImageGenerationUsage, ProviderMessage,
     TranscriptionRequestBody, TranscriptionSegment, TranscriptionUsage, UsageInfo,
 };
 use crate::security;
@@ -551,20 +551,21 @@ fn estimate_audio_duration(bytes: &[u8], format: &str) -> f64 {
 
 /// Handle an image generation request by forwarding it to the local image bridge.
 ///
-/// Sends the OpenAI-compatible request body as JSON to the bridge's
-/// /v1/images/generations endpoint, extracts the base64-encoded images from the
-/// response, and sends the result back as an ImageGenerationComplete message.
+/// Sends the request to the bridge, then uploads generated images to the
+/// coordinator via HTTP POST (avoiding WebSocket size limits). Finally sends
+/// a small ImageGenerationComplete message over WebSocket with just usage metadata.
 pub async fn handle_image_generation_request(
     request_id: String,
     body: ImageGenerationRequestBody,
     image_bridge_url: String,
+    upload_url: String,
     outbound_tx: mpsc::Sender<ProviderMessage>,
     cancel_token: CancellationToken,
 ) {
     let start = std::time::Instant::now();
 
     let result = do_image_generation(
-        &request_id, &body, &image_bridge_url, &outbound_tx, &cancel_token, start,
+        &request_id, &body, &image_bridge_url, &upload_url, &outbound_tx, &cancel_token, start,
     )
     .await;
 
@@ -593,10 +594,13 @@ async fn do_image_generation(
     request_id: &str,
     body: &ImageGenerationRequestBody,
     image_bridge_url: &str,
+    upload_url: &str,
     outbound_tx: &mpsc::Sender<ProviderMessage>,
     cancel_token: &CancellationToken,
     start: std::time::Instant,
 ) -> Result<()> {
+    use base64::Engine;
+
     // Build the request body for the image bridge (OpenAI images format)
     let req_body = serde_json::json!({
         "model": body.model,
@@ -643,25 +647,44 @@ async fn do_image_generation(
         .await
         .context("failed to parse image bridge response")?;
 
-    // Extract images from OpenAI format: { "data": [{"b64_json": "..."}] }
-    let images: Vec<ImageDataPayload> = response_json
+    // Extract base64 images from OpenAI format: { "data": [{"b64_json": "..."}] }
+    let b64_images: Vec<&str> = response_json
         .get("data")
         .and_then(|d| d.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| {
-                    item.get("b64_json")
-                        .and_then(|v| v.as_str())
-                        .map(|s| ImageDataPayload {
-                            b64_json: s.to_string(),
-                        })
-                })
+                .filter_map(|item| item.get("b64_json").and_then(|v| v.as_str()))
                 .collect()
         })
         .unwrap_or_default();
 
-    if images.is_empty() {
+    if b64_images.is_empty() {
         anyhow::bail!("image bridge returned no images");
+    }
+
+    // Upload each image to the coordinator via HTTP POST (not WebSocket).
+    // This avoids the WebSocket message size limit.
+    for (i, b64) in b64_images.iter().enumerate() {
+        let image_bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .context("invalid base64 image data from bridge")?;
+
+        let upload_resp = client
+            .post(upload_url)
+            .body(image_bytes)
+            .header("content-type", "image/png")
+            .send()
+            .await
+            .context("failed to upload image to coordinator")?;
+
+        if !upload_resp.status().is_success() {
+            tracing::warn!(
+                "Image upload {}/{} failed: {}",
+                i + 1,
+                b64_images.len(),
+                upload_resp.status()
+            );
+        }
     }
 
     // Parse size for usage info (default 1024x1024)
@@ -683,10 +706,10 @@ async fn do_image_generation(
 
     let steps = body.steps.unwrap_or(4);
 
+    // Send small completion message over WebSocket (no image data).
     outbound_tx
         .send(ProviderMessage::ImageGenerationComplete {
             request_id: request_id.to_string(),
-            images,
             usage: ImageGenerationUsage {
                 images_generated: body.n,
                 width,
@@ -1065,20 +1088,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_image_generation_mock() {
-        use axum::{routing::post, Json, Router};
+        use axum::{body::Bytes, routing::post, Json, Router};
+        use std::sync::{Arc, Mutex};
 
-        // Start a mock image bridge server
-        let app = Router::new().route(
-            "/v1/images/generations",
-            post(|| async {
-                Json(serde_json::json!({
-                    "created": 1234567890,
-                    "data": [
-                        {"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg=="}
-                    ]
-                }))
-            }),
-        );
+        // Track what gets uploaded
+        let uploaded: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let uploaded_clone = uploaded.clone();
+
+        // Mock server: bridge endpoint + upload endpoint
+        let app = Router::new()
+            .route(
+                "/v1/images/generations",
+                post(|| async {
+                    Json(serde_json::json!({
+                        "created": 1234567890,
+                        "data": [
+                            {"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg=="}
+                        ]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/provider/image-upload",
+                post(move |body: Bytes| {
+                    let uploaded = uploaded_clone.clone();
+                    async move {
+                        uploaded.lock().unwrap().push(body.to_vec());
+                        Json(serde_json::json!({"status": "ok"}))
+                    }
+                }),
+            );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1086,6 +1125,9 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let base = format!("http://127.0.0.1:{}", addr.port());
+        let upload_url = format!("{base}/v1/provider/image-upload?request_id=img-req-1");
 
         let (tx, mut rx) = mpsc::channel(32);
         let body = ImageGenerationRequestBody {
@@ -1102,23 +1144,27 @@ mod tests {
         handle_image_generation_request(
             "img-req-1".to_string(),
             body,
-            format!("http://127.0.0.1:{}", addr.port()),
+            base,
+            upload_url,
             tx,
             CancellationToken::new(),
         )
         .await;
 
+        // Verify image was uploaded via HTTP (not WebSocket)
+        let uploads = uploaded.lock().unwrap();
+        assert_eq!(uploads.len(), 1, "Expected 1 image uploaded via HTTP");
+        assert!(!uploads[0].is_empty(), "Uploaded image should not be empty");
+
+        // WebSocket message should have usage but no images
         let msg = rx.recv().await.unwrap();
         match msg {
             ProviderMessage::ImageGenerationComplete {
                 request_id,
-                images,
                 usage,
                 duration_secs,
             } => {
                 assert_eq!(request_id, "img-req-1");
-                assert_eq!(images.len(), 1);
-                assert!(images[0].b64_json.starts_with("iVBOR")); // PNG magic
                 assert_eq!(usage.images_generated, 1);
                 assert_eq!(usage.width, 1024);
                 assert_eq!(usage.height, 1024);
@@ -1162,6 +1208,7 @@ mod tests {
             "img-err-1".to_string(),
             body,
             format!("http://127.0.0.1:{}", addr.port()),
+            "http://127.0.0.1:1/unused".to_string(),
             tx,
             CancellationToken::new(),
         )
@@ -1222,6 +1269,7 @@ mod tests {
                 "img-cancel-1".to_string(),
                 body,
                 format!("http://127.0.0.1:{}", addr.port()),
+                "http://127.0.0.1:1/unused".to_string(),
                 tx,
                 token_clone,
             )

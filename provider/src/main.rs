@@ -905,6 +905,7 @@ async fn cmd_serve(
         let mut bridge_cmd = std::process::Command::new(&python_cmd);
 
         // Set PYTHONPATH so the image bridge package is importable.
+        // Look for it next to the binary, in ~/.dginf, or in the source tree.
         let bridge_paths: Vec<String> = [
             std::env::current_exe()
                 .ok()
@@ -1278,7 +1279,7 @@ async fn cmd_serve(
 
                                 inflight.insert(request_id, (cancel_token, handle));
                             }
-                            coordinator::CoordinatorEvent::ImageGenerationRequest { request_id, body } => {
+                            coordinator::CoordinatorEvent::ImageGenerationRequest { request_id, body, upload_url } => {
                                 last_request_time = tokio::time::Instant::now();
 
                                 let tx = outbound_tx.clone();
@@ -1293,7 +1294,7 @@ async fn cmd_serve(
 
                                 let handle = tokio::spawn(async move {
                                     proxy::handle_image_generation_request(
-                                        rid.clone(), body, image_url, tx, token_clone,
+                                        rid.clone(), body, image_url, upload_url, tx, token_clone,
                                     ).await;
                                     let _ = done_tx.send(rid).await;
                                 });

@@ -89,10 +89,9 @@ pub enum ProviderMessage {
         /// Processing time in seconds.
         duration_secs: f64,
     },
-    /// Image generation result — base64-encoded images.
+    /// Image generation complete — images were uploaded via HTTP, this just carries metadata.
     ImageGenerationComplete {
         request_id: String,
-        images: Vec<ImageDataPayload>,
         usage: ImageGenerationUsage,
         /// Processing time in seconds.
         duration_secs: f64,
@@ -146,8 +145,12 @@ pub enum CoordinatorMessage {
         encrypted_body: Option<EncryptedPayload>,
     },
     /// Image generation request — provider should generate images from prompt.
+    /// Images are uploaded to upload_url via HTTP POST (not sent over WebSocket).
     ImageGenerationRequest {
         request_id: String,
+        /// HTTP URL where the provider should POST generated image bytes.
+        #[serde(default)]
+        upload_url: String,
         #[serde(default)]
         body: serde_json::Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -717,6 +720,7 @@ mod tests {
         });
         let msg = CoordinatorMessage::ImageGenerationRequest {
             request_id: "img-123".to_string(),
+            upload_url: "https://example.com/v1/provider/image-upload?request_id=img-123".to_string(),
             body,
             encrypted_body: None,
         };
@@ -724,6 +728,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"image_generation_request\""));
         assert!(json.contains("\"request_id\":\"img-123\""));
+        assert!(json.contains("\"upload_url\""));
         assert!(json.contains("\"prompt\":\"a cat wearing a hat\""));
         let deserialized: CoordinatorMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
@@ -731,11 +736,9 @@ mod tests {
 
     #[test]
     fn test_image_generation_complete_roundtrip() {
+        // Complete message carries only usage metadata — images uploaded via HTTP
         let msg = ProviderMessage::ImageGenerationComplete {
             request_id: "img-456".to_string(),
-            images: vec![ImageDataPayload {
-                b64_json: "iVBORw0KGgo=".to_string(),
-            }],
             usage: ImageGenerationUsage {
                 images_generated: 1,
                 width: 1024,
@@ -750,18 +753,20 @@ mod tests {
         assert!(json.contains("\"type\":\"image_generation_complete\""));
         assert!(json.contains("\"images_generated\":1"));
         assert!(json.contains("\"duration_secs\":7.5"));
-        assert!(json.contains("\"b64_json\":\"iVBORw0KGgo=\""));
+        // No images field — they're uploaded via HTTP
+        assert!(!json.contains("b64_json"));
         let deserialized: ProviderMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
     }
 
     #[test]
     fn test_deserialize_image_generation_request_from_go_json() {
-        let raw = r#"{"type":"image_generation_request","request_id":"go-img-1","body":{"model":"flux-klein-4b","prompt":"sunset over mountains","n":2,"size":"512x512"}}"#;
+        let raw = r#"{"type":"image_generation_request","request_id":"go-img-1","upload_url":"https://example.com/upload","body":{"model":"flux-klein-4b","prompt":"sunset over mountains","n":2,"size":"512x512"}}"#;
         let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
         match msg {
-            CoordinatorMessage::ImageGenerationRequest { request_id, body, encrypted_body } => {
+            CoordinatorMessage::ImageGenerationRequest { request_id, upload_url, body, encrypted_body } => {
                 assert_eq!(request_id, "go-img-1");
+                assert_eq!(upload_url, "https://example.com/upload");
                 assert_eq!(body["model"], "flux-klein-4b");
                 assert_eq!(body["prompt"], "sunset over mountains");
                 assert_eq!(body["n"], 2);
@@ -773,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_image_generation_request_encrypted() {
-        let raw = r#"{"type":"image_generation_request","request_id":"enc-img-1","encrypted_body":{"ephemeral_public_key":"a2V5","ciphertext":"Y2lwaGVy"}}"#;
+        let raw = r#"{"type":"image_generation_request","request_id":"enc-img-1","upload_url":"https://example.com/upload","encrypted_body":{"ephemeral_public_key":"a2V5","ciphertext":"Y2lwaGVy"}}"#;
         let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
         match msg {
             CoordinatorMessage::ImageGenerationRequest { request_id, encrypted_body, .. } => {
