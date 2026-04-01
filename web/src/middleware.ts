@@ -1,59 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PASSWORD = "bullisheigen";
-const COOKIE_NAME = "dginf_access";
-const COOKIE_VALUE = "granted";
+const IS_PRIVY_CONFIGURED =
+  process.env.NEXT_PUBLIC_PRIVY_APP_ID &&
+  process.env.NEXT_PUBLIC_PRIVY_APP_ID !== "placeholder";
 
 export function middleware(request: NextRequest) {
-  // Allow the auth endpoint through
-  if (request.nextUrl.pathname === "/gate") {
-    return NextResponse.next();
-  }
+  const { pathname } = request.nextUrl;
 
-  // Allow the device linking page through (users arrive here from CLI)
-  if (request.nextUrl.pathname === "/link") {
-    return NextResponse.next();
-  }
-
-  // Allow API routes through (needed for internal proxying)
-  if (request.nextUrl.pathname.startsWith("/api/")) {
-    return NextResponse.next();
-  }
-
-  // Allow static assets
+  // Always allow through: login page, device linking, API routes, static assets
   if (
-    request.nextUrl.pathname.startsWith("/_next/") ||
-    request.nextUrl.pathname.startsWith("/favicon")
+    pathname === "/login" ||
+    pathname === "/link" ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/favicon")
   ) {
     return NextResponse.next();
   }
 
-  // Check for auth cookie
-  const accessCookie = request.cookies.get(COOKIE_NAME);
-  if (accessCookie?.value === COOKIE_VALUE) {
+  // Skip auth when Privy is not configured (dev/placeholder mode)
+  if (!IS_PRIVY_CONFIGURED) {
     return NextResponse.next();
   }
 
-  // Check for password in query param (from form submission)
-  const password = request.nextUrl.searchParams.get("password");
-  if (password === PASSWORD) {
-    const url = request.nextUrl.clone();
-    url.searchParams.delete("password");
-    const response = NextResponse.redirect(url);
-    response.cookies.set(COOKIE_NAME, COOKIE_VALUE, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-    });
-    return response;
+  // Check for Privy auth token cookie
+  const privyToken = request.cookies.get("privy-token");
+  if (privyToken?.value) {
+    return NextResponse.next();
   }
 
-  // Redirect to gate
-  const gateUrl = request.nextUrl.clone();
-  gateUrl.pathname = "/gate";
-  gateUrl.searchParams.set("next", request.nextUrl.pathname);
-  return NextResponse.redirect(gateUrl);
+  // No auth — redirect to login
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  loginUrl.searchParams.set("next", pathname);
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {

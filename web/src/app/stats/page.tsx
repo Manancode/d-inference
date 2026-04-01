@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import { TopBar } from "@/components/TopBar";
 
 const STATS_API = "https://inference-test.openinnovation.dev";
 
@@ -92,7 +93,7 @@ function StatusDot({ status }: { status: string }) {
 function TrustBadge({ level }: { level: string }) {
   if (level === "hardware") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/10 border border-accent-green/20 text-accent-green text-[10px] font-medium uppercase tracking-wider">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/10 border border-accent-green/20 text-accent-green text-xs font-medium uppercase tracking-wider">
         <ShieldCheck size={10} />
         Hardware
       </span>
@@ -100,14 +101,14 @@ function TrustBadge({ level }: { level: string }) {
   }
   if (level === "self_signed") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-amber/10 border border-accent-amber/20 text-accent-amber text-[10px] font-medium uppercase tracking-wider">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-amber/10 border border-accent-amber/20 text-accent-amber text-xs font-medium uppercase tracking-wider">
         <ShieldAlert size={10} />
         Self-Signed
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-elevated border border-border-subtle text-text-tertiary text-[10px] font-medium uppercase tracking-wider">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-elevated border border-border-subtle text-text-tertiary text-xs font-medium uppercase tracking-wider">
       <Shield size={10} />
       None
     </span>
@@ -135,7 +136,7 @@ function HeroStat({
         {label}
       </p>
       {sub && (
-        <p className="text-[10px] font-mono text-text-tertiary mt-0.5">{sub}</p>
+        <p className="text-xs font-mono text-text-tertiary mt-0.5">{sub}</p>
       )}
     </div>
   );
@@ -154,13 +155,13 @@ function MiniStat({
   sub?: string;
 }) {
   return (
-    <div className="px-4 py-3 bg-bg-secondary rounded-lg border border-border-dim text-center">
+    <div className="px-4 py-3 bg-bg-secondary rounded-lg shadow-sm text-center">
       <p className="text-lg font-mono font-bold text-text-primary">{value}</p>
-      <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+      <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
         {label}
       </p>
       {sub && (
-        <p className="text-[10px] font-mono text-text-tertiary mt-0.5">{sub}</p>
+        <p className="text-xs font-mono text-text-tertiary mt-0.5">{sub}</p>
       )}
     </div>
   );
@@ -188,7 +189,7 @@ function ActivityChart({
   const fmt = formatValue || formatNumber;
 
   return (
-    <div className="bg-bg-primary border border-border-dim rounded-xl p-5 space-y-3">
+    <div className="bg-bg-primary rounded-xl p-5 space-y-3 shadow-sm">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
           {label}
@@ -215,7 +216,7 @@ function ActivityChart({
                 />
               ))}
             </div>
-            <p className="text-[10px] font-mono text-text-tertiary">
+            <p className="text-xs font-mono text-text-tertiary">
               Activity will appear here
             </p>
           </div>
@@ -243,7 +244,7 @@ function ActivityChart({
                   }}
                 />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                  <div className="bg-text-primary text-bg-primary text-[10px] font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
+                  <div className="bg-text-primary text-bg-primary text-xs font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
                     {fmt(v)} &middot; {time}
                   </div>
                 </div>
@@ -269,18 +270,18 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
   );
 
   return (
-    <div className="bg-bg-primary border border-border-dim rounded-xl p-5 space-y-3">
+    <div className="bg-bg-primary rounded-xl p-5 space-y-3 shadow-sm">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
           Tokens / Minute
         </h3>
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1 text-[10px] font-mono text-text-tertiary">
-            <span className="w-2 h-2 rounded-sm" style={{ background: "#7c3aed" }} />
+          <span className="flex items-center gap-1 text-xs font-mono text-text-tertiary">
+            <span className="w-2 h-2 rounded-sm" style={{ background: "var(--accent-brand)" }} />
             Input
           </span>
-          <span className="flex items-center gap-1 text-[10px] font-mono text-text-tertiary">
-            <span className="w-2 h-2 rounded-sm" style={{ background: "#059669" }} />
+          <span className="flex items-center gap-1 text-xs font-mono text-text-tertiary">
+            <span className="w-2 h-2 rounded-sm" style={{ background: "var(--accent-green)" }} />
             Output
           </span>
         </div>
@@ -295,7 +296,7 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
                     className="w-2 rounded-t-sm"
                     style={{
                       height: `${4 + Math.cos(i * 0.5) * 3}px`,
-                      background: "#059669",
+                      background: "var(--accent-green)",
                       opacity: 0.12,
                     }}
                   />
@@ -303,14 +304,14 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
                     className="w-2"
                     style={{
                       height: `${3 + Math.sin(i * 0.8) * 2}px`,
-                      background: "#7c3aed",
+                      background: "var(--accent-brand)",
                       opacity: 0.12,
                     }}
                   />
                 </div>
               ))}
             </div>
-            <p className="text-[10px] font-mono text-text-tertiary">
+            <p className="text-xs font-mono text-text-tertiary">
               Token flow will appear here
             </p>
           </div>
@@ -326,7 +327,7 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
                   className="rounded-t-sm transition-all duration-300"
                   style={{
                     height: `${Math.max(pctCompletion, total > 0 ? 2 : 0)}%`,
-                    background: "#059669",
+                    background: "var(--accent-green)",
                     opacity: 0.7,
                   }}
                 />
@@ -334,7 +335,7 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
                   className="transition-all duration-300"
                   style={{
                     height: `${Math.max(pctPrompt, total > 0 ? 2 : 0)}%`,
-                    background: "#7c3aed",
+                    background: "var(--accent-brand)",
                     opacity: 0.7,
                   }}
                 />
@@ -342,7 +343,7 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
                   <div className="min-h-[2px]" style={{ background: "var(--border-dim)", opacity: 0.3 }} />
                 )}
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                  <div className="bg-text-primary text-bg-primary text-[10px] font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
+                  <div className="bg-text-primary text-bg-primary text-xs font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
                     {formatNumber(d.prompt_tokens)} in / {formatNumber(d.completion_tokens)} out
                   </div>
                 </div>
@@ -360,7 +361,7 @@ function TokenChart({ data }: { data: TimeSeriesBucket[] }) {
 // ---------------------------------------------------------------------------
 function ProviderCard({ provider }: { provider: ProviderStats }) {
   return (
-    <div className="bg-bg-primary border border-border-dim rounded-xl p-5 hover:border-border-subtle transition-colors">
+    <div className="bg-bg-primary rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -369,7 +370,7 @@ function ProviderCard({ provider }: { provider: ProviderStats }) {
             <p className="text-sm font-semibold text-text-primary">
               {provider.chip}
             </p>
-            <p className="text-[10px] font-mono text-text-tertiary">
+            <p className="text-xs font-mono text-text-tertiary">
               {provider.machine_model} &middot; {provider.id.slice(0, 8)}...
             </p>
           </div>
@@ -377,9 +378,9 @@ function ProviderCard({ provider }: { provider: ProviderStats }) {
         <div className="flex items-center gap-2">
           <TrustBadge level={provider.trust_level} />
           <span
-            className={`px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider ${
+            className={`px-2 py-0.5 rounded-full text-xs font-mono uppercase tracking-wider ${
               provider.status === "serving"
-                ? "bg-accent-purple/10 border border-accent-purple/20 text-accent-purple"
+                ? "bg-accent-brand/10 border border-accent-brand/20 text-accent-brand"
                 : provider.status === "online"
                 ? "bg-accent-green/10 border border-accent-green/20 text-accent-green"
                 : "bg-bg-elevated border border-border-subtle text-text-tertiary"
@@ -393,33 +394,33 @@ function ProviderCard({ provider }: { provider: ProviderStats }) {
       {/* Specs grid */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Memory</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Memory</p>
           <p className="text-sm font-mono font-semibold text-text-primary">{provider.memory_gb} GB</p>
         </div>
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">GPU</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">GPU</p>
           <p className="text-sm font-mono font-semibold text-text-primary">{provider.gpu_cores}-core</p>
         </div>
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">CPU</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">CPU</p>
           <p className="text-sm font-mono font-semibold text-text-primary">
             {provider.cpu_cores.performance}P + {provider.cpu_cores.efficiency}E
           </p>
         </div>
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Bandwidth</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Bandwidth</p>
           <p className="text-sm font-mono font-semibold text-text-primary">
             {provider.memory_bandwidth_gbs} GB/s
           </p>
         </div>
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Requests</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Requests</p>
           <p className="text-sm font-mono font-semibold text-text-primary">
             {formatNumber(provider.requests_served)}
           </p>
         </div>
         <div>
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Tokens</p>
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-0.5">Tokens</p>
           <p className="text-sm font-mono font-semibold text-text-primary">
             {formatNumber(provider.tokens_generated)}
           </p>
@@ -428,7 +429,7 @@ function ProviderCard({ provider }: { provider: ProviderStats }) {
 
       {provider.current_model && (
         <div className="mt-3 pt-3 border-t border-border-dim">
-          <p className="text-[10px] font-mono text-text-tertiary">
+          <p className="text-xs font-mono text-text-tertiary">
             Serving: <span className="text-text-secondary">{provider.current_model.split("/").pop()}</span>
           </p>
         </div>
@@ -467,21 +468,27 @@ export default function StatsPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 size={24} className="animate-spin text-text-tertiary" />
+      <div className="flex-1 flex flex-col">
+        <TopBar title="Network Stats" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 size={24} className="animate-spin text-text-tertiary" />
+        </div>
       </div>
     );
   }
 
   if (error || !stats) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center space-y-2">
-          <p className="text-text-secondary text-sm">Failed to load platform stats</p>
-          <p className="text-text-tertiary text-xs font-mono">{error}</p>
-          <button onClick={fetchStats} className="mt-3 px-3 py-1.5 rounded-lg border border-border-subtle text-text-secondary text-xs hover:bg-bg-hover transition-colors">
-            Retry
-          </button>
+      <div className="flex-1 flex flex-col">
+        <TopBar title="Network Stats" />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-2">
+            <p className="text-text-secondary text-sm">Failed to load platform stats</p>
+            <p className="text-text-tertiary text-xs font-mono">{error}</p>
+            <button onClick={fetchStats} className="mt-3 px-3 py-1.5 rounded-lg border border-border-subtle text-text-secondary text-xs hover:bg-bg-hover transition-colors">
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -490,7 +497,8 @@ export default function StatsPage() {
   const hardwareAttested = stats.providers.filter((p) => p.trust_level === "hardware").length;
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 flex flex-col overflow-y-auto">
+      <TopBar title="Network Stats" />
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -499,7 +507,7 @@ export default function StatsPage() {
               Network Statistics
             </h1>
             <p className="text-sm text-text-tertiary mt-1">
-              Live metrics from the decentralized inference network
+              Live metrics from the EigenInference decentralized inference network
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -508,7 +516,7 @@ export default function StatsPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-green opacity-40" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-green" />
               </span>
-              <span className="text-[10px] font-mono text-accent-green uppercase tracking-wider">Live</span>
+              <span className="text-xs font-mono text-accent-green uppercase tracking-wider">Live</span>
             </div>
             <button onClick={fetchStats} className="p-2 rounded-lg border border-border-dim hover:border-border-subtle hover:bg-bg-hover text-text-tertiary hover:text-text-secondary transition-all">
               <RefreshCw size={14} />
@@ -516,8 +524,8 @@ export default function StatsPage() {
           </div>
         </div>
 
-        {/* Hero section — big numbers */}
-        <div className="bg-bg-primary border border-border-dim rounded-2xl p-8">
+        {/* Hero section -- big numbers */}
+        <div className="bg-bg-primary rounded-2xl p-8 shadow-sm">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <HeroStat
               value={formatNumber(stats.total_tokens)}
@@ -562,7 +570,7 @@ export default function StatsPage() {
           <ActivityChart
             data={stats.time_series}
             label="Requests / Minute"
-            color="#7c3aed"
+            color="var(--accent-brand)"
             getValue={(d) => d.requests}
           />
           <TokenChart data={stats.time_series} />
@@ -570,28 +578,28 @@ export default function StatsPage() {
 
         {/* Token distribution bar (only if there are tokens) */}
         {stats.total_tokens > 0 && (
-          <div className="bg-bg-primary border border-border-dim rounded-xl p-5 space-y-3">
+          <div className="bg-bg-primary rounded-xl p-5 space-y-3 shadow-sm">
             <h3 className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
               Token Distribution
             </h3>
             <div className="flex rounded-lg overflow-hidden h-7">
               <div
-                className="flex items-center justify-center text-[10px] font-mono text-white font-medium transition-all duration-500"
+                className="flex items-center justify-center text-xs font-mono text-white font-medium transition-all duration-500"
                 style={{
                   width: `${(stats.total_prompt_tokens / stats.total_tokens) * 100}%`,
                   minWidth: stats.total_prompt_tokens > 0 ? "70px" : "0",
-                  background: "#7c3aed",
+                  background: "var(--accent-brand)",
                   opacity: 0.75,
                 }}
               >
                 {formatNumber(stats.total_prompt_tokens)} in ({((stats.total_prompt_tokens / stats.total_tokens) * 100).toFixed(0)}%)
               </div>
               <div
-                className="flex items-center justify-center text-[10px] font-mono text-white font-medium transition-all duration-500"
+                className="flex items-center justify-center text-xs font-mono text-white font-medium transition-all duration-500"
                 style={{
                   width: `${(stats.total_completion_tokens / stats.total_tokens) * 100}%`,
                   minWidth: stats.total_completion_tokens > 0 ? "70px" : "0",
-                  background: "#059669",
+                  background: "var(--accent-green)",
                   opacity: 0.75,
                 }}
               >
@@ -603,7 +611,7 @@ export default function StatsPage() {
 
         {/* Models */}
         {stats.models.length > 0 && (
-          <div className="bg-bg-primary border border-border-dim rounded-xl p-5 space-y-4">
+          <div className="bg-bg-primary rounded-xl p-5 space-y-4 shadow-sm">
             <h3 className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
               Active Models
             </h3>
@@ -611,22 +619,22 @@ export default function StatsPage() {
               {stats.models.map((model) => (
                 <div
                   key={model.id}
-                  className="flex items-center justify-between px-4 py-3 bg-bg-secondary rounded-lg border border-border-dim"
+                  className="flex items-center justify-between px-4 py-3 bg-bg-secondary rounded-lg shadow-sm"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-accent-purple/10 border border-accent-purple/20 flex items-center justify-center">
-                      <Layers size={14} className="text-accent-purple" />
+                    <div className="w-8 h-8 rounded-lg bg-accent-brand/10 border border-accent-brand/20 flex items-center justify-center">
+                      <Layers size={14} className="text-accent-brand" />
                     </div>
                     <div>
                       <p className="text-sm font-mono text-text-primary font-medium">
                         {model.id.split("/").pop()}
                       </p>
-                      <p className="text-[10px] font-mono text-text-tertiary">{model.id}</p>
+                      <p className="text-xs font-mono text-text-tertiary">{model.id}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-mono text-text-primary font-semibold">{model.providers}</p>
-                    <p className="text-[10px] font-mono text-text-tertiary">
+                    <p className="text-xs font-mono text-text-tertiary">
                       {model.providers === 1 ? "node" : "nodes"}
                     </p>
                   </div>
@@ -650,7 +658,7 @@ export default function StatsPage() {
 
         {/* Footer */}
         <div className="text-center pb-8">
-          <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-widest">
+          <p className="text-xs font-mono text-text-tertiary uppercase tracking-widest">
             Auto-refreshes every 10 seconds
           </p>
         </div>

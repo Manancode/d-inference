@@ -37,7 +37,7 @@ function StatusLine({
       )}
       <span className="text-xs text-text-primary">{label}</span>
       {detail && (
-        <span className="text-[10px] text-text-tertiary ml-auto font-mono">
+        <span className="text-xs text-text-tertiary ml-auto font-mono">
           {detail}
         </span>
       )}
@@ -72,10 +72,10 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
     ? "text-accent-amber"
     : "text-text-tertiary";
   const bg = isHardware
-    ? "bg-accent-green-dim/30 border-accent-green/20"
+    ? "bg-accent-green/5"
     : isSelfSigned
-    ? "bg-accent-amber-dim/30 border-accent-amber/20"
-    : "bg-bg-tertiary border-border-dim";
+    ? "bg-accent-amber/5"
+    : "bg-bg-secondary";
   const title = isHardware
     ? trust.mdaVerified
       ? "Apple Attested"
@@ -95,7 +95,6 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
       const res = await fetch(`${ATTESTATION_API}/v1/providers/attestation`);
       const data = await res.json();
 
-      // Find this provider by serial
       const provider = data.providers?.find(
         (p: { serial_number: string }) => p.serial_number === trust.providerSerial
       ) || data.providers?.[0];
@@ -105,7 +104,6 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
         return;
       }
 
-      // Store details for display
       setProviderDetail({
         systemVolumeHash: provider.system_volume_hash,
         sePublicKey: provider.se_public_key,
@@ -115,7 +113,6 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
         mdaCertCount: provider.mda_cert_chain_b64?.length || 0,
       });
 
-      // Verify checks
       const certs = provider.mda_cert_chain_b64 || [];
       const checks = [
         { ok: provider.trust_level === "hardware", label: "Hardware trust level" },
@@ -143,15 +140,15 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
   }
 
   return (
-    <div className={`rounded-lg border ${bg} overflow-hidden`}>
+    <div className={`rounded-xl ${bg} shadow-sm overflow-hidden`}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
       >
         <Icon size={14} className={color} />
         <span className={`text-xs font-medium ${color}`}>{title}</span>
         {chipLabel && (
-          <span className="text-[10px] text-text-tertiary font-mono ml-1">
+          <span className="text-xs text-text-tertiary font-mono ml-1">
             {chipLabel}
           </span>
         )}
@@ -165,14 +162,14 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
 
       {open && (
         <div className="px-3 pb-3 border-t border-border-dim/50">
-          <p className="text-[10px] text-text-tertiary mt-2 mb-2 font-mono uppercase tracking-wider">
+          <p className="text-xs text-text-tertiary mt-2 mb-2 font-medium uppercase tracking-wider">
             Provider Security Verification
           </p>
 
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5 mb-2">
-              <Fingerprint size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+              <Fingerprint size={12} className="text-text-tertiary" />
+              <span className="text-xs text-text-tertiary font-medium">
                 Secure Enclave
               </span>
             </div>
@@ -190,32 +187,20 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
 
           <div className="mt-3 space-y-0.5">
             <div className="flex items-center gap-1.5 mb-2">
-              <Lock size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+              <Lock size={12} className="text-text-tertiary" />
+              <span className="text-xs text-text-tertiary font-medium">
                 OS Security (MDM Verified)
               </span>
             </div>
-            <StatusLine
-              ok={isHardware}
-              label="System Integrity Protection (SIP)"
-              detail={isHardware ? "Enabled" : "Unknown"}
-            />
-            <StatusLine
-              ok={isHardware}
-              label="Secure Boot"
-              detail={isHardware ? "Full Security" : "Unknown"}
-            />
-            <StatusLine
-              ok={isHardware}
-              label="Authenticated Root Volume"
-              detail={isHardware ? "Sealed" : "Unknown"}
-            />
+            <StatusLine ok={isHardware} label="System Integrity Protection (SIP)" detail={isHardware ? "Enabled" : "Unknown"} />
+            <StatusLine ok={isHardware} label="Secure Boot" detail={isHardware ? "Full Security" : "Unknown"} />
+            <StatusLine ok={isHardware} label="Authenticated Root Volume" detail={isHardware ? "Sealed" : "Unknown"} />
           </div>
 
           <div className="mt-3 space-y-0.5">
             <div className="flex items-center gap-1.5 mb-2">
-              <Cpu size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+              <Cpu size={12} className="text-text-tertiary" />
+              <span className="text-xs text-text-tertiary font-medium">
                 Runtime Protection
               </span>
             </div>
@@ -227,8 +212,8 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
           {trust.mdaVerified && (
             <div className="mt-3 space-y-0.5">
               <div className="flex items-center gap-1.5 mb-2">
-                <HardDrive size={11} className="text-text-tertiary" />
-                <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+                <HardDrive size={12} className="text-text-tertiary" />
+                <span className="text-xs text-text-tertiary font-medium">
                   Apple Device Attestation
                 </span>
               </div>
@@ -237,13 +222,12 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
             </div>
           )}
 
-          {/* Verify button — fetches attestation data and checks inline */}
           {isHardware && (
             <div className="mt-3 pt-2 border-t border-border-dim/50">
               <button
                 onClick={handleVerify}
                 disabled={verifying}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent-purple/10 border border-accent-purple/20 text-accent-purple text-xs font-medium hover:bg-accent-purple/20 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-brand/10 text-accent-brand text-xs font-medium hover:bg-accent-brand/20 transition-colors disabled:opacity-50"
               >
                 {verifying ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -254,45 +238,39 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
               </button>
 
               {verifyResult && (
-                <p
-                  className={`mt-2 text-xs font-mono leading-relaxed ${
-                    verifyResult.startsWith("All") ? "text-accent-green" : "text-accent-red"
-                  }`}
-                >
+                <p className={`mt-2 text-xs font-mono leading-relaxed ${
+                  verifyResult.startsWith("All") ? "text-accent-green" : "text-accent-red"
+                }`}>
                   {verifyResult}
                 </p>
               )}
 
               {providerDetail && (
-                <div className="mt-2 space-y-1.5">
+                <div className="mt-2 space-y-1.5 text-xs text-text-tertiary">
                   {providerDetail.mdaSerial && (
-                    <p className="text-[10px] text-text-tertiary">
-                      <span className="font-mono">MDA Serial:</span> {providerDetail.mdaSerial}
-                    </p>
+                    <p><span className="font-mono">MDA Serial:</span> {providerDetail.mdaSerial}</p>
                   )}
                   {providerDetail.mdaOsVersion && (
-                    <p className="text-[10px] text-text-tertiary">
+                    <p>
                       <span className="font-mono">macOS:</span> {providerDetail.mdaOsVersion}
                       {providerDetail.mdaSepVersion && ` · SepOS: ${providerDetail.mdaSepVersion}`}
                     </p>
                   )}
                   {providerDetail.mdaCertCount !== undefined && providerDetail.mdaCertCount > 0 && (
-                    <p className="text-[10px] text-text-tertiary">
-                      <span className="font-mono">Apple Certs:</span> {providerDetail.mdaCertCount} (leaf + intermediate)
-                    </p>
+                    <p><span className="font-mono">Apple Certs:</span> {providerDetail.mdaCertCount} (leaf + intermediate)</p>
                   )}
                   {providerDetail.systemVolumeHash && (
                     <div>
-                      <p className="text-[10px] font-mono text-text-tertiary">Volume Hash:</p>
-                      <p className="text-[9px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded px-1.5 py-1 mt-0.5">
+                      <p className="font-mono">Volume Hash:</p>
+                      <p className="text-xs font-mono break-all bg-bg-tertiary rounded px-2 py-1 mt-0.5">
                         {providerDetail.systemVolumeHash}
                       </p>
                     </div>
                   )}
                   {providerDetail.sePublicKey && (
                     <div>
-                      <p className="text-[10px] font-mono text-text-tertiary">SE Public Key:</p>
-                      <p className="text-[9px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded px-1.5 py-1 mt-0.5">
+                      <p className="font-mono">SE Public Key:</p>
+                      <p className="text-xs font-mono break-all bg-bg-tertiary rounded px-2 py-1 mt-0.5">
                         {providerDetail.sePublicKey}
                       </p>
                     </div>
@@ -300,26 +278,26 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
                 </div>
               )}
 
-              <p className="mt-2 text-[10px] text-text-tertiary leading-relaxed">
+              <p className="mt-2 text-xs text-text-tertiary leading-relaxed">
                 Manual: download MDA cert chain from{" "}
                 <a
                   href={`${ATTESTATION_API}/v1/providers/attestation`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-accent-purple hover:underline inline-flex items-center gap-0.5"
+                  className="text-accent-brand hover:underline inline-flex items-center gap-0.5"
                 >
                   attestation API
-                  <ExternalLink size={8} />
+                  <ExternalLink size={10} />
                 </a>
                 , decode base64 to DER, verify against{" "}
                 <a
                   href="https://www.apple.com/certificateauthority/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-accent-purple hover:underline inline-flex items-center gap-0.5"
+                  className="text-accent-brand hover:underline inline-flex items-center gap-0.5"
                 >
                   Apple&apos;s Root CA
-                  <ExternalLink size={8} />
+                  <ExternalLink size={10} />
                 </a>
               </p>
             </div>
@@ -327,7 +305,7 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
 
           {!isHardware && (
             <div className="mt-3 pt-2 border-t border-border-dim/50">
-              <p className="text-[10px] text-text-tertiary leading-relaxed">
+              <p className="text-xs text-text-tertiary leading-relaxed">
                 {isSelfSigned
                   ? "This provider presented a Secure Enclave attestation. MDM and Apple Device Attestation are being verified..."
                   : "This provider has not been verified."}

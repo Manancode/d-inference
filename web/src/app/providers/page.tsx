@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import {
   ShieldCheck,
   ShieldAlert,
@@ -15,9 +16,10 @@ import {
   ExternalLink,
   ChevronDown,
   Server,
+  ArrowRight,
 } from "lucide-react";
+import Link from "next/link";
 
-// Attestation API is public (no auth) — always use the coordinator directly
 const ATTESTATION_API = "https://inference-test.openinnovation.dev";
 
 interface Provider {
@@ -44,29 +46,13 @@ interface Provider {
   mda_udid?: string;
   mda_os_version?: string;
   mda_sepos_version?: string;
-}
-
-interface AttestationData {
-  providers: Provider[];
-  apple_enterprise_root_ca: string;
-  apple_root_ca_url: string;
-  verification_instructions: string;
-}
-
-function StatusDot({ ok }: { ok: boolean }) {
-  return (
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${
-        ok ? "bg-accent-green" : "bg-accent-red"
-      }`}
-    />
-  );
+  wallet_address?: string;
 }
 
 function TrustBadge({ level, mdaVerified }: { level: string; mdaVerified: boolean }) {
   if (level === "hardware") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-green/10 border border-accent-green/20 text-accent-green text-xs font-medium">
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-green/10 text-accent-green text-xs font-medium">
         <ShieldCheck size={12} />
         {mdaVerified ? "Apple Attested" : "Hardware Verified"}
       </span>
@@ -74,97 +60,17 @@ function TrustBadge({ level, mdaVerified }: { level: string; mdaVerified: boolea
   }
   if (level === "self_signed") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-amber/10 border border-accent-amber/20 text-accent-amber text-xs font-medium">
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-amber/10 text-accent-amber text-xs font-medium">
         <ShieldAlert size={12} />
         Verifying...
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-bg-tertiary border border-border-dim text-text-tertiary text-xs font-medium">
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-bg-tertiary text-text-tertiary text-xs font-medium">
       <Shield size={12} />
       Unverified
     </span>
-  );
-}
-
-function VerifyButton({ provider }: { provider: Provider }) {
-  const [verifying, setVerifying] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-
-  async function verify() {
-    if (!provider.mda_cert_chain_b64 || provider.mda_cert_chain_b64.length === 0) {
-      setResult("No Apple certificate chain available");
-      return;
-    }
-
-    setVerifying(true);
-    setResult(null);
-
-    try {
-      // Decode base64 DER certificates
-      const certs = provider.mda_cert_chain_b64.map((b64) => {
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-      });
-
-      // Basic certificate structure verification
-      // Full chain verification requires X.509 parsing which is complex in browser
-      // We verify: certs are valid DER, correct sizes, issuer matches Apple
-      const leafSize = certs[0].length;
-      const intSize = certs.length > 1 ? certs[1].length : 0;
-
-      const checks = [
-        { ok: certs.length >= 2, label: "Certificate chain has leaf + intermediate" },
-        { ok: leafSize > 500, label: `Leaf certificate valid (${leafSize} bytes)` },
-        { ok: intSize > 500, label: `Intermediate certificate valid (${intSize} bytes)` },
-        { ok: provider.mda_serial === provider.serial_number, label: `Serial matches: ${provider.mda_serial}` },
-        { ok: provider.secure_enclave, label: "Secure Enclave available" },
-        { ok: provider.sip_enabled, label: "SIP enabled" },
-        { ok: provider.secure_boot_enabled, label: "Secure Boot enabled" },
-      ];
-
-      const allPassed = checks.every((c) => c.ok);
-      setResult(
-        allPassed
-          ? `✓ All ${checks.length} checks passed. Apple Enterprise Attestation Root CA chain verified. Serial ${provider.mda_serial} confirmed.`
-          : `✗ ${checks.filter((c) => !c.ok).length} check(s) failed`
-      );
-    } catch (e) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setVerifying(false);
-    }
-  }
-
-  return (
-    <div>
-      <button
-        onClick={verify}
-        disabled={verifying}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent-purple/10 border border-accent-purple/20 text-accent-purple text-xs font-medium hover:bg-accent-purple/20 transition-colors disabled:opacity-50"
-      >
-        {verifying ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : (
-          <ShieldCheck size={12} />
-        )}
-        Verify Apple Attestation
-      </button>
-      {result && (
-        <p
-          className={`mt-2 text-xs font-mono ${
-            result.startsWith("✓") ? "text-accent-green" : "text-accent-red"
-          }`}
-        >
-          {result}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -172,17 +78,14 @@ function ProviderCard({ provider }: { provider: Provider }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-xl border border-border-dim bg-bg-secondary overflow-hidden">
-      {/* Header */}
+    <div className="rounded-xl bg-bg-secondary shadow-sm overflow-hidden">
       <div className="p-4 flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-bg-tertiary border border-border-dim flex items-center justify-center">
-            <Cpu size={20} className="text-accent-purple" />
+          <div className="w-10 h-10 rounded-lg bg-accent-brand/10 flex items-center justify-center">
+            <Cpu size={20} className="text-accent-brand" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-text-primary">
-              {provider.chip_name}
-            </h3>
+            <h3 className="text-sm font-semibold text-text-primary">{provider.chip_name}</h3>
             <p className="text-xs text-text-tertiary font-mono">
               {provider.hardware_model} · {provider.serial_number}
             </p>
@@ -191,35 +94,30 @@ function ProviderCard({ provider }: { provider: Provider }) {
         <TrustBadge level={provider.trust_level} mdaVerified={provider.mda_verified} />
       </div>
 
-      {/* Stats */}
       <div className="px-4 pb-3 grid grid-cols-3 gap-3">
-        <div className="rounded-lg bg-bg-primary/50 p-2.5">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1">Memory</p>
-          <p className="text-sm font-semibold text-text-primary">{provider.memory_gb} GB</p>
-        </div>
-        <div className="rounded-lg bg-bg-primary/50 p-2.5">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1">GPU Cores</p>
-          <p className="text-sm font-semibold text-text-primary">{provider.gpu_cores}</p>
-        </div>
-        <div className="rounded-lg bg-bg-primary/50 p-2.5">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1">Status</p>
-          <div className="flex items-center gap-1.5">
-            <StatusDot ok={provider.status === "online"} />
-            <p className="text-sm font-semibold text-text-primary capitalize">{provider.status || "online"}</p>
+        {[
+          { label: "Memory", value: `${provider.memory_gb} GB` },
+          { label: "GPU Cores", value: String(provider.gpu_cores) },
+          { label: "Status", value: provider.status || "online", isStatus: true },
+        ].map(({ label, value, isStatus }) => (
+          <div key={label} className="rounded-lg bg-bg-primary/50 p-2.5">
+            <p className="text-xs text-text-tertiary mb-1">{label}</p>
+            <div className="flex items-center gap-1.5">
+              {isStatus && (
+                <span className={`w-2 h-2 rounded-full ${value === "online" ? "bg-accent-green" : "bg-accent-red"}`} />
+              )}
+              <p className="text-sm font-semibold text-text-primary capitalize">{value}</p>
+            </div>
           </div>
-        </div>
+        ))}
       </div>
 
-      {/* Models */}
-      {provider.models && provider.models.length > 0 && (
+      {provider.models?.length > 0 && (
         <div className="px-4 pb-3">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider mb-1.5">Models</p>
+          <p className="text-xs text-text-tertiary mb-1.5">Models</p>
           <div className="flex flex-wrap gap-1.5">
             {provider.models.map((m) => (
-              <span
-                key={m}
-                className="px-2 py-0.5 rounded-md bg-bg-primary/50 border border-border-dim text-xs text-text-secondary font-mono"
-              >
+              <span key={m} className="px-2 py-0.5 rounded-md bg-bg-tertiary text-xs text-text-secondary font-mono">
                 {m.split("/").pop()}
               </span>
             ))}
@@ -227,10 +125,9 @@ function ProviderCard({ provider }: { provider: Provider }) {
         </div>
       )}
 
-      {/* Security verification */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 border-t border-border-dim text-left hover:bg-bg-primary/30 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2.5 border-t border-border-dim text-left hover:bg-bg-hover transition-colors"
       >
         <Lock size={12} className="text-text-tertiary" />
         <span className="text-xs text-text-secondary">Security Verification</span>
@@ -242,122 +139,71 @@ function ProviderCard({ provider }: { provider: Provider }) {
 
       {expanded && (
         <div className="px-4 pb-4 space-y-3 border-t border-border-dim/50">
-          {/* Secure Enclave */}
           <div className="mt-3">
             <div className="flex items-center gap-1.5 mb-2">
-              <Fingerprint size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
-                Secure Enclave
-              </span>
+              <Fingerprint size={12} className="text-text-tertiary" />
+              <span className="text-xs text-text-tertiary font-medium">Secure Enclave</span>
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-xs">
-                {provider.secure_enclave ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-red" />}
+                {provider.secure_enclave ? <Check size={12} className="text-accent-green" /> : <X size={12} className="text-accent-red" />}
                 <span className="text-text-secondary">Hardware-bound P-256 identity</span>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                {provider.mda_verified ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-amber" />}
-                <span className="text-text-secondary">ACME device-attest-01 (Apple-proven SE key)</span>
+                {provider.mda_verified ? <Check size={12} className="text-accent-green" /> : <X size={12} className="text-accent-amber" />}
+                <span className="text-text-secondary">ACME device-attest-01</span>
               </div>
             </div>
           </div>
 
-          {/* OS Security */}
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <Lock size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
-                OS Security {provider.mdm_verified ? "(MDM Verified)" : ""}
-              </span>
+              <Lock size={12} className="text-text-tertiary" />
+              <span className="text-xs text-text-tertiary font-medium">OS Security</span>
             </div>
             <div className="space-y-1">
               {[
                 { ok: provider.sip_enabled, label: "System Integrity Protection" },
-                { ok: provider.secure_boot_enabled, label: "Secure Boot (Full Security)" },
+                { ok: provider.secure_boot_enabled, label: "Secure Boot" },
                 { ok: provider.authenticated_root_enabled, label: "Authenticated Root Volume" },
               ].map(({ ok, label }) => (
                 <div key={label} className="flex items-center gap-2 text-xs">
-                  {ok ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-red" />}
+                  {ok ? <Check size={12} className="text-accent-green" /> : <X size={12} className="text-accent-red" />}
                   <span className="text-text-secondary">{label}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Apple Device Attestation */}
-          <div>
-            <div className="flex items-center gap-1.5 mb-2">
-              <HardDrive size={11} className="text-text-tertiary" />
-              <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
-                Apple Device Attestation (MDA)
-              </span>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs">
-                {provider.mda_verified ? <Check size={11} className="text-accent-green" /> : <X size={11} className="text-accent-amber" />}
-                <span className="text-text-secondary">Apple Enterprise CA cert chain</span>
+          {provider.mda_verified && (
+            <div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <HardDrive size={12} className="text-text-tertiary" />
+                <span className="text-xs text-text-tertiary font-medium">Apple Device Attestation</span>
               </div>
-              {provider.mda_serial && (
-                <div className="flex items-center gap-2 text-xs">
-                  <Check size={11} className="text-accent-green" />
-                  <span className="text-text-secondary">Serial: {provider.mda_serial}</span>
-                </div>
-              )}
-              {provider.mda_os_version && (
-                <div className="flex items-center gap-2 text-xs">
-                  <Check size={11} className="text-accent-green" />
-                  <span className="text-text-secondary">macOS {provider.mda_os_version}</span>
-                </div>
-              )}
-              {provider.mda_sepos_version && (
-                <div className="flex items-center gap-2 text-xs">
-                  <Check size={11} className="text-accent-green" />
-                  <span className="text-text-secondary">SepOS {provider.mda_sepos_version}</span>
-                </div>
-              )}
+              <div className="space-y-1 text-xs text-text-secondary">
+                <div className="flex items-center gap-2"><Check size={12} className="text-accent-green" /> Apple CA cert chain verified</div>
+                {provider.mda_serial && <div className="flex items-center gap-2"><Check size={12} className="text-accent-green" /> Serial: {provider.mda_serial}</div>}
+                {provider.mda_os_version && <div className="flex items-center gap-2"><Check size={12} className="text-accent-green" /> macOS {provider.mda_os_version}</div>}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* System Volume Hash */}
           {provider.system_volume_hash && (
             <div>
-              <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">
-                System Volume Hash
-              </p>
-              <p className="text-[10px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded p-2">
+              <p className="text-xs text-text-tertiary mb-1">System Volume Hash</p>
+              <p className="text-xs font-mono text-text-tertiary break-all bg-bg-tertiary rounded px-2 py-1">
                 {provider.system_volume_hash}
               </p>
             </div>
           )}
 
-          {/* SE Public Key */}
-          {provider.se_public_key && (
-            <div>
-              <p className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">
-                SE Public Key
-              </p>
-              <p className="text-[10px] font-mono text-text-tertiary break-all bg-bg-primary/50 rounded p-2">
-                {provider.se_public_key}
-              </p>
-            </div>
-          )}
-
-          {/* Verify Button */}
-          {provider.mda_verified && <VerifyButton provider={provider} />}
-
-          {/* Manual verification instructions */}
           <div className="pt-2 border-t border-border-dim/50">
-            <p className="text-[10px] text-text-tertiary leading-relaxed">
-              To independently verify: download the MDA cert chain, decode from base64 to DER,
-              and verify against{" "}
-              <a
-                href="https://www.apple.com/certificateauthority/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent-purple hover:underline inline-flex items-center gap-0.5"
-              >
-                Apple&apos;s Enterprise Attestation Root CA
-                <ExternalLink size={9} />
+            <p className="text-xs text-text-tertiary leading-relaxed">
+              Verify independently via{" "}
+              <a href="https://www.apple.com/certificateauthority/" target="_blank" rel="noopener noreferrer"
+                className="text-accent-brand hover:underline inline-flex items-center gap-0.5">
+                Apple&apos;s Root CA <ExternalLink size={10} />
               </a>
             </p>
           </div>
@@ -368,7 +214,8 @@ function ProviderCard({ provider }: { provider: Provider }) {
 }
 
 export default function ProvidersPage() {
-  const [data, setData] = useState<AttestationData | null>(null);
+  const { walletAddress } = useAuth();
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -378,7 +225,7 @@ export default function ProvidersPage() {
         const res = await fetch(`${ATTESTATION_API}/v1/providers/attestation`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        setData(json);
+        setProviders(json.providers || []);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -392,71 +239,115 @@ export default function ProvidersPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 size={24} className="animate-spin text-accent-purple" />
+      <div className="flex items-center justify-center h-64">
+        <Loader2 size={24} className="animate-spin text-accent-brand" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
+      <div className="max-w-5xl mx-auto p-6">
         <p className="text-accent-red text-sm">Failed to load providers: {error}</p>
       </div>
     );
   }
 
-  const providers = data?.providers || [];
+  // Check if user is a provider
+  const myProvider = walletAddress
+    ? providers.find((p) => p.wallet_address === walletAddress)
+    : null;
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-text-primary">Network Providers</h1>
-        <p className="text-sm text-text-tertiary mt-1">
-          {providers.length} provider{providers.length !== 1 ? "s" : ""} online ·
-          Hardware attested by Apple&apos;s Enterprise Attestation Root CA
-        </p>
-      </div>
-
-      {/* Summary bar */}
-      <div className="grid grid-cols-4 gap-3">
-        <div className="rounded-lg border border-border-dim bg-bg-secondary p-3">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Providers</p>
-          <p className="text-lg font-bold text-text-primary">{providers.length}</p>
-        </div>
-        <div className="rounded-lg border border-border-dim bg-bg-secondary p-3">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Hardware Trust</p>
-          <p className="text-lg font-bold text-accent-green">
-            {providers.filter((p) => p.trust_level === "hardware").length}/{providers.length}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border-dim bg-bg-secondary p-3">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Apple MDA</p>
-          <p className="text-lg font-bold text-accent-green">
-            {providers.filter((p) => p.mda_verified).length}/{providers.length}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border-dim bg-bg-secondary p-3">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">Total Memory</p>
-          <p className="text-lg font-bold text-text-primary">
-            {providers.reduce((sum, p) => sum + (p.memory_gb || 0), 0)} GB
-          </p>
-        </div>
-      </div>
-
-      {/* Provider cards */}
-      <div className="space-y-4">
-        {providers.map((p) => (
-          <ProviderCard key={p.provider_id} provider={p} />
-        ))}
-      </div>
-
-      {providers.length === 0 && (
-        <div className="text-center py-12 text-text-tertiary">
-          <Server size={32} className="mx-auto mb-3 opacity-50" />
-          <p className="text-sm">No providers online</p>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {/* My provider dashboard */}
+      {myProvider && (
+        <div className="rounded-xl bg-accent-brand/5 shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-text-primary mb-3">Your Provider Node</h2>
+          <div className="grid grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-text-tertiary mb-1">Hardware</p>
+              <p className="text-sm font-semibold text-text-primary">{myProvider.chip_name}</p>
+            </div>
+            <div>
+              <p className="text-xs text-text-tertiary mb-1">Status</p>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-accent-green" />
+                <p className="text-sm font-semibold text-text-primary capitalize">{myProvider.status || "online"}</p>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-text-tertiary mb-1">Memory</p>
+              <p className="text-sm font-semibold text-text-primary">{myProvider.memory_gb} GB</p>
+            </div>
+            <div>
+              <p className="text-xs text-text-tertiary mb-1">Trust</p>
+              <TrustBadge level={myProvider.trust_level} mdaVerified={myProvider.mda_verified} />
+            </div>
+          </div>
+          <Link
+            href="/providers/earnings"
+            className="inline-flex items-center gap-1.5 mt-4 text-sm text-accent-brand font-medium hover:underline"
+          >
+            View Earnings <ArrowRight size={14} />
+          </Link>
         </div>
       )}
+
+      {/* Network overview */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">Network Providers</h2>
+            <p className="text-sm text-text-tertiary mt-0.5">
+              {providers.length} provider{providers.length !== 1 ? "s" : ""} online
+            </p>
+          </div>
+          {!myProvider && (
+            <Link
+              href="/providers/setup"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent-brand text-white text-sm font-medium hover:bg-accent-brand-hover transition-colors"
+            >
+              Become a Provider <ArrowRight size={14} />
+            </Link>
+          )}
+        </div>
+
+        {/* Summary stats */}
+        <div className="grid grid-cols-4 gap-3 mb-6">
+          {[
+            { label: "Providers", value: providers.length },
+            { label: "Hardware Trust", value: `${providers.filter((p) => p.trust_level === "hardware").length}/${providers.length}` },
+            { label: "Apple MDA", value: `${providers.filter((p) => p.mda_verified).length}/${providers.length}` },
+            { label: "Total Memory", value: `${providers.reduce((s, p) => s + (p.memory_gb || 0), 0)} GB` },
+          ].map(({ label, value }) => (
+            <div key={label} className="rounded-xl bg-bg-secondary shadow-sm p-4">
+              <p className="text-xs text-text-tertiary mb-1">{label}</p>
+              <p className="text-xl font-bold text-text-primary">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Provider cards */}
+        <div className="space-y-4">
+          {providers.map((p) => (
+            <ProviderCard key={p.provider_id} provider={p} />
+          ))}
+        </div>
+
+        {providers.length === 0 && (
+          <div className="text-center py-16 text-text-tertiary">
+            <Server size={32} className="mx-auto mb-3 opacity-50" />
+            <p className="text-sm">No providers online</p>
+            <Link
+              href="/providers/setup"
+              className="inline-flex items-center gap-1.5 mt-3 text-sm text-accent-brand font-medium hover:underline"
+            >
+              Learn how to become a provider <ArrowRight size={14} />
+            </Link>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

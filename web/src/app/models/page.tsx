@@ -24,7 +24,7 @@ function TrustIndicator({ level }: { level?: string }) {
       return (
         <div className="flex items-center gap-1 text-accent-green">
           <ShieldCheck size={12} />
-          <span className="text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-xs font-mono uppercase tracking-wider">
             Hardware
           </span>
         </div>
@@ -33,7 +33,7 @@ function TrustIndicator({ level }: { level?: string }) {
       return (
         <div className="flex items-center gap-1 text-accent-amber">
           <Shield size={12} />
-          <span className="text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-xs font-mono uppercase tracking-wider">
             Self-Signed
           </span>
         </div>
@@ -42,7 +42,7 @@ function TrustIndicator({ level }: { level?: string }) {
       return (
         <div className="flex items-center gap-1 text-text-tertiary">
           <Shield size={12} />
-          <span className="text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-xs font-mono uppercase tracking-wider">
             None
           </span>
         </div>
@@ -74,7 +74,7 @@ export default function ModelsPage() {
               Available Models
             </h2>
             <p className="text-sm text-text-tertiary">
-              Models served by hardware-attested providers on the DGInf network.
+              Models served by hardware-attested providers on the EigenInference network.
             </p>
           </div>
 
@@ -105,20 +105,20 @@ export default function ModelsPage() {
                 return (
                   <div
                     key={model.id}
-                    className="group rounded-xl border border-border-dim bg-bg-secondary p-5 hover:border-accent-purple/30 hover:bg-bg-tertiary transition-all"
+                    className="group rounded-xl shadow-sm bg-bg-secondary p-5 hover:border-accent-brand/30 hover:bg-bg-tertiary transition-all"
                   >
                     {/* Header */}
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-accent-purple/10 border border-accent-purple/20 flex items-center justify-center">
-                          <Cpu size={14} className="text-accent-purple" />
+                        <div className="w-8 h-8 rounded-lg bg-accent-brand/10 border border-accent-brand/20 flex items-center justify-center">
+                          <Cpu size={14} className="text-accent-brand" />
                         </div>
                         <div>
                           <h3 className="text-sm font-medium text-text-primary leading-tight">
                             {name}
                           </h3>
                           {org && (
-                            <p className="text-[10px] font-mono text-text-tertiary">
+                            <p className="text-xs font-mono text-text-tertiary">
                               {org}
                             </p>
                           )}
@@ -130,17 +130,17 @@ export default function ModelsPage() {
                     {/* Metadata pills */}
                     <div className="flex flex-wrap gap-1.5 mb-4">
                       {model.model_type && (
-                        <span className="px-2 py-0.5 rounded bg-bg-elevated text-[10px] font-mono text-text-tertiary border border-border-dim">
+                        <span className="px-2 py-0.5 rounded bg-bg-elevated text-xs font-mono text-text-tertiary shadow-sm">
                           {model.model_type}
                         </span>
                       )}
                       {model.quantization && (
-                        <span className="px-2 py-0.5 rounded bg-accent-green-dim/30 text-[10px] font-mono text-accent-green border border-accent-green/20">
+                        <span className="px-2 py-0.5 rounded bg-accent-green-dim/30 text-xs font-mono text-accent-green border border-accent-green/20">
                           {model.quantization}
                         </span>
                       )}
                       {model.size_bytes && (
-                        <span className="px-2 py-0.5 rounded bg-bg-elevated text-[10px] font-mono text-text-tertiary border border-border-dim">
+                        <span className="px-2 py-0.5 rounded bg-bg-elevated text-xs font-mono text-text-tertiary shadow-sm">
                           {formatBytes(model.size_bytes)}
                         </span>
                       )}
@@ -150,7 +150,7 @@ export default function ModelsPage() {
                     <div className="flex items-center justify-between pt-3 border-t border-border-dim">
                       <div className="flex items-center gap-1 text-text-tertiary">
                         <Users size={11} />
-                        <span className="text-[10px] font-mono">
+                        <span className="text-xs font-mono">
                           {model.provider_count ?? 0} provider
                           {(model.provider_count ?? 0) !== 1 ? "s" : ""}
                         </span>
@@ -158,7 +158,7 @@ export default function ModelsPage() {
                       {model.attested && (
                         <div className="flex items-center gap-1">
                           <HardDrive size={10} className="text-accent-green" />
-                          <span className="text-[10px] font-mono text-accent-green">
+                          <span className="text-xs font-mono text-accent-green">
                             Attested
                           </span>
                         </div>

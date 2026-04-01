@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { PrivyClientProvider } from "@/components/providers/PrivyClientProvider";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
@@ -16,7 +18,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DGInf — Decentralized Private Inference",
+  title: "EigenInference — Eigen Labs Research Project",
   description:
     "Private AI inference through hardware-attested Apple Silicon providers. Your prompts stay encrypted, your data stays yours.",
   icons: {
@@ -30,11 +32,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${dmSans.variable} ${jetbrains.variable} font-sans antialiased`}
+        className={`${inter.variable} ${jetbrains.variable} font-sans antialiased`}
       >
-        <AppShell>{children}</AppShell>
+        <ThemeProvider>
+          <PrivyClientProvider>
+            <AppShell>{children}</AppShell>
+          </PrivyClientProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

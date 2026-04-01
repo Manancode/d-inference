@@ -75,7 +75,7 @@ export default function BillingPage() {
       addToast(`Failed to load billing data: ${(e as Error).message}`);
     }
     setLoading(false);
-  }, []);
+  }, [addToast]);
 
   useEffect(() => {
     loadData();
@@ -128,7 +128,7 @@ export default function BillingPage() {
           {/* Balance Card */}
           <div className="relative overflow-hidden rounded-2xl border border-border-subtle bg-bg-secondary p-8">
             {/* Decorative gradient */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-accent-purple/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+            <div className="absolute top-0 right-0 w-64 h-64 bg-accent-brand/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
 
             <div className="relative">
               <p className="text-xs font-mono text-text-tertiary uppercase tracking-widest mb-2">
@@ -176,7 +176,7 @@ export default function BillingPage() {
                 icon: DollarSign,
                 label: "Total Spent",
                 value: `$${(totalSpent / 1_000_000).toFixed(4)}`,
-                color: "text-accent-purple",
+                color: "text-accent-brand",
               },
               {
                 icon: TrendingUp,
@@ -193,11 +193,11 @@ export default function BillingPage() {
             ].map(({ icon: Icon, label, value, color }) => (
               <div
                 key={label}
-                className="rounded-xl border border-border-dim bg-bg-secondary p-4"
+                className="rounded-xl bg-bg-secondary p-4 shadow-sm"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <Icon size={13} className={color} />
-                  <span className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
+                  <span className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
                     {label}
                   </span>
                 </div>
@@ -212,8 +212,8 @@ export default function BillingPage() {
           <UsageChart usage={usage} />
 
           {/* Usage Table */}
-          <div className="rounded-xl border border-border-dim bg-bg-secondary overflow-hidden">
-            <div className="px-5 py-4 border-b border-border-dim flex items-center gap-2">
+          <div className="rounded-xl bg-bg-secondary overflow-hidden shadow-sm">
+            <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-2">
               <Clock size={14} className="text-text-tertiary" />
               <h3 className="text-sm font-medium text-text-primary">
                 Usage History
@@ -228,7 +228,7 @@ export default function BillingPage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-border-dim">
+                    <tr className="border-b border-border-subtle">
                       {[
                         { key: "timestamp", label: "Time" },
                         { key: "model", label: "Model" },
@@ -246,7 +246,7 @@ export default function BillingPage() {
                               }
                             }
                           }}
-                          className={`px-5 py-3 text-left text-[10px] font-mono text-text-tertiary uppercase tracking-wider ${
+                          className={`px-5 py-3 text-left text-xs font-mono text-text-tertiary uppercase tracking-wider ${
                             key === "timestamp" || key === "cost_micro_usd"
                               ? "cursor-pointer hover:text-text-secondary"
                               : ""
@@ -262,13 +262,13 @@ export default function BillingPage() {
                     {sortedUsage.map((entry) => (
                       <tr
                         key={entry.request_id}
-                        className="border-b border-border-dim/50 hover:bg-bg-hover/50 transition-colors"
+                        className="border-b border-border-subtle/50 hover:bg-bg-hover/50 transition-colors"
                       >
                         <td className="px-5 py-3 font-mono text-xs text-text-secondary">
                           {new Date(entry.timestamp).toLocaleString()}
                         </td>
                         <td className="px-5 py-3">
-                          <span className="font-mono text-xs text-accent-purple">
+                          <span className="font-mono text-xs text-accent-brand">
                             {entry.model.split("/").pop()}
                           </span>
                         </td>
@@ -316,7 +316,7 @@ export default function BillingPage() {
               <button
                 key={amt}
                 onClick={() => setDepositAmount(String(amt))}
-                className="flex-1 py-2 rounded-lg bg-bg-tertiary border border-border-dim text-text-secondary text-sm font-mono hover:border-accent-green/30 hover:text-accent-green transition-colors"
+                className="flex-1 py-2 rounded-lg bg-bg-tertiary border border-border-subtle text-text-secondary text-sm font-mono hover:border-accent-green/30 hover:text-accent-green transition-colors"
               >
                 ${amt}
               </button>
@@ -347,7 +347,7 @@ export default function BillingPage() {
             value={withdrawAmount}
             onChange={(e) => setWithdrawAmount(e.target.value)}
             placeholder="0.00"
-            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono mb-4 outline-none focus:border-accent-purple/50 transition-colors"
+            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono mb-4 outline-none focus:border-accent-brand/50 transition-colors"
           />
           <label className="block text-xs font-mono text-text-tertiary uppercase tracking-wider mb-2">
             Wallet Address
@@ -357,12 +357,12 @@ export default function BillingPage() {
             value={walletAddr}
             onChange={(e) => setWalletAddr(e.target.value)}
             placeholder="0x..."
-            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono text-sm mb-4 outline-none focus:border-accent-purple/50 transition-colors"
+            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono text-sm mb-4 outline-none focus:border-accent-brand/50 transition-colors"
           />
           <button
             onClick={handleWithdraw}
             disabled={actionLoading || !withdrawAmount || !walletAddr}
-            className="w-full py-3 rounded-lg bg-accent-purple text-white font-medium text-sm hover:bg-accent-purple/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-lg bg-accent-brand text-white font-medium text-sm hover:bg-accent-brand/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
           >
             {actionLoading && <Loader2 size={14} className="animate-spin" />}
             Confirm Withdrawal
