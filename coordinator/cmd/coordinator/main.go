@@ -307,6 +307,12 @@ func seedModelCatalog(st store.Store, logger *slog.Logger) {
 		// Small hardware serves specialized models that are genuinely best-in-class.
 		{ID: "CohereLabs/cohere-transcribe-03-2026", S3Name: "cohere-transcribe-03-2026", DisplayName: "Cohere Transcribe", ModelType: "transcription", SizeGB: 4.2, Architecture: "2B conformer", Description: "Best-in-class STT, 27% better than Whisper", MinRAMGB: 8, Active: true},
 
+		// --- Image generation (Draw Things + Metal FlashAttention) ---
+		// Small machines serve image gen — fits perfectly in 8-16 GB.
+		// Uses Draw Things gRPCServerCLI backend for 43-120% faster generation.
+		{ID: "flux_2_klein_4b_q8p.ckpt", S3Name: "flux-klein-4b-q8", DisplayName: "FLUX.2 Klein 4B", ModelType: "image", SizeGB: 8.1, Architecture: "4B diffusion", Description: "Fast image gen", MinRAMGB: 16, Active: true},
+		{ID: "flux_2_klein_9b_q8p.ckpt", S3Name: "flux-klein-9b-q8", DisplayName: "FLUX.2 Klein 9B", ModelType: "image", SizeGB: 13.0, Architecture: "9B diffusion", Description: "Higher quality image gen", MinRAMGB: 24, Active: true},
+
 		// --- Text generation (8-bit quantization) ---
 		// Quality floor: only models that produce output worth paying for.
 		{ID: "mlx-community/Qwen3.5-9B-MLX-8bit", S3Name: "Qwen3.5-9B-MLX-8bit", DisplayName: "Qwen3.5 9B", ModelType: "text", SizeGB: 9.0, Architecture: "9B dense", Description: "Balanced", MinRAMGB: 16, Active: true},
