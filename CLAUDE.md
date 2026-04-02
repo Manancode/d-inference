@@ -142,3 +142,19 @@ scp -i ~/.ssh/dginf-infra /tmp/dginf-bundle/dginf-bundle-macos-arm64.tar.gz \
 - The `python` feature flag in the provider Cargo.toml links PyO3. Use `--no-default-features` when building for distribution to avoid Python linking issues.
 - The coordinator uses in-memory store by default. Provider state is lost on restart. Postgres store exists but is not used in production yet.
 - Binary files like `coordinator/dginf-coordinator` and `coordinator/dginf-coordinator-linux` should NOT be committed to git (15MB+ each).
+
+## Formatting
+
+A pre-commit hook in `.githooks/pre-commit` checks formatting on staged files only. It is enabled via `git config core.hooksPath .githooks` (already set for this repo).
+
+| Component | Check | Manual fix |
+|-----------|-------|------------|
+| Go (coordinator/) | `gofmt -l` | `gofmt -w <file>` |
+| Rust (provider/) | `cargo fmt --check` | `cd provider && cargo fmt` |
+| TypeScript (web/) | `npx next lint` | `cd web && npx next lint --fix` |
+| Swift (app/, enclave/) | skipped | no enforced formatter |
+
+If you clone fresh, activate the hook with:
+```bash
+git config core.hooksPath .githooks
+```

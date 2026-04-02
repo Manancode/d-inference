@@ -197,6 +197,57 @@ pub async fn check_health(base_url: &str) -> bool {
     }
 }
 
+/// Check if the backend has fully loaded its model into GPU memory.
+/// Returns true only when the /health endpoint reports model_loaded: true.
+pub async fn check_model_loaded(base_url: &str) -> bool {
+    let url = format!("{base_url}/health");
+    let client = health_client();
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                body.get("model_loaded")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            } else {
+                // If we can't parse the body, fall back to status-only check
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Send a minimal warmup request to prime the model's GPU caches.
+/// This avoids the 30-50s first-token penalty on real user requests.
+pub async fn warmup_backend(base_url: &str) -> bool {
+    let url = format!("{base_url}/v1/chat/completions");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_default();
+
+    let body = serde_json::json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+        "stream": false,
+    });
+
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("Backend warmup complete — GPU caches primed");
+            true
+        }
+        Ok(resp) => {
+            tracing::warn!("Backend warmup got status {}", resp.status());
+            false
+        }
+        Err(e) => {
+            tracing::warn!("Backend warmup request failed: {e}");
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

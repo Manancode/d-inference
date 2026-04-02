@@ -33,7 +33,7 @@ enum ModelCatalog {
         Entry(id: "flux_2_klein_9b_q8p.ckpt", name: "FLUX.2 Klein 9B", modelType: "image", sizeGB: 13.0, architecture: "9B diffusion", description: "Higher quality image gen", minRAMGB: 24),
 
         // Text generation
-        Entry(id: "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only", name: "Qwen3.5 27B Claude Opus", modelType: "text", sizeGB: 27.0, architecture: "27B dense, Claude Opus distilled", description: "Frontier quality reasoning", minRAMGB: 36),
+        Entry(id: "qwen3.5-27b-claude-opus-8bit", name: "Qwen3.5 27B Claude Opus", modelType: "text", sizeGB: 27.0, architecture: "27B dense, Claude Opus distilled", description: "Frontier quality reasoning", minRAMGB: 36),
         Entry(id: "mlx-community/Trinity-Mini-8bit", name: "Trinity Mini", modelType: "text", sizeGB: 26.0, architecture: "27B Adaptive MoE", description: "Fast agentic inference", minRAMGB: 48),
         Entry(id: "mlx-community/Qwen3.5-122B-A10B-8bit", name: "Qwen3.5 122B", modelType: "text", sizeGB: 122.0, architecture: "122B MoE, 10B active", description: "Best quality", minRAMGB: 128),
         Entry(id: "mlx-community/MiniMax-M2.5-8bit", name: "MiniMax M2.5", modelType: "text", sizeGB: 243.0, architecture: "239B MoE, 11B active", description: "SOTA coding, 100 tok/s", minRAMGB: 256),

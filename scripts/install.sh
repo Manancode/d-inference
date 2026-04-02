@@ -271,9 +271,9 @@ else
         echo ""
         echo "  Model downloaded ✓"
     else
-        # Fallback: try individual files from S3 (public, no auth)
-        echo "  Tarball not available, downloading files from S3..."
-        S3_HTTP="https://dginf-models.s3.amazonaws.com/$S3_NAME"
+        # Fallback: try individual files from R2 (public, no auth, zero egress)
+        echo "  Tarball not available, downloading files from R2..."
+        S3_HTTP="https://9e92221750c162ade0f2730f63f4963d.r2.cloudflarestorage.com/d-inf-models/$S3_NAME"
         FAILED=false
         for f in config.json tokenizer.json tokenizer_config.json special_tokens_map.json; do
             curl -fsSL "$S3_HTTP/$f" -o "$CACHE_DIR/$f" 2>/dev/null || true

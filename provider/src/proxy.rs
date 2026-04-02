@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::coordinator::AtomicProviderStats;
 use crate::crypto::NodeKeyPair;
 use crate::protocol::{
     ImageGenerationRequestBody, ImageGenerationUsage, ProviderMessage,
@@ -42,6 +43,7 @@ pub async fn handle_inference_request(
     outbound_tx: mpsc::Sender<ProviderMessage>,
     _node_keypair: Option<Arc<NodeKeyPair>>,
     cancel_token: CancellationToken,
+    stats: Option<Arc<AtomicProviderStats>>,
 ) {
     // Pre-request SIP check: verify SIP is still enabled before processing
     // any consumer data. SIP can't be disabled at runtime (requires reboot),
@@ -61,9 +63,9 @@ pub async fn handle_inference_request(
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let result = if is_streaming {
-        handle_streaming_request(&request_id, &body, &backend_url, &outbound_tx, &cancel_token).await
+        handle_streaming_request(&request_id, &body, &backend_url, &outbound_tx, &cancel_token, &stats).await
     } else {
-        handle_non_streaming_request(&request_id, &body, &backend_url, &outbound_tx, &cancel_token).await
+        handle_non_streaming_request(&request_id, &body, &backend_url, &outbound_tx, &cancel_token, &stats).await
     };
 
     if let Err(e) = result {
@@ -100,6 +102,7 @@ async fn handle_non_streaming_request(
     backend_url: &str,
     outbound_tx: &mpsc::Sender<ProviderMessage>,
     cancel_token: &CancellationToken,
+    stats: &Option<Arc<AtomicProviderStats>>,
 ) -> Result<()> {
     let url = format!("{backend_url}/v1/chat/completions");
     let client = reqwest::Client::new();
@@ -138,6 +141,7 @@ async fn handle_non_streaming_request(
 
     // Extract token usage info for billing
     let usage = extract_usage(&response_json);
+    let completion_tokens = usage.completion_tokens;
 
     // Sign the actual response content with the Secure Enclave key
     let content = response_json
@@ -161,6 +165,13 @@ async fn handle_non_streaming_request(
         })
         .await
         .ok();
+
+    // Increment shared stats counters for heartbeat reporting.
+    if let Some(s) = stats {
+        use std::sync::atomic::Ordering;
+        s.requests_served.fetch_add(1, Ordering::Relaxed);
+        s.tokens_generated.fetch_add(completion_tokens, Ordering::Relaxed);
+    }
 
     // Wipe response data from memory — contains consumer's inference output.
     if let Ok(mut resp_bytes) = serde_json::to_vec(&response_json) {
@@ -186,6 +197,7 @@ async fn handle_streaming_request(
     backend_url: &str,
     outbound_tx: &mpsc::Sender<ProviderMessage>,
     cancel_token: &CancellationToken,
+    stats: &Option<Arc<AtomicProviderStats>>,
 ) -> Result<()> {
     let url = format!("{backend_url}/v1/chat/completions");
     let client = reqwest::Client::new();
@@ -270,6 +282,12 @@ async fn handle_streaming_request(
                         })
                         .await
                         .ok();
+                    // Increment shared stats counters for heartbeat reporting.
+                    if let Some(s) = stats {
+                        use std::sync::atomic::Ordering;
+                        s.requests_served.fetch_add(1, Ordering::Relaxed);
+                        s.tokens_generated.fetch_add(total_completion_tokens, Ordering::Relaxed);
+                    }
                     return Ok(());
                 }
 
@@ -339,6 +357,13 @@ async fn handle_streaming_request(
         })
         .await
         .ok();
+
+    // Increment shared stats counters for heartbeat reporting.
+    if let Some(s) = stats {
+        use std::sync::atomic::Ordering;
+        s.requests_served.fetch_add(1, Ordering::Relaxed);
+        s.tokens_generated.fetch_add(total_completion_tokens, Ordering::Relaxed);
+    }
 
     Ok(())
 }
@@ -870,6 +895,7 @@ mod tests {
             tx,
             None,
             CancellationToken::new(),
+            None,
         )
         .await;
 
@@ -910,6 +936,7 @@ mod tests {
             tx,
             None,
             CancellationToken::new(),
+            None,
         )
         .await;
 
@@ -977,6 +1004,7 @@ mod tests {
             tx,
             None,
             CancellationToken::new(),
+            None,
         )
         .await;
 
@@ -1059,6 +1087,7 @@ mod tests {
                 tx,
                 None,
                 token_clone,
+                None,
             )
             .await;
         });
