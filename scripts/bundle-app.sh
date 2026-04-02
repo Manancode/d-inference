@@ -112,6 +112,8 @@ cat > "$ENTITLEMENTS" << 'ENT'
 <plist version="1.0">
 <dict>
     <!-- NO get-task-allow → blocks debugger attachment under Hardened Runtime -->
+    <key>com.apple.security.hypervisor</key>
+    <true/>
     <key>com.apple.security.network.client</key>
     <true/>
     <key>com.apple.security.network.server</key>
