@@ -64,7 +64,7 @@ fn fallback_catalog() -> Vec<CatalogModel> {
         CatalogModel { id: "CohereLabs/cohere-transcribe-03-2026".into(), s3_name: "cohere-transcribe-03-2026".into(), display_name: "Cohere Transcribe".into(), model_type: "transcription".into(), size_gb: 4.2, architecture: "2B conformer".into(), description: "Best-in-class STT".into(), min_ram_gb: 8 },
         CatalogModel { id: "flux_2_klein_4b_q8p.ckpt".into(), s3_name: "flux-klein-4b-q8".into(), display_name: "FLUX.2 Klein 4B".into(), model_type: "image".into(), size_gb: 8.1, architecture: "4B diffusion".into(), description: "Fast image gen".into(), min_ram_gb: 16 },
         CatalogModel { id: "flux_2_klein_9b_q8p.ckpt".into(), s3_name: "flux-klein-9b-q8".into(), display_name: "FLUX.2 Klein 9B".into(), model_type: "image".into(), size_gb: 13.0, architecture: "9B diffusion".into(), description: "Higher quality image gen".into(), min_ram_gb: 24 },
-        CatalogModel { id: "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only".into(), s3_name: "qwen3.5-27b-claude-opus-8bit-text-only".into(), display_name: "Qwen3.5 27B Claude Opus".into(), model_type: "text".into(), size_gb: 27.0, architecture: "27B dense, Claude Opus distilled".into(), description: "Frontier quality reasoning".into(), min_ram_gb: 36 },
+        CatalogModel { id: "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only".into(), s3_name: "qwen35-27b-claude-opus-8bit".into(), display_name: "Qwen3.5 27B Claude Opus".into(), model_type: "text".into(), size_gb: 27.0, architecture: "27B dense, Claude Opus distilled".into(), description: "Frontier quality reasoning".into(), min_ram_gb: 36 },
         CatalogModel { id: "mlx-community/Trinity-Mini-8bit".into(), s3_name: "Trinity-Mini-8bit".into(), display_name: "Trinity Mini".into(), model_type: "text".into(), size_gb: 26.0, architecture: "27B Adaptive MoE".into(), description: "Fast agentic inference".into(), min_ram_gb: 48 },
         CatalogModel { id: "mlx-community/Qwen3.5-122B-A10B-8bit".into(), s3_name: "Qwen3.5-122B-A10B-8bit".into(), display_name: "Qwen3.5 122B".into(), model_type: "text".into(), size_gb: 122.0, architecture: "122B MoE, 10B active".into(), description: "Best quality".into(), min_ram_gb: 128 },
         CatalogModel { id: "mlx-community/MiniMax-M2.5-8bit".into(), s3_name: "MiniMax-M2.5-8bit".into(), display_name: "MiniMax M2.5".into(), model_type: "text".into(), size_gb: 243.0, architecture: "239B MoE, 11B active".into(), description: "SOTA coding, 100 tok/s".into(), min_ram_gb: 256 },
@@ -85,6 +85,121 @@ fn get_available_disk_gb() -> f64 {
         }
     }
     0.0
+}
+
+/// Download a model from the CDN (R2) into the given cache directory.
+///
+/// Handles both single-file and sharded safetensors models by checking
+/// for `model.safetensors.index.json` and downloading each shard.
+fn download_model_from_cdn(s3_name: &str, cache_dir: &std::path::Path, display_name: &str) -> bool {
+    let base = format!("https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev/{}", s3_name);
+
+    // 1. Download config.json to verify the model exists on CDN
+    let config_ok = std::process::Command::new("curl")
+        .args(["-fsSL", &format!("{}/config.json", base),
+               "-o", &cache_dir.join("config.json").to_string_lossy()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !config_ok {
+        println!("  ⚠ {} not available on CDN", display_name);
+        return false;
+    }
+
+    // 2. Download tokenizer files
+    for f in &["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"] {
+        let _ = std::process::Command::new("curl")
+            .args(["-fsSL", &format!("{}/{}", base, f),
+                   "-o", &cache_dir.join(f).to_string_lossy()])
+            .status();
+    }
+
+    // 3. Try single weight file first
+    let single_ok = std::process::Command::new("curl")
+        .args(["-fsSL", "--head", &format!("{}/model.safetensors", base)])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if single_ok {
+        println!("  Downloading {} weights...", display_name);
+        let ok = std::process::Command::new("curl")
+            .args(["-f#L", &format!("{}/model.safetensors", base),
+                   "-o", &cache_dir.join("model.safetensors").to_string_lossy()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            println!("  ✓ {} downloaded", display_name);
+            return true;
+        }
+    }
+
+    // 4. Sharded model: download index, parse shard names, download each
+    let index_path = cache_dir.join("model.safetensors.index.json");
+    let index_ok = std::process::Command::new("curl")
+        .args(["-fsSL", &format!("{}/model.safetensors.index.json", base),
+               "-o", &index_path.to_string_lossy()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !index_ok {
+        println!("  ⚠ Could not download {} weights", display_name);
+        return false;
+    }
+
+    // Parse the index to get unique shard filenames
+    let index_data = match std::fs::read_to_string(&index_path) {
+        Ok(d) => d,
+        Err(_) => { println!("  ⚠ Could not read weight index"); return false; }
+    };
+    let index_json: serde_json::Value = match serde_json::from_str(&index_data) {
+        Ok(v) => v,
+        Err(_) => { println!("  ⚠ Could not parse weight index"); return false; }
+    };
+
+    let mut shards: Vec<String> = Vec::new();
+    if let Some(weight_map) = index_json.get("weight_map").and_then(|m| m.as_object()) {
+        for filename in weight_map.values() {
+            if let Some(f) = filename.as_str() {
+                if !shards.contains(&f.to_string()) {
+                    shards.push(f.to_string());
+                }
+            }
+        }
+    }
+    shards.sort();
+
+    if shards.is_empty() {
+        println!("  ⚠ No weight shards found in index");
+        return false;
+    }
+
+    println!("  Downloading {} ({} shards)...", display_name, shards.len());
+    let mut all_ok = true;
+    for (i, shard) in shards.iter().enumerate() {
+        println!("  [{}/{}] {}", i + 1, shards.len(), shard);
+        let ok = std::process::Command::new("curl")
+            .args(["-f#L", &format!("{}/{}", base, shard),
+                   "-o", &cache_dir.join(shard).to_string_lossy()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            println!("  ⚠ Failed to download {}", shard);
+            all_ok = false;
+            break;
+        }
+    }
+
+    if all_ok {
+        println!("  ✓ {} downloaded ({} shards)", display_name, shards.len());
+    }
+    all_ok
 }
 
 /// Fetch the model catalog from the coordinator. Falls back to hardcoded list on failure.
@@ -564,7 +679,7 @@ async fn cmd_install(
             let tarball_url = format!("{}/dl/models/{}.tar.gz", base_url, s3_name);
             let tar_status = std::process::Command::new("bash")
                 .args(["-c", &format!(
-                    "curl -f#L '{}' | tar xz -C '{}'",
+                    "set -o pipefail; curl -f#L '{}' | tar xz -C '{}'",
                     tarball_url, cache_dir.display()
                 )])
                 .status();
@@ -572,38 +687,7 @@ async fn cmd_install(
             match tar_status {
                 Ok(s) if s.success() => println!("  ✓ {} downloaded", display),
                 _ => {
-                    // Fallback: download individual files from S3
-                    println!("  Trying individual files from S3...");
-                    let s3_http = format!("https://dginf-models.s3.amazonaws.com/{}", s3_name);
-                    let config_ok = std::process::Command::new("curl")
-                        .args(["-fsSL", &format!("{}/config.json", s3_http),
-                               "-o", &cache_dir.join("config.json").to_string_lossy()])
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false);
-
-                    if config_ok {
-                        for f in &["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"] {
-                            let _ = std::process::Command::new("curl")
-                                .args(["-fsSL", &format!("{}/{}", s3_http, f),
-                                       "-o", &cache_dir.join(f).to_string_lossy()])
-                                .status();
-                        }
-                        let weight_ok = std::process::Command::new("curl")
-                            .args(["-f#L", &format!("{}/model.safetensors", s3_http),
-                                   "-o", &cache_dir.join("model.safetensors").to_string_lossy()])
-                            .status()
-                            .map(|s| s.success())
-                            .unwrap_or(false);
-
-                        if weight_ok {
-                            println!("  ✓ {} downloaded", display);
-                        } else {
-                            println!("  ⚠ Could not download {} weights. Retry with:\n    dginf-provider models download", display);
-                        }
-                    } else {
-                        println!("  ⚠ {} not available on CDN. Retry with:\n    dginf-provider models download", display);
-                    }
+                    download_model_from_cdn(s3_name, &cache_dir, display);
                 }
             }
         }
@@ -2199,11 +2283,11 @@ async fn cmd_models(action: String, coordinator_url: String) -> Result<()> {
                         .join("snapshots/main");
                     let _ = std::fs::create_dir_all(&cache_dir);
 
-                    // Try pre-packaged tarball from CDN first (no HF account needed)
+                    // Try pre-packaged tarball from CDN first
                     let tarball_url = format!("{}/dl/models/{}.tar.gz", base_url, s3_name);
                     let tar_status = std::process::Command::new("bash")
                         .args(["-c", &format!(
-                            "curl -f#L '{}' | tar xz -C '{}'",
+                            "set -o pipefail; curl -f#L '{}' | tar xz -C '{}'",
                             tarball_url, cache_dir.display()
                         )])
                         .status();
@@ -2211,30 +2295,7 @@ async fn cmd_models(action: String, coordinator_url: String) -> Result<()> {
                     match tar_status {
                         Ok(s) if s.success() => println!("  ✓ {} downloaded", cm.display_name),
                         _ => {
-                            // Fallback: individual files from S3
-                            let s3_http = format!("https://dginf-models.s3.amazonaws.com/{}", s3_name);
-                            let config_ok = std::process::Command::new("curl")
-                                .args(["-fsSL", &format!("{}/config.json", s3_http),
-                                       "-o", &cache_dir.join("config.json").to_string_lossy()])
-                                .status()
-                                .map(|s| s.success())
-                                .unwrap_or(false);
-
-                            if config_ok {
-                                for f in &["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"] {
-                                    let _ = std::process::Command::new("curl")
-                                        .args(["-fsSL", &format!("{}/{}", s3_http, f),
-                                               "-o", &cache_dir.join(f).to_string_lossy()])
-                                        .status();
-                                }
-                                let _ = std::process::Command::new("curl")
-                                    .args(["-f#L", &format!("{}/model.safetensors", s3_http),
-                                           "-o", &cache_dir.join("model.safetensors").to_string_lossy()])
-                                    .status();
-                                println!("  ✓ {} downloaded", cm.display_name);
-                            } else {
-                                println!("  ✗ {} not available on CDN", cm.display_name);
-                            }
+                            download_model_from_cdn(s3_name, &cache_dir, &cm.display_name);
                         }
                     }
                 }
