@@ -59,24 +59,25 @@ var LatestProviderVersion = "0.2.0"
 // Server is the main HTTP/WS server for the coordinator. It ties together
 // the provider registry, key store, payment ledger, billing service, and HTTP routing.
 type Server struct {
-	registry          *registry.Registry
-	store             store.Store
-	ledger            *payments.Ledger
-	billing           *billing.Service
-	logger            *slog.Logger
-	mux               *http.ServeMux
-	challengeInterval time.Duration // 0 means use DefaultChallengeInterval
+	registry               *registry.Registry
+	store                  store.Store
+	ledger                 *payments.Ledger
+	billing                *billing.Service
+	logger                 *slog.Logger
+	mux                    *http.ServeMux
+	challengeInterval      time.Duration       // 0 means use DefaultChallengeInterval
 	privyAuth              *auth.PrivyAuth     // Privy JWT authentication (nil if not configured)
 	adminEmails            map[string]bool     // emails that have admin access
-	mdmClient              *mdm.Client        // MicroMDM client for provider security verification
-	stepCARootCert         *x509.Certificate  // step-ca root CA for ACME cert verification
-	stepCAIntermediateCert *x509.Certificate  // step-ca intermediate CA
+	adminKey               string              // DGINF_ADMIN_KEY for admin endpoints
+	mdmClient              *mdm.Client         // MicroMDM client for provider security verification
+	stepCARootCert         *x509.Certificate   // step-ca root CA for ACME cert verification
+	stepCAIntermediateCert *x509.Certificate   // step-ca intermediate CA
 
 	// imageUploads stores generated images keyed by request_id.
 	// Providers upload images via HTTP POST, then send a small WebSocket
 	// completion message. The consumer handler retrieves images from here.
-	imageUploads           map[string][][]byte // request_id → list of PNG images
-	imageUploadsMu         sync.Mutex
+	imageUploads   map[string][][]byte // request_id → list of PNG images
+	imageUploadsMu sync.Mutex
 }
 
 // NewServer creates a configured Server with all routes mounted.
@@ -92,6 +93,12 @@ func NewServer(reg *registry.Registry, st store.Store, logger *slog.Logger) *Ser
 	s.routes()
 	return s
 }
+
+// SetAdminKey configures the admin API key for admin-only endpoints.
+func (s *Server) SetAdminKey(key string) {
+	s.adminKey = key
+}
+
 
 // SetStepCACerts configures the step-ca CA certificates for ACME client cert verification.
 func (s *Server) SetStepCACerts(root, intermediate *x509.Certificate) {
@@ -186,8 +193,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 
 	// Device authorization flow — providers link to user accounts.
-	s.mux.HandleFunc("POST /v1/device/code", s.handleDeviceCode)            // no auth — provider not yet authenticated
-	s.mux.HandleFunc("POST /v1/device/token", s.handleDeviceToken)          // no auth — polls with device_code secret
+	s.mux.HandleFunc("POST /v1/device/code", s.handleDeviceCode)                      // no auth — provider not yet authenticated
+	s.mux.HandleFunc("POST /v1/device/token", s.handleDeviceToken)                    // no auth — polls with device_code secret
 	s.mux.HandleFunc("POST /v1/device/approve", s.requireAuth(s.handleDeviceApprove)) // Privy auth — user approves in browser
 
 	// --- Billing endpoints (multi-chain payments + referrals) ---
@@ -203,9 +210,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/billing/wallet/balance", s.requireAuth(s.handleWalletBalance))
 
 	// Pricing — GET is public, PUT/DELETE require auth
-	s.mux.HandleFunc("GET /v1/pricing", s.handleGetPricing)                         // public
-	s.mux.HandleFunc("PUT /v1/pricing", s.requireAuth(s.handleSetPricing))          // provider sets own prices
-	s.mux.HandleFunc("DELETE /v1/pricing", s.requireAuth(s.handleDeletePricing))    // revert to default
+	s.mux.HandleFunc("GET /v1/pricing", s.handleGetPricing)                        // public
+	s.mux.HandleFunc("PUT /v1/pricing", s.requireAuth(s.handleSetPricing))         // provider sets own prices
+	s.mux.HandleFunc("DELETE /v1/pricing", s.requireAuth(s.handleDeletePricing))   // revert to default
 	s.mux.HandleFunc("PUT /v1/admin/pricing", s.requireAuth(s.handleAdminPricing)) // platform sets defaults
 
 	// Admin model catalog
@@ -224,6 +231,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/referral/apply", s.requireAuth(s.handleReferralApply))
 	s.mux.HandleFunc("GET /v1/referral/stats", s.requireAuth(s.handleReferralStats))
 	s.mux.HandleFunc("GET /v1/referral/info", s.requireAuth(s.handleReferralInfo))
+
+	// Invite codes (admin)
+	s.mux.HandleFunc("POST /v1/admin/invite-codes", s.requireAuth(s.handleAdminCreateInviteCode))
+	s.mux.HandleFunc("GET /v1/admin/invite-codes", s.requireAuth(s.handleAdminListInviteCodes))
+	s.mux.HandleFunc("DELETE /v1/admin/invite-codes", s.requireAuth(s.handleAdminDeactivateInviteCode))
+
+	// Invite code redemption (user)
+	s.mux.HandleFunc("POST /v1/invite/redeem", s.requireAuth(s.handleRedeemInviteCode))
 }
 
 // Handler returns the root http.Handler with global middleware applied.

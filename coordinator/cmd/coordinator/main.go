@@ -11,9 +11,10 @@
 // prompt content.
 //
 // Configuration (environment variables):
-//   DGINF_PORT         - HTTP listen port (default: "8080")
-//   DGINF_ADMIN_KEY    - Pre-seeded API key for bootstrapping
-//   DGINF_DATABASE_URL - PostgreSQL connection string (omit for in-memory store)
+//
+//	DGINF_PORT         - HTTP listen port (default: "8080")
+//	DGINF_ADMIN_KEY    - Pre-seeded API key for bootstrapping
+//	DGINF_DATABASE_URL - PostgreSQL connection string (omit for in-memory store)
 //
 // Graceful shutdown: The coordinator handles SIGINT/SIGTERM, stops the
 // eviction loop, and drains active connections with a 15-second deadline.
@@ -97,6 +98,7 @@ func main() {
 	}
 
 	srv := api.NewServer(reg, st, logger)
+	srv.SetAdminKey(adminKey)
 
 	// Configure billing service.
 	//
@@ -108,7 +110,7 @@ func main() {
 		// Solana — primary payment rail
 		SolanaRPCURL:             os.Getenv("DGINF_SOLANA_RPC_URL"),
 		SolanaUSDCMint:           envOr("DGINF_SOLANA_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"), // mainnet USDC
-		SolanaCoordinatorAddress: os.Getenv("DGINF_SOLANA_COORDINATOR_ADDRESS"),                                     // address that receives USDC
+		SolanaCoordinatorAddress: os.Getenv("DGINF_SOLANA_COORDINATOR_ADDRESS"),                                   // address that receives USDC
 
 		// Stripe — present but not activated day-1 (set env vars to enable)
 		StripeSecretKey:     os.Getenv("DGINF_STRIPE_SECRET_KEY"),

@@ -148,6 +148,27 @@ type Store interface {
 	// DeleteExpiredDeviceCodes removes device codes that have passed their expiry.
 	DeleteExpiredDeviceCodes() error
 
+	// --- Invite Codes ---
+
+	// CreateInviteCode stores a new invite code.
+	CreateInviteCode(code *InviteCode) error
+
+	// GetInviteCode returns an invite code by its code string.
+	GetInviteCode(code string) (*InviteCode, error)
+
+	// ListInviteCodes returns all invite codes (admin view).
+	ListInviteCodes() []InviteCode
+
+	// DeactivateInviteCode sets active=false on an invite code.
+	DeactivateInviteCode(code string) error
+
+	// RedeemInviteCode atomically increments used_count and records the redemption.
+	// Returns error if code is inactive, expired, fully used, or already redeemed by this account.
+	RedeemInviteCode(code string, accountID string) error
+
+	// HasRedeemedInviteCode checks if an account has already redeemed a specific code.
+	HasRedeemedInviteCode(code, accountID string) bool
+
 	// --- Provider Tokens (device-linked auth) ---
 
 	// CreateProviderToken stores a long-lived provider auth token linked to an account.
@@ -181,6 +202,7 @@ const (
 	LedgerWithdrawal     LedgerEntryType = "withdrawal"      // on-chain withdrawal
 	LedgerReferralReward LedgerEntryType = "referral_reward" // referrer earns share of platform fee
 	LedgerStripeDeposit  LedgerEntryType = "stripe_deposit"  // Stripe checkout deposit
+	LedgerInviteCredit   LedgerEntryType = "invite_credit"   // invite code redemption
 )
 
 // LedgerEntry is a single balance-changing event.
@@ -196,15 +218,15 @@ type LedgerEntry struct {
 
 // PaymentRecord captures a settled payment.
 type PaymentRecord struct {
-	TxHash          string    `json:"tx_hash"`
-	ConsumerAddress string    `json:"consumer_address"`
-	ProviderAddress string    `json:"provider_address"`
-	AmountUSD       string    `json:"amount_usd"`
-	Model           string    `json:"model"`
-	PromptTokens    int       `json:"prompt_tokens"`
-	CompletionTokens int      `json:"completion_tokens"`
-	Memo            string    `json:"memo"`
-	CreatedAt       time.Time `json:"created_at"`
+	TxHash           string    `json:"tx_hash"`
+	ConsumerAddress  string    `json:"consumer_address"`
+	ProviderAddress  string    `json:"provider_address"`
+	AmountUSD        string    `json:"amount_usd"`
+	Model            string    `json:"model"`
+	PromptTokens     int       `json:"prompt_tokens"`
+	CompletionTokens int       `json:"completion_tokens"`
+	Memo             string    `json:"memo"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // Referrer represents a registered referral partner.
@@ -249,15 +271,15 @@ type User struct {
 // output worth paying for — small chat models (< 7B) are not useful, but small
 // specialized models (transcription, embeddings) can be best-in-class.
 type SupportedModel struct {
-	ID           string  `json:"id"`            // HuggingFace path (e.g. "mlx-community/Qwen3.5-9B-MLX-4bit")
-	S3Name       string  `json:"s3_name"`       // CDN key for download (e.g. "Qwen3.5-9B-MLX-4bit")
-	DisplayName  string  `json:"display_name"`  // Human-readable (e.g. "Qwen3.5 9B")
-	ModelType    string  `json:"model_type"`    // "text", "transcription", "embedding", "tts", "image"
-	SizeGB       float64 `json:"size_gb"`       // Disk/memory size in GB
-	Architecture string  `json:"architecture"`  // e.g. "9B dense", "2B conformer"
-	Description  string  `json:"description"`   // e.g. "Balanced", "Best-in-class STT"
-	MinRAMGB     int     `json:"min_ram_gb"`    // Minimum system RAM for auto-selection
-	Active       bool    `json:"active"`        // Whether available for use
+	ID           string  `json:"id"`           // HuggingFace path (e.g. "mlx-community/Qwen3.5-9B-MLX-4bit")
+	S3Name       string  `json:"s3_name"`      // CDN key for download (e.g. "Qwen3.5-9B-MLX-4bit")
+	DisplayName  string  `json:"display_name"` // Human-readable (e.g. "Qwen3.5 9B")
+	ModelType    string  `json:"model_type"`   // "text", "transcription", "embedding", "tts", "image"
+	SizeGB       float64 `json:"size_gb"`      // Disk/memory size in GB
+	Architecture string  `json:"architecture"` // e.g. "9B dense", "2B conformer"
+	Description  string  `json:"description"`  // e.g. "Balanced", "Best-in-class STT"
+	MinRAMGB     int     `json:"min_ram_gb"`   // Minimum system RAM for auto-selection
+	Active       bool    `json:"active"`       // Whether available for use
 }
 
 // DeviceCode represents a pending device authorization request (RFC 8628-style).
@@ -281,16 +303,34 @@ type ProviderToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// InviteCode represents a coordinator-generated invite code that grants credits.
+type InviteCode struct {
+	Code           string     `json:"code"`
+	AmountMicroUSD int64      `json:"amount_micro_usd"`
+	MaxUses        int        `json:"max_uses"` // 0 = unlimited
+	UsedCount      int        `json:"used_count"`
+	Active         bool       `json:"active"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+}
+
+// InviteRedemption records a single redemption of an invite code.
+type InviteRedemption struct {
+	Code      string    `json:"code"`
+	AccountID string    `json:"account_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // BillingSession tracks an in-progress payment via any method (Stripe, EVM, Solana).
 type BillingSession struct {
 	ID             string     `json:"id"`
 	AccountID      string     `json:"account_id"`
 	PaymentMethod  string     `json:"payment_method"` // "stripe", "evm", "solana"
-	Chain          string     `json:"chain"`           // "ethereum", "tempo", "solana", ""
+	Chain          string     `json:"chain"`          // "ethereum", "tempo", "solana", ""
 	AmountMicroUSD int64      `json:"amount_micro_usd"`
-	ExternalID     string     `json:"external_id"`     // Stripe session ID, tx hash, etc.
-	Status         string     `json:"status"`          // "pending", "completed", "expired"
-	ReferralCode   string     `json:"referral_code"`   // optional
+	ExternalID     string     `json:"external_id"`   // Stripe session ID, tx hash, etc.
+	Status         string     `json:"status"`        // "pending", "completed", "expired"
+	ReferralCode   string     `json:"referral_code"` // optional
 	CreatedAt      time.Time  `json:"created_at"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }

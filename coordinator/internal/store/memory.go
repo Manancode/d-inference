@@ -25,13 +25,13 @@ var _ Store = (*MemoryStore)(nil)
 // MemoryStore manages API keys, usage records, payments, and balances in memory.
 type MemoryStore struct {
 	mu            sync.RWMutex
-	keys          map[string]bool    // key → valid
-	keyAccounts   map[string]string  // key → accountID (owner)
+	keys          map[string]bool   // key → valid
+	keyAccounts   map[string]string // key → accountID (owner)
 	usage         []UsageRecord
 	payments      []PaymentRecord
-	balances      map[string]int64   // accountID → micro-USD
+	balances      map[string]int64 // accountID → micro-USD
 	ledgerEntries []LedgerEntry
-	ledgerSeq     int64              // auto-increment ID
+	ledgerSeq     int64 // auto-increment ID
 
 	// Referral system
 	referrersByCode    map[string]*Referrer // code → referrer
@@ -58,30 +58,38 @@ type MemoryStore struct {
 
 	// Provider tokens
 	providerTokens map[string]*ProviderToken // tokenHash → ProviderToken
+
+	// Invite codes
+	inviteCodes        map[string]*InviteCode        // code → InviteCode
+	inviteRedemptions  map[string][]InviteRedemption // code → list of redemptions
+	accountRedemptions map[string]map[string]bool    // accountID → set of redeemed codes
 }
 
 // NewMemory creates a new MemoryStore. If adminKey is non-empty it is
 // pre-seeded as a valid API key for bootstrapping.
 func NewMemory(adminKey string) *MemoryStore {
 	s := &MemoryStore{
-		keys:               make(map[string]bool),
-		keyAccounts:        make(map[string]string),
-		usage:              make([]UsageRecord, 0),
-		payments:           make([]PaymentRecord, 0),
-		balances:           make(map[string]int64),
-		ledgerEntries:      make([]LedgerEntry, 0),
-		referrersByCode:    make(map[string]*Referrer),
-		referrersByAccount: make(map[string]*Referrer),
-		referrals:          make(map[string]string),
-		referralCounts:     make(map[string]int),
-		billingSessions:    make(map[string]*BillingSession),
-		modelPrices:      make(map[string]ModelPrice),
-		supportedModels: make(map[string]*SupportedModel),
+		keys:                  make(map[string]bool),
+		keyAccounts:           make(map[string]string),
+		usage:                 make([]UsageRecord, 0),
+		payments:              make([]PaymentRecord, 0),
+		balances:              make(map[string]int64),
+		ledgerEntries:         make([]LedgerEntry, 0),
+		referrersByCode:       make(map[string]*Referrer),
+		referrersByAccount:    make(map[string]*Referrer),
+		referrals:             make(map[string]string),
+		referralCounts:        make(map[string]int),
+		billingSessions:       make(map[string]*BillingSession),
+		modelPrices:           make(map[string]ModelPrice),
+		supportedModels:       make(map[string]*SupportedModel),
 		usersByPrivyID:        make(map[string]*User),
 		usersByAccountID:      make(map[string]*User),
 		deviceCodesByCode:     make(map[string]*DeviceCode),
 		deviceCodesByUserCode: make(map[string]*DeviceCode),
 		providerTokens:        make(map[string]*ProviderToken),
+		inviteCodes:           make(map[string]*InviteCode),
+		inviteRedemptions:     make(map[string][]InviteRedemption),
+		accountRedemptions:    make(map[string]map[string]bool),
 	}
 	if adminKey != "" {
 		s.keys[adminKey] = true
@@ -685,6 +693,99 @@ func (s *MemoryStore) RevokeProviderToken(token string) error {
 	}
 	pt.Active = false
 	return nil
+}
+
+// --- Invite Codes ---
+
+func (s *MemoryStore) CreateInviteCode(code *InviteCode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.inviteCodes[code.Code]; exists {
+		return fmt.Errorf("invite code %q already exists", code.Code)
+	}
+	cp := *code
+	s.inviteCodes[code.Code] = &cp
+	return nil
+}
+
+func (s *MemoryStore) GetInviteCode(code string) (*InviteCode, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ic, ok := s.inviteCodes[code]
+	if !ok {
+		return nil, fmt.Errorf("invite code %q not found", code)
+	}
+	cp := *ic
+	return &cp, nil
+}
+
+func (s *MemoryStore) ListInviteCodes() []InviteCode {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	codes := make([]InviteCode, 0, len(s.inviteCodes))
+	for _, ic := range s.inviteCodes {
+		codes = append(codes, *ic)
+	}
+	return codes
+}
+
+func (s *MemoryStore) DeactivateInviteCode(code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ic, ok := s.inviteCodes[code]
+	if !ok {
+		return fmt.Errorf("invite code %q not found", code)
+	}
+	ic.Active = false
+	return nil
+}
+
+func (s *MemoryStore) RedeemInviteCode(code string, accountID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ic, ok := s.inviteCodes[code]
+	if !ok {
+		return fmt.Errorf("invite code %q not found", code)
+	}
+	if !ic.Active {
+		return fmt.Errorf("invite code %q is inactive", code)
+	}
+	if ic.ExpiresAt != nil && time.Now().After(*ic.ExpiresAt) {
+		return fmt.Errorf("invite code %q has expired", code)
+	}
+	if ic.MaxUses > 0 && ic.UsedCount >= ic.MaxUses {
+		return fmt.Errorf("invite code %q has reached max uses", code)
+	}
+	if acctCodes, ok := s.accountRedemptions[accountID]; ok && acctCodes[code] {
+		return fmt.Errorf("account has already redeemed code %q", code)
+	}
+
+	ic.UsedCount++
+	s.inviteRedemptions[code] = append(s.inviteRedemptions[code], InviteRedemption{
+		Code:      code,
+		AccountID: accountID,
+		CreatedAt: time.Now(),
+	})
+	if s.accountRedemptions[accountID] == nil {
+		s.accountRedemptions[accountID] = make(map[string]bool)
+	}
+	s.accountRedemptions[accountID][code] = true
+	return nil
+}
+
+func (s *MemoryStore) HasRedeemedInviteCode(code, accountID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if acctCodes, ok := s.accountRedemptions[accountID]; ok {
+		return acctCodes[code]
+	}
+	return false
 }
 
 // sha256Hex returns the hex-encoded SHA-256 digest of s.
