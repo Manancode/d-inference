@@ -35,6 +35,7 @@ mod protocol;
 mod proxy;
 mod security;
 mod server;
+mod service;
 mod wallet;
 
 use anyhow::Result;
@@ -61,11 +62,29 @@ fn default_model_type() -> String { "text".into() }
 fn fallback_catalog() -> Vec<CatalogModel> {
     vec![
         CatalogModel { id: "CohereLabs/cohere-transcribe-03-2026".into(), s3_name: "cohere-transcribe-03-2026".into(), display_name: "Cohere Transcribe".into(), model_type: "transcription".into(), size_gb: 4.2, architecture: "2B conformer".into(), description: "Best-in-class STT".into(), min_ram_gb: 8 },
-        CatalogModel { id: "mlx-community/Qwen3.5-9B-MLX-8bit".into(), s3_name: "Qwen3.5-9B-MLX-8bit".into(), display_name: "Qwen3.5 9B".into(), model_type: "text".into(), size_gb: 9.0, architecture: "9B dense".into(), description: "Balanced".into(), min_ram_gb: 16 },
-        CatalogModel { id: "mlx-community/Qwen3.5-14B-Instruct-8bit".into(), s3_name: "Qwen3.5-14B-Instruct-8bit".into(), display_name: "Qwen3.5 14B".into(), model_type: "text".into(), size_gb: 14.0, architecture: "14B dense".into(), description: "High quality".into(), min_ram_gb: 24 },
-        CatalogModel { id: "mlx-community/Qwen3.5-35B-A3B-8bit".into(), s3_name: "Qwen3.5-35B-A3B-8bit".into(), display_name: "Qwen3.5 35B-A3B".into(), model_type: "text".into(), size_gb: 35.0, architecture: "35B MoE, 3B active".into(), description: "Frontier quality, fast inference".into(), min_ram_gb: 36 },
-        CatalogModel { id: "mlx-community/Qwen3.5-32B-Instruct-8bit".into(), s3_name: "Qwen3.5-32B-Instruct-8bit".into(), display_name: "Qwen3.5 32B".into(), model_type: "text".into(), size_gb: 32.0, architecture: "32B dense".into(), description: "Premium".into(), min_ram_gb: 48 },
+        CatalogModel { id: "flux_2_klein_4b_q8p.ckpt".into(), s3_name: "flux-klein-4b-q8".into(), display_name: "FLUX.2 Klein 4B".into(), model_type: "image".into(), size_gb: 8.1, architecture: "4B diffusion".into(), description: "Fast image gen".into(), min_ram_gb: 16 },
+        CatalogModel { id: "flux_2_klein_9b_q8p.ckpt".into(), s3_name: "flux-klein-9b-q8".into(), display_name: "FLUX.2 Klein 9B".into(), model_type: "image".into(), size_gb: 13.0, architecture: "9B diffusion".into(), description: "Higher quality image gen".into(), min_ram_gb: 24 },
+        CatalogModel { id: "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only".into(), s3_name: "qwen3.5-27b-claude-opus-8bit-text-only".into(), display_name: "Qwen3.5 27B Claude Opus".into(), model_type: "text".into(), size_gb: 27.0, architecture: "27B dense, Claude Opus distilled".into(), description: "Frontier quality reasoning".into(), min_ram_gb: 36 },
+        CatalogModel { id: "mlx-community/Trinity-Mini-8bit".into(), s3_name: "Trinity-Mini-8bit".into(), display_name: "Trinity Mini".into(), model_type: "text".into(), size_gb: 26.0, architecture: "27B Adaptive MoE".into(), description: "Fast agentic inference".into(), min_ram_gb: 48 },
+        CatalogModel { id: "mlx-community/Qwen3.5-122B-A10B-8bit".into(), s3_name: "Qwen3.5-122B-A10B-8bit".into(), display_name: "Qwen3.5 122B".into(), model_type: "text".into(), size_gb: 122.0, architecture: "122B MoE, 10B active".into(), description: "Best quality".into(), min_ram_gb: 128 },
+        CatalogModel { id: "mlx-community/MiniMax-M2.5-8bit".into(), s3_name: "MiniMax-M2.5-8bit".into(), display_name: "MiniMax M2.5".into(), model_type: "text".into(), size_gb: 243.0, architecture: "239B MoE, 11B active".into(), description: "SOTA coding, 100 tok/s".into(), min_ram_gb: 256 },
     ]
+}
+
+/// Get available disk space in GB for the home directory.
+fn get_available_disk_gb() -> f64 {
+    #[cfg(unix)]
+    {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+        let path = std::ffi::CString::new(home.to_string_lossy().as_bytes()).unwrap_or_default();
+        unsafe {
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(path.as_ptr(), &mut stat) == 0 {
+                return (stat.f_bavail as f64 * stat.f_frsize as f64) / (1024.0 * 1024.0 * 1024.0);
+            }
+        }
+    }
+    0.0
 }
 
 /// Fetch the model catalog from the coordinator. Falls back to hardcoded list on failure.
@@ -393,10 +412,8 @@ async fn cmd_install(
     }
     println!();
 
-    // Step 4: Select and download model
-    println!("Step 4/6: Setting up inference model...");
-    println!("  Available memory: {} GB", hw.memory_available_gb);
-    println!();
+    // Step 4: Select and download models
+    println!("Step 4/6: Setting up inference models...");
 
     // Fetch supported models from coordinator
     let catalog = fetch_catalog(&coordinator_url).await;
@@ -404,115 +421,204 @@ async fn cmd_install(
     // Check which models are already downloaded
     let available = models::scan_models(&hw);
 
-    let mut selectable: Vec<usize> = Vec::new();
-    for (i, cm) in catalog.iter().enumerate() {
-        let fits = hw.memory_available_gb as f64 >= cm.size_gb;
-        let downloaded = available.iter().any(|m| m.id == cm.id);
-        let status = if downloaded { "✓ ready" } else if fits { "  fits" } else { "✗ too large" };
-        if fits {
-            selectable.push(i);
-            println!("  [{}] {} {:>5.1} GB  {:25} {}  {}", selectable.len(), cm.display_name, cm.size_gb, cm.architecture, cm.description, status);
-        } else {
-            println!("  [-] {} {:>5.1} GB  {:25} {}  {}", cm.display_name, cm.size_gb, cm.architecture, cm.description, status);
-        }
-    }
+    // Check available disk space
+    let disk_available_gb = get_available_disk_gb();
+
+    println!("  System: {} ({} GB RAM)", hw.chip_name, hw.memory_gb);
+    println!("  Available disk: {:.0} GB", disk_available_gb);
     println!();
 
-    let model = if let Some(m) = model_override {
-        m
-    } else if selectable.is_empty() {
-        anyhow::bail!("No models fit in {} GB available memory", hw.memory_available_gb);
-    } else {
-        println!("  Select a model [1-{}] (or press Enter for [{}]):", selectable.len(), selectable.len());
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let input = input.trim();
+    let ram = hw.memory_gb;
 
-        let choice = if input.is_empty() {
-            selectable.len() - 1 // default to largest that fits
-        } else {
-            input.parse::<usize>().unwrap_or(selectable.len()).saturating_sub(1)
-        };
+    // Determine default and optional models based on RAM tier.
+    // Defaults are auto-selected; optionals are everything else that fits.
+    let mut defaults: Vec<&CatalogModel> = Vec::new();
 
-        let idx = selectable.get(choice.min(selectable.len() - 1)).copied().unwrap_or(0);
-        let cm = &catalog[idx];
-        println!("  → Selected: {} ({})", cm.display_name, cm.id);
-        cm.id.clone()
+    let find_model = |id_contains: &str| -> Option<&CatalogModel> {
+        catalog.iter().find(|m| m.id.contains(id_contains))
     };
 
-    // Check if already downloaded
-    let model_downloaded = available.iter().any(|m| m.id == model);
+    if ram >= 256 {
+        if let Some(m) = find_model("MiniMax-M2.5") { defaults.push(m); }
+    } else if ram >= 128 {
+        if let Some(m) = find_model("Qwen3.5-122B") { defaults.push(m); }
+    } else if ram >= 48 {
+        if let Some(m) = find_model("qwen3.5-27b-claude-opus") { defaults.push(m); }
+    } else if ram >= 36 {
+        if let Some(m) = find_model("qwen3.5-27b-claude-opus") { defaults.push(m); }
+    } else if ram >= 24 {
+        if let Some(m) = find_model("flux_2_klein_9b") { defaults.push(m); }
+    } else if ram >= 16 {
+        if let Some(m) = find_model("flux_2_klein_4b") { defaults.push(m); }
+    } else {
+        if let Some(m) = find_model("cohere-transcribe") { defaults.push(m); }
+    }
 
-    if !model_downloaded {
-        // Download from DGInf CDN (S3) — no HuggingFace account needed
-        let s3_name = catalog.iter()
-            .find(|cm| cm.id == model)
-            .map(|cm| cm.s3_name.as_str())
-            .unwrap_or_else(|| model.split('/').last().unwrap_or(&model));
+    // Optionals: every catalog model that fits in RAM but isn't already a default
+    let default_ids: Vec<&str> = defaults.iter().map(|m| m.id.as_str()).collect();
+    let optionals: Vec<&CatalogModel> = catalog.iter()
+        .filter(|m| m.min_ram_gb <= ram as i32)
+        .filter(|m| !default_ids.contains(&m.id.as_str()))
+        .collect();
 
-        let cache_dir = dirs::home_dir().unwrap_or_default()
-            .join(".cache/huggingface/hub")
-            .join(format!("models--{}", model.replace('/', "--")))
-            .join("snapshots/main");
-        std::fs::create_dir_all(&cache_dir)?;
+    // Allow explicit model override
+    let model = if let Some(m) = model_override {
+        m
+    } else {
+        // Show defaults
+        println!("  Default models for your hardware:");
+        let mut total_default_size = 0.0_f64;
+        for m in &defaults {
+            let downloaded = available.iter().any(|a| a.id == m.id);
+            let status = if downloaded { "✓ ready" } else { "  " };
+            println!("    {} {:30} {:>5.1} GB  {:6}  {}", status, m.display_name, m.size_gb, m.model_type, m.description);
+            if !downloaded { total_default_size += m.size_gb; }
+        }
+        println!();
 
+        // Download defaults (ask Y/n)
+        let mut models_to_download: Vec<String> = Vec::new();
+
+        if total_default_size > 0.0 {
+            if total_default_size > disk_available_gb {
+                println!("  ⚠ Not enough disk space ({:.0} GB needed, {:.0} GB available)", total_default_size, disk_available_gb);
+                println!("  Free up disk space and retry: dginf-provider install");
+            } else {
+                use std::io::Write;
+                print!("  Download default models? ({:.0} GB) [Y/n]: ", total_default_size);
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                let input = input.trim().to_lowercase();
+                if input.is_empty() || input == "y" || input == "yes" {
+                    for m in &defaults {
+                        let downloaded = available.iter().any(|a| a.id == m.id);
+                        if !downloaded {
+                            models_to_download.push(m.id.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("  All default models already downloaded!");
+        }
+
+        // Show and handle optionals (only for 36 GB+ machines)
+        if !optionals.is_empty() {
+            println!();
+            println!("  Optional models (your hardware can also run):");
+            for (i, m) in optionals.iter().enumerate() {
+                let downloaded = available.iter().any(|a| a.id == m.id);
+                let status = if downloaded { "✓" } else { " " };
+                println!("    [{}] {} {:30} {:>5.1} GB  {:6}  {}", i + 1, status, m.display_name, m.size_gb, m.model_type, m.description);
+            }
+            println!();
+            use std::io::Write;
+            print!("  Download optional models? Enter numbers (e.g. 1,2) or press Enter to skip: ");
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+            if !input.is_empty() {
+                for part in input.split(',') {
+                    if let Ok(n) = part.trim().parse::<usize>() {
+                        if n >= 1 && n <= optionals.len() {
+                            let m = optionals[n - 1];
+                            let downloaded = available.iter().any(|a| a.id == m.id);
+                            if !downloaded {
+                                models_to_download.push(m.id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Download all selected models
         let base_url = coordinator_url
             .replace("wss://", "https://")
             .replace("ws://", "http://")
             .replace("/ws/provider", "");
 
-        // Try pre-packaged tarball first (fastest)
-        println!("  Downloading from DGInf CDN...");
-        let tarball_url = format!("{}/dl/models/{}.tar.gz", base_url, s3_name);
-        let tar_status = std::process::Command::new("bash")
-            .args(["-c", &format!(
-                "curl -f#L '{}' | tar xz -C '{}'",
-                tarball_url, cache_dir.display()
-            )])
-            .status();
+        for model_id in &models_to_download {
+            let s3_name = catalog.iter()
+                .find(|cm| cm.id == *model_id)
+                .map(|cm| cm.s3_name.as_str())
+                .unwrap_or_else(|| model_id.split('/').last().unwrap_or(model_id));
 
-        match tar_status {
-            Ok(s) if s.success() => println!("  ✓ Model downloaded"),
-            _ => {
-                // Fallback: download individual files from S3
-                println!("  Trying individual files from S3...");
-                let s3_http = format!("https://dginf-models.s3.amazonaws.com/{}", s3_name);
-                let config_ok = std::process::Command::new("curl")
-                    .args(["-fsSL", &format!("{}/config.json", s3_http),
-                           "-o", &cache_dir.join("config.json").to_string_lossy()])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+            let display = catalog.iter()
+                .find(|cm| cm.id == *model_id)
+                .map(|cm| cm.display_name.as_str())
+                .unwrap_or(model_id);
 
-                if config_ok {
-                    // Download tokenizer + weights
-                    for f in &["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"] {
-                        let _ = std::process::Command::new("curl")
-                            .args(["-fsSL", &format!("{}/{}", s3_http, f),
-                                   "-o", &cache_dir.join(f).to_string_lossy()])
-                            .status();
-                    }
-                    // Try single weight file, then sharded
-                    let weight_ok = std::process::Command::new("curl")
-                        .args(["-f#L", &format!("{}/model.safetensors", s3_http),
-                               "-o", &cache_dir.join("model.safetensors").to_string_lossy()])
+            println!();
+            println!("  Downloading {}...", display);
+
+            let cache_dir = dirs::home_dir().unwrap_or_default()
+                .join(".cache/huggingface/hub")
+                .join(format!("models--{}", model_id.replace('/', "--")))
+                .join("snapshots/main");
+            std::fs::create_dir_all(&cache_dir)?;
+
+            // Try pre-packaged tarball first (fastest)
+            let tarball_url = format!("{}/dl/models/{}.tar.gz", base_url, s3_name);
+            let tar_status = std::process::Command::new("bash")
+                .args(["-c", &format!(
+                    "curl -f#L '{}' | tar xz -C '{}'",
+                    tarball_url, cache_dir.display()
+                )])
+                .status();
+
+            match tar_status {
+                Ok(s) if s.success() => println!("  ✓ {} downloaded", display),
+                _ => {
+                    // Fallback: download individual files from S3
+                    println!("  Trying individual files from S3...");
+                    let s3_http = format!("https://dginf-models.s3.amazonaws.com/{}", s3_name);
+                    let config_ok = std::process::Command::new("curl")
+                        .args(["-fsSL", &format!("{}/config.json", s3_http),
+                               "-o", &cache_dir.join("config.json").to_string_lossy()])
                         .status()
                         .map(|s| s.success())
                         .unwrap_or(false);
 
-                    if weight_ok {
-                        println!("  ✓ Model downloaded");
+                    if config_ok {
+                        for f in &["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"] {
+                            let _ = std::process::Command::new("curl")
+                                .args(["-fsSL", &format!("{}/{}", s3_http, f),
+                                       "-o", &cache_dir.join(f).to_string_lossy()])
+                                .status();
+                        }
+                        let weight_ok = std::process::Command::new("curl")
+                            .args(["-f#L", &format!("{}/model.safetensors", s3_http),
+                                   "-o", &cache_dir.join("model.safetensors").to_string_lossy()])
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+
+                        if weight_ok {
+                            println!("  ✓ {} downloaded", display);
+                        } else {
+                            println!("  ⚠ Could not download {} weights. Retry with:\n    dginf-provider models download", display);
+                        }
                     } else {
-                        println!("  ⚠ Could not download model weights. Retry with:\n    dginf-provider models download");
+                        println!("  ⚠ {} not available on CDN. Retry with:\n    dginf-provider models download", display);
                     }
-                } else {
-                    println!("  ⚠ Model not available on CDN. Retry with:\n    dginf-provider models download");
                 }
             }
         }
-    } else {
-        println!("  ✓ Model already downloaded: {}", model);
-    }
+
+        // Determine primary model for serving (the first default model)
+        if !defaults.is_empty() {
+            defaults[0].id.clone()
+        } else {
+            catalog.iter()
+                .filter(|m| hw.memory_available_gb as f64 >= m.size_gb)
+                .last()
+                .map(|m| m.id.clone())
+                .unwrap_or_default()
+        }
+    };
     println!();
 
     // Step 5: Verify security posture
@@ -526,43 +632,24 @@ async fn cmd_install(
     }
     println!();
 
-    // Step 6: Launch provider in background
+    // Step 6: Install and start as launchd service
     println!("Step 6/6: Starting provider...");
     println!("  Coordinator: {}", coordinator_url);
     println!("  Model: {}", model);
     println!();
 
-    // Get the path to our own binary
-    let exe = std::env::current_exe()?;
+    service::install_and_start(&coordinator_url, &model)?;
+
     let log_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".dginf/provider.log");
 
-    // Launch ourselves in the background with `serve`
-    let log_file = std::fs::File::create(&log_path)?;
-    let log_err = log_file.try_clone()?;
-
-    let child = std::process::Command::new(&exe)
-        .args([
-            "serve",
-            "--coordinator", &coordinator_url,
-            "--model", &model,
-            "--all-models",
-        ])
-        .stdout(log_file)
-        .stderr(log_err)
-        .stdin(std::process::Stdio::null())
-        .spawn()?;
-
-    // Save PID for graceful stop
-    let pid_path = dirs::home_dir().unwrap_or_default().join(".dginf/provider.pid");
-    std::fs::write(&pid_path, child.id().to_string())?;
-
     println!("╔══════════════════════════════════════════╗");
-    println!("║  Provider is running in the background!   ║");
+    println!("║  Provider is running as a system service! ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
-    println!("  PID:  {}", child.id());
+    println!("  Service: io.dginf.provider (launchd)");
+    println!("  Auto-restart: enabled (KeepAlive)");
     println!("  Logs: {}", log_path.display());
     println!();
     // Prompt to link account if not already logged in.
@@ -622,6 +709,23 @@ async fn cmd_serve(
     // Verify security posture before serving any inference requests.
     if let Err(reason) = security::verify_security_posture() {
         anyhow::bail!("Security check failed: {reason}");
+    }
+
+    // Prevent system sleep while serving. caffeinate watches our own PID and
+    // exits when we die — launchd restarts us, and we spawn a new caffeinate.
+    #[cfg(target_os = "macos")]
+    {
+        let our_pid = std::process::id().to_string();
+        match std::process::Command::new("/usr/bin/caffeinate")
+            .args(["-s", "-i", "-w", &our_pid])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => tracing::info!("Sleep prevention active (caffeinate watching PID {})", our_pid),
+            Err(e) => tracing::warn!("Could not prevent sleep: {e}"),
+        }
     }
 
     let hw = hardware::detect()?;
@@ -1036,6 +1140,19 @@ async fn cmd_serve(
             tracing::info!("Provider linked to account (auth token loaded)");
         }
 
+        // Shared flag: true when inference is in progress. Health monitor
+        // skips crash detection while the backend is busy generating tokens,
+        // because the Python GIL blocks /health during inference.
+        let inference_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let health_inference_active = inference_active.clone();
+
+        // Shared atomic counters for stats reported in heartbeats.
+        let provider_stats = std::sync::Arc::new(coordinator::AtomicProviderStats::new());
+
+        // Shared current model name for heartbeat reporting.
+        let current_model: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Some(model.clone())));
+
         let client = coordinator::CoordinatorClient::new(
             coordinator_url,
             hw.clone(),
@@ -1050,7 +1167,10 @@ async fn cmd_serve(
                 .ok()
                 .map(|w| w.address.clone())
         )
-        .with_auth_token(auth_token);
+        .with_auth_token(auth_token)
+        .with_stats(provider_stats.clone())
+        .with_inference_active(inference_active.clone())
+        .with_current_model(current_model);
 
         // Spawn coordinator connection
         let coordinator_handle = tokio::spawn(async move {
@@ -1058,12 +1178,6 @@ async fn cmd_serve(
                 tracing::error!("Coordinator connection error: {e}");
             }
         });
-
-        // Shared flag: true when inference is in progress. Health monitor
-        // skips crash detection while the backend is busy generating tokens,
-        // because the Python GIL blocks /health during inference.
-        let inference_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let health_inference_active = inference_active.clone();
 
         // Spawn backend health monitor — detects crashes and auto-restarts.
         let health_url = backend_url_str.clone();
@@ -1125,6 +1239,7 @@ async fn cmd_serve(
         let idle_python_cmd = python_cmd.clone();
         let idle_be_port = be_port;
         let idle_backend_name = backend_name.to_string();
+        let proxy_stats = provider_stats.clone();
 
         #[cfg(feature = "python")]
         let shared_engine: Option<std::sync::Arc<tokio::sync::Mutex<inference::InProcessEngine>>> =
@@ -1228,16 +1343,18 @@ async fn cmd_serve(
                                     if let Some(ref engine) = shared_engine {
                                         let engine = engine.clone();
                                         let rid2 = rid.clone();
+                                        let stats = proxy_stats.clone();
                                         tokio::spawn(async move {
-                                            handle_inprocess_request(rid2, body, engine, tx).await;
+                                            handle_inprocess_request(rid2, body, engine, tx, Some(stats)).await;
                                             let _ = done_tx.send(rid).await;
                                         })
                                     } else {
                                         let url = proxy_backend_url.clone();
                                         let kp = proxy_keypair.clone();
                                         let rid2 = rid.clone();
+                                        let stats = proxy_stats.clone();
                                         tokio::spawn(async move {
-                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone).await;
+                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone, Some(stats)).await;
                                             let _ = done_tx.send(rid).await;
                                         })
                                     }
@@ -1247,8 +1364,9 @@ async fn cmd_serve(
                                         let url = proxy_backend_url.clone();
                                         let kp = proxy_keypair.clone();
                                         let rid2 = rid.clone();
+                                        let stats = proxy_stats.clone();
                                         tokio::spawn(async move {
-                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone).await;
+                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone, Some(stats)).await;
                                             let _ = done_tx.send(rid).await;
                                         })
                                     }
@@ -1332,7 +1450,7 @@ async fn cmd_serve(
                     _ = idle_sleep => {
                         tracing::info!(
                             "No requests for 10 minutes — shutting down backend to free GPU memory. \
-                             Next request will reload the model (~10-30s)."
+                             Next request will reload and warmup the model (~30-60s cold start)."
                         );
                         shutdown_backend().await;
                         backend_running = false;
@@ -1399,15 +1517,37 @@ async fn reload_backend(
     tracing::info!("Backend process started (PID: {:?}), waiting for model to load...", child.id());
 
     let backend_url = format!("http://127.0.0.1:{}", port);
+
+    // Phase 1: Wait for HTTP server to start listening
+    let mut server_up = false;
     for i in 0..30 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         if backend::check_health(&backend_url).await {
-            tracing::info!("Backend reloaded and ready after {}s", (i + 1) * 2);
-            return Ok(());
+            tracing::info!("Backend HTTP server ready after {}s, waiting for model load...", (i + 1) * 2);
+            server_up = true;
+            break;
         }
     }
+    if !server_up {
+        anyhow::bail!("backend HTTP server did not start within 60s after reload");
+    }
 
-    anyhow::bail!("backend did not become healthy within 60s after reload")
+    // Phase 2: Wait for model to be fully loaded into GPU memory
+    for i in 0..60 {
+        if backend::check_model_loaded(&backend_url).await {
+            tracing::info!("Model loaded into GPU memory after {}s total", i * 2);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    // Phase 3: Warmup — run a single-token inference to prime GPU caches
+    tracing::info!("Running warmup inference to prime GPU caches...");
+    let warmup_start = std::time::Instant::now();
+    backend::warmup_backend(&backend_url).await;
+    tracing::info!("Backend fully warm and ready (warmup took {:?})", warmup_start.elapsed());
+
+    Ok(())
 }
 
 /// Handle an inference request using the in-process engine (no HTTP, no subprocess).
@@ -1417,6 +1557,7 @@ async fn handle_inprocess_request(
     body: serde_json::Value,
     engine: std::sync::Arc<tokio::sync::Mutex<inference::InProcessEngine>>,
     outbound_tx: tokio::sync::mpsc::Sender<protocol::ProviderMessage>,
+    stats: Option<std::sync::Arc<coordinator::AtomicProviderStats>>,
 ) {
     // Pre-request SIP check
     if !security::check_sip_enabled() {
@@ -1468,15 +1609,21 @@ async fn handle_inprocess_request(
             let response_hash = security::sha256_hex(sign_data.as_bytes());
             let se_signature = security::se_sign(response_hash.as_bytes());
 
+            let completion_tokens = inference_result.completion_tokens;
             let _ = outbound_tx.send(protocol::ProviderMessage::InferenceComplete {
                 request_id,
                 usage: protocol::UsageInfo {
                     prompt_tokens: inference_result.prompt_tokens,
-                    completion_tokens: inference_result.completion_tokens,
+                    completion_tokens,
                 },
                 se_signature,
                 response_hash: Some(response_hash),
             }).await;
+            // Increment shared stats counters for heartbeat reporting.
+            if let Some(s) = &stats {
+                s.requests_served.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                s.tokens_generated.fetch_add(completion_tokens, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         Ok(Err(e)) => {
             tracing::error!("In-process inference failed: {e}");
@@ -2464,46 +2611,16 @@ async fn cmd_start(coordinator_url: String, model_override: Option<String>) -> R
         selected.id.clone()
     };
 
-    let exe = std::env::current_exe()?;
     let log_path = dirs::home_dir().unwrap_or_default().join(".dginf/provider.log");
-    let pid_path = dirs::home_dir().unwrap_or_default().join(".dginf/provider.pid");
 
-    let log_file = std::fs::File::create(&log_path)?;
-    let log_err = log_file.try_clone()?;
+    // Install as launchd user agent (auto-restarts on crash)
+    service::install_and_start(&coordinator_url, &model)?;
 
-    let child = std::process::Command::new(&exe)
-        .args(["serve", "--coordinator", &coordinator_url, "--model", &model, "--all-models"])
-        .stdout(log_file)
-        .stderr(log_err)
-        .stdin(std::process::Stdio::null())
-        .spawn()?;
-
-    let provider_pid = child.id();
-    std::fs::write(&pid_path, provider_pid.to_string())?;
-
-    // Prevent system sleep while provider is running.
-    // caffeinate -s (system sleep) -i (idle sleep) -w PID (exit when PID dies)
-    let caffeinate_pid_path = dirs::home_dir().unwrap_or_default().join(".dginf/caffeinate.pid");
-    match std::process::Command::new("/usr/bin/caffeinate")
-        .args(["-s", "-i", "-w", &provider_pid.to_string()])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(caf) => {
-            std::fs::write(&caffeinate_pid_path, caf.id().to_string())?;
-        }
-        Err(e) => {
-            eprintln!("  ⚠ Could not prevent sleep: {e}");
-        }
-    }
-
-    println!("Provider started in background");
-    println!("  PID:   {}", provider_pid);
-    println!("  Model: {}", model);
-    println!("  Logs:  {}", log_path.display());
-    println!("  Sleep: prevented (caffeinate active)");
+    println!("Provider installed as system service");
+    println!("  Model:   {}", model);
+    println!("  Logs:    {}", log_path.display());
+    println!("  Service: io.dginf.provider (launchd)");
+    println!("  Auto-restart: enabled (KeepAlive)");
     println!();
     println!("  dginf-provider stop    Stop the provider");
     println!("  dginf-provider logs    View logs");
@@ -2517,7 +2634,13 @@ async fn cmd_stop() -> Result<()> {
     let pid_path = dginf_dir.join("provider.pid");
     let caffeinate_pid_path = dginf_dir.join("caffeinate.pid");
 
-    // Stop caffeinate (re-allow system sleep)
+    // Unload launchd service (stops the process and prevents auto-restart)
+    if service::is_loaded() {
+        println!("Stopping launchd service...");
+        service::stop()?;
+    }
+
+    // Clean up legacy PID files from pre-launchd installs
     if caffeinate_pid_path.exists() {
         if let Ok(pid_str) = std::fs::read_to_string(&caffeinate_pid_path) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
@@ -2531,36 +2654,26 @@ async fn cmd_stop() -> Result<()> {
     if pid_path.exists() {
         let pid_str = std::fs::read_to_string(&pid_path)?.trim().to_string();
         if let Ok(pid) = pid_str.parse::<i32>() {
-            // Send SIGTERM for graceful shutdown
             #[cfg(unix)]
             {
                 let result = unsafe { libc::kill(pid, libc::SIGTERM) };
                 if result == 0 {
-                    println!("Stopping provider (PID: {})...", pid);
-                    // Wait up to 5 seconds for it to stop
+                    println!("Stopping legacy provider (PID: {})...", pid);
                     for _ in 0..10 {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         if unsafe { libc::kill(pid, 0) } != 0 {
                             break;
                         }
                     }
-                    // Kill mlx_lm.server too
-                    let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
-                    let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status();
-                    let _ = std::fs::remove_file(&pid_path);
-                    println!("Provider stopped.");
-                    return Ok(());
                 }
             }
         }
-        // PID file exists but process isn't running
         let _ = std::fs::remove_file(&pid_path);
     }
 
-    // Fallback: try pkill
+    // Kill any lingering backend processes
     #[cfg(unix)]
     {
-        let _ = std::process::Command::new("pkill").args(["-f", "dginf-provider serve"]).status();
         let _ = std::process::Command::new("pkill").args(["-f", "mlx_lm.server"]).status();
         let _ = std::process::Command::new("pkill").args(["-f", "vllm_mlx"]).status();
     }

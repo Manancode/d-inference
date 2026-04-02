@@ -14,6 +14,7 @@ import {
   Server,
   Code,
   Activity,
+  Coins,
   LogOut,
   Sun,
   Moon,
@@ -68,6 +69,7 @@ export function Sidebar() {
         {[
           { href: "/", icon: MessageSquare, label: "Chat" },
           { href: "/providers", icon: Server, label: "Providers" },
+          { href: "/earn", icon: Coins, label: "Earn" },
           { href: "/api-console", icon: Code, label: "API" },
         ].map(({ href, icon: Icon, label }) => {
           const isActive =

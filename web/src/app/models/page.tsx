@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { TopBar } from "@/components/TopBar";
-import { fetchModels, type Model } from "@/lib/api";
+import { fetchModels, fetchPricing, type Model, type PricingResponse } from "@/lib/api";
 import {
   Cpu,
   Shield,
@@ -10,7 +10,46 @@ import {
   HardDrive,
   Users,
   Loader2,
+  TrendingDown,
 } from "lucide-react";
+
+// Competitor pricing for comparison — static since these are external
+const competitorPricing: Record<string, { output: number; name: string; competitor: string; unit?: string }> = {
+  "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only": { output: 1_560_000, name: "Qwen3.5 27B Claude Opus", competitor: "OpenRouter" },
+  "mlx-community/Trinity-Mini-8bit": { output: 150_000, name: "Trinity Mini", competitor: "OpenRouter" },
+  "mlx-community/Qwen3.5-122B-A10B-8bit": { output: 2_080_000, name: "Qwen3.5 122B", competitor: "OpenRouter" },
+  "mlx-community/MiniMax-M2.5-8bit": { output: 1_000_000, name: "MiniMax M2.5", competitor: "OpenRouter" },
+  "flux_2_klein_4b_q8p.ckpt": { output: 3_000, name: "FLUX.2 Klein 4B", competitor: "Together.ai", unit: "per image" },
+  "flux_2_klein_9b_q8p.ckpt": { output: 5_000, name: "FLUX.2 Klein 9B", competitor: "fal.ai", unit: "per image" },
+  "CohereLabs/cohere-transcribe-03-2026": { output: 2_000, name: "Cohere Transcribe", competitor: "AssemblyAI", unit: "per audio-min" },
+};
+
+// Build a unified pricing lookup from the coordinator's response
+function buildPricingLookup(pricing: PricingResponse | null): Record<string, { input: number; output: number; unit?: string }> {
+  if (!pricing) return {};
+  const lookup: Record<string, { input: number; output: number; unit?: string }> = {};
+  for (const p of pricing.prices) {
+    lookup[p.model] = { input: p.input_price, output: p.output_price };
+  }
+  for (const p of pricing.transcription_prices) {
+    lookup[p.model] = { input: 0, output: p.price_per_minute, unit: "per audio-min" };
+  }
+  for (const p of pricing.image_prices) {
+    lookup[p.model] = { input: 0, output: p.price_per_image, unit: "per image" };
+  }
+  return lookup;
+}
+
+function microUsdToDisplay(microUsd: number): string {
+  const dollars = microUsd / 1_000_000;
+  if (dollars < 0.01) return `$${dollars.toFixed(4)}`;
+  return `$${dollars.toFixed(3)}`;
+}
+
+function savingsPercent(eigen: number, openRouter: number): number {
+  if (openRouter === 0) return 0;
+  return Math.round((1 - eigen / openRouter) * 100);
+}
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
@@ -52,16 +91,21 @@ function TrustIndicator({ level }: { level?: string }) {
 
 export default function ModelsPage() {
   const [models, setModels] = useState<Model[]>([]);
+  const [pricing, setPricing] = useState<PricingResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchModels()
-      .then((m) => {
-        setModels(m);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    Promise.all([
+      fetchModels().catch(() => [] as Model[]),
+      fetchPricing().catch(() => null),
+    ]).then(([m, p]) => {
+      setModels(m);
+      setPricing(p);
+      setLoading(false);
+    });
   }, []);
+
+  const eigenPricing = buildPricingLookup(pricing);
 
   return (
     <div className="flex flex-col h-full">
@@ -146,6 +190,31 @@ export default function ModelsPage() {
                       )}
                     </div>
 
+                    {/* Pricing */}
+                    {eigenPricing[model.id] && (
+                      <div className="mb-3">
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-text-tertiary">
+                            {eigenPricing[model.id].input > 0
+                              ? `${microUsdToDisplay(eigenPricing[model.id].input)} / ${microUsdToDisplay(eigenPricing[model.id].output)}`
+                              : microUsdToDisplay(eigenPricing[model.id].output)}
+                          </span>
+                          <span className="text-text-tertiary opacity-50">
+                            {eigenPricing[model.id].unit ?? "per 1M tokens"}
+                          </span>
+                        </div>
+                        {competitorPricing[model.id] && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <TrendingDown size={10} className="text-accent-green" />
+                            <span className="text-xs font-medium text-accent-green">
+                              {savingsPercent(eigenPricing[model.id].output, competitorPricing[model.id].output)}% cheaper
+                            </span>
+                            <span className="text-xs text-text-tertiary opacity-50">vs {competitorPricing[model.id].competitor}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Footer */}
                     <div className="flex items-center justify-between pt-3 border-t border-border-dim">
                       <div className="flex items-center gap-1 text-text-tertiary">
@@ -169,6 +238,68 @@ export default function ModelsPage() {
               })}
             </div>
           )}
+
+          {/* Pricing comparison table */}
+          <div className="mt-12 mb-8">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-text-primary mb-1">
+                Pricing vs Competitors
+              </h2>
+              <p className="text-sm text-text-tertiary">
+                EigenInference runs on idle Apple Silicon hardware — 50% cheaper than centralized providers.
+              </p>
+            </div>
+
+            <div className="rounded-xl shadow-sm bg-bg-secondary overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border-dim">
+                    <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Model</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">EigenInference</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Competitor</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Savings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(eigenPricing)
+                    .filter(([id]) => competitorPricing[id])
+                    .map(([id, eigen]) => {
+                      const comp = competitorPricing[id];
+                      const savings = savingsPercent(eigen.output, comp.output);
+                      const unit = eigen.unit ?? "per 1M tokens";
+                      return (
+                        <tr key={id} className="border-b border-border-dim/50 hover:bg-bg-tertiary transition-colors">
+                          <td className="px-4 py-3">
+                            <span className="font-medium text-text-primary">{comp.name}</span>
+                            <span className="ml-2 text-xs text-text-tertiary">{unit}</span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-text-secondary">
+                            {eigen.input > 0
+                              ? `${microUsdToDisplay(eigen.input)} / ${microUsdToDisplay(eigen.output)}`
+                              : microUsdToDisplay(eigen.output)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-text-tertiary">
+                            <span className="line-through opacity-60">
+                              {microUsdToDisplay(comp.output)}
+                            </span>
+                            <span className="block text-xs opacity-50">{comp.competitor}</span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green-dim/30 text-accent-green text-xs font-medium">
+                              <TrendingDown size={10} />
+                              {savings}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+              <div className="px-4 py-2 text-xs text-text-tertiary bg-bg-tertiary/50">
+                Competitor prices from OpenRouter, Together.ai, fal.ai, and AssemblyAI as of April 2026.
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

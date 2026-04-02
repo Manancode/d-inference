@@ -1,33 +1,28 @@
 package payments
 
-// Pricing model for DGInf inference.
+// Pricing model for EigenInference.
 //
-// Per-model pricing undercuts OpenRouter by ~50%. Since providers donate
-// idle Apple Silicon GPU time with zero infrastructure cost, we can price
-// aggressively while keeping a 5% routing fee.
+// Prices are set at 50% of the cheapest major competitor for each model type.
+// Users accept higher latency and lower reliability in exchange for the discount.
+// Providers keep ~90%+ profit margin since marginal electricity on Apple Silicon
+// is negligible ($0.001-0.05 per 1M tokens vs $0.075-1.04 revenue).
 //
-// All prices are in micro-USD per 1M tokens.
-// Both input (prompt) and output (completion) tokens are billed separately.
-// Input tokens are cheaper than output — they only require prefill compute,
-// while output tokens require sequential decoding.
+// All prices are in micro-USD per 1M tokens unless noted.
 //
-//   Model                  OpenRouter (in/out)      DGInf (in/out)       Provider (95%)
-//   ─────────────────────  ───────────────────      ──────────────       ──────────────
-//   Qwen2.5-0.5B           $0.01 / $0.02           $0.005 / $0.01      $0.00475 / $0.0095
-//   Qwen2.5-1.5B           $0.015 / $0.03          $0.007 / $0.015     $0.00665 / $0.01425
-//   Qwen2.5-3B             $0.025 / $0.05          $0.012 / $0.025     $0.0114  / $0.02375
-//   Qwen3.5-4B             $0.04 / $0.08           $0.02 / $0.04       $0.019   / $0.038
-//   Qwen2.5-7B             $0.04 / $0.10           $0.02 / $0.05       $0.019   / $0.0475
-//   Qwen3.5-9B             $0.05 / $0.15           $0.025 / $0.07      $0.02375 / $0.0665
-//   Qwen2.5-14B            $0.08 / $0.20           $0.04 / $0.10       $0.038   / $0.095
-//   Qwen2.5-32B            $0.12 / $0.30           $0.06 / $0.15       $0.057   / $0.1425
-//   Qwen2.5-72B            $0.12 / $0.39           $0.06 / $0.20       $0.057   / $0.190
-//   Qwen3.5-122B           $0.26 / $1.56           $0.13 / $0.80       $0.1235  / $0.760
+//   Model                              Input/1M    Output/1M    Competitor
+//   ────────────────────────────────   ─────────   ──────────   ──────────
+//   Qwen3.5 27B Claude Opus (dense)    $0.100      $0.780       OpenRouter $1.56
+//   Trinity Mini (27B MoE, 3B active)  $0.023      $0.075       OpenRouter $0.15
+//   Qwen3.5 122B (MoE, 10B active)     $0.130      $1.040       OpenRouter $2.08
+//   MiniMax M2.5 (239B MoE, 11B act)   $0.060      $0.500       OpenRouter $1.00
+//   Cohere Transcribe (2B STT)         $0.001/audio-minute      AssemblyAI $0.002
+//   FLUX.2 Klein 4B (image)            $0.0015/image            Together $0.003
+//   FLUX.2 Klein 9B (image)            $0.0025/image            fal.ai $0.005
 
 // Default pricing for unknown models (micro-USD per 1M tokens).
 // Falls back to a mid-range rate comparable to a 7B model.
-const defaultInputPricePerMillion int64 = 20_000  // $0.02 per 1M input tokens
-const defaultOutputPricePerMillion int64 = 50_000 // $0.05 per 1M output tokens
+const defaultInputPricePerMillion int64 = 50_000   // $0.05 per 1M input tokens
+const defaultOutputPricePerMillion int64 = 200_000 // $0.20 per 1M output tokens
 
 // Minimum charge per inference request in micro-USD ($0.0001).
 const minimumChargeMicroUSD int64 = 100
@@ -42,19 +37,23 @@ type modelPrice struct {
 }
 
 var modelPricing = map[string]modelPrice{
-	// Qwen 2.5 family
-	"mlx-community/Qwen2.5-0.5B-Instruct-4bit": {input: 5_000, output: 10_000},     // $0.005 / $0.01
-	"mlx-community/Qwen2.5-1.5B-Instruct-4bit": {input: 7_000, output: 15_000},     // $0.007 / $0.015
-	"mlx-community/Qwen2.5-3B-Instruct-4bit":   {input: 12_000, output: 25_000},    // $0.012 / $0.025
-	"mlx-community/Qwen2.5-7B-Instruct-4bit":   {input: 20_000, output: 50_000},    // $0.02  / $0.05
-	"mlx-community/Qwen2.5-14B-Instruct-4bit":  {input: 40_000, output: 100_000},   // $0.04  / $0.10
-	"mlx-community/Qwen2.5-32B-Instruct-4bit":  {input: 60_000, output: 150_000},   // $0.06  / $0.15
-	"mlx-community/Qwen2.5-72B-Instruct-4bit":  {input: 60_000, output: 200_000},   // $0.06  / $0.20
+	// Text generation — 50% of OpenRouter rates
+	"mlx-community/qwen3.5-27b-claude-opus-8bit-text-only": {input: 100_000, output: 780_000},   // $0.10 / $0.78
+	"mlx-community/Trinity-Mini-8bit":                       {input: 23_000, output: 75_000},     // $0.023 / $0.075
+	"mlx-community/Qwen3.5-122B-A10B-8bit":                  {input: 130_000, output: 1_040_000}, // $0.13 / $1.04
+	"mlx-community/MiniMax-M2.5-8bit":                       {input: 60_000, output: 500_000},    // $0.06 / $0.50
+}
 
-	// Qwen 3.5 family
-	"mlx-community/Qwen3.5-4B-4bit":            {input: 20_000, output: 40_000},    // $0.02  / $0.04
-	"mlx-community/Qwen3.5-9B-Instruct-4bit":   {input: 25_000, output: 70_000},    // $0.025 / $0.07
-	"mlx-community/Qwen3.5-122B-Instruct-4bit": {input: 130_000, output: 800_000},  // $0.13  / $0.80
+// transcriptionPricing stores per-audio-minute prices in micro-USD.
+var transcriptionPricing = map[string]int64{
+	"CohereLabs/cohere-transcribe-03-2026": 1_000, // $0.001 per audio-minute (50% of AssemblyAI Nano $0.002)
+}
+const defaultTranscriptionPricePerMinute int64 = 1_000
+
+// imagePricing stores per-image prices in micro-USD.
+var imagePricing = map[string]int64{
+	"flux_2_klein_4b_q8p.ckpt": 1_500, // $0.0015 per image (50% of Together.ai $0.003)
+	"flux_2_klein_9b_q8p.ckpt": 2_500, // $0.0025 per image (50% of fal.ai $0.005)
 }
 
 // InputPricePerMillion returns the price in micro-USD for 1M input tokens.
@@ -121,21 +120,46 @@ func DefaultPrices() map[string][2]int64 {
 	return result
 }
 
-// CalculateImageCost returns the total cost in micro-USD for an image generation
-// job. Pricing is per-image, scaled by resolution relative to 1024x1024 base.
-// Base price: $0.002 per 1024x1024 image (2000 micro-USD).
-func CalculateImageCost(model string, width, height, count int) int64 {
-	const basePriceMicroUSD int64 = 2_000 // $0.002 per image at 1024x1024
-	const basePixels int64 = 1024 * 1024
-
-	pixels := int64(width) * int64(height)
-	// Scale cost proportionally to pixel count (minimum 1x)
-	scaledPrice := basePriceMicroUSD * pixels / basePixels
-	if scaledPrice < basePriceMicroUSD/2 {
-		scaledPrice = basePriceMicroUSD / 2 // minimum half-price for small images
+// DefaultTranscriptionPrices returns per-minute pricing for STT models.
+func DefaultTranscriptionPrices() map[string]int64 {
+	result := make(map[string]int64, len(transcriptionPricing))
+	for model, price := range transcriptionPricing {
+		result[model] = price
 	}
+	return result
+}
 
-	totalCost := scaledPrice * int64(count)
+// DefaultImagePrices returns per-image pricing for image models.
+func DefaultImagePrices() map[string]int64 {
+	result := make(map[string]int64, len(imagePricing))
+	for model, price := range imagePricing {
+		result[model] = price
+	}
+	return result
+}
+
+// ImagePricePerImage returns the per-image price in micro-USD for the given model.
+func ImagePricePerImage(model string) int64 {
+	if p, ok := imagePricing[model]; ok {
+		return p
+	}
+	return 1_500 // default to cheapest model price
+}
+
+// TranscriptionPricePerMinute returns the per-audio-minute price in micro-USD.
+func TranscriptionPricePerMinute(model string) int64 {
+	if p, ok := transcriptionPricing[model]; ok {
+		return p
+	}
+	return defaultTranscriptionPricePerMinute
+}
+
+// CalculateImageCost returns the total cost in micro-USD for an image generation
+// job. Pricing is per-image based on the model's per-image price.
+func CalculateImageCost(model string, width, height, count int) int64 {
+	pricePerImage := ImagePricePerImage(model)
+
+	totalCost := pricePerImage * int64(count)
 	if totalCost < minimumChargeMicroUSD {
 		totalCost = minimumChargeMicroUSD
 	}

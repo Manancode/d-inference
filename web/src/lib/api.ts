@@ -135,6 +135,40 @@ export async function fetchModels(): Promise<Model[]> {
   });
 }
 
+export interface PriceEntry {
+  model: string;
+  input_price: number;
+  output_price: number;
+  input_usd: string;
+  output_usd: string;
+}
+
+export interface TranscriptionPriceEntry {
+  model: string;
+  price_per_minute: number;
+  price_usd: string;
+  unit: string;
+}
+
+export interface ImagePriceEntry {
+  model: string;
+  price_per_image: number;
+  price_usd: string;
+  unit: string;
+}
+
+export interface PricingResponse {
+  prices: PriceEntry[];
+  transcription_prices: TranscriptionPriceEntry[];
+  image_prices: ImagePriceEntry[];
+}
+
+export async function fetchPricing(): Promise<PricingResponse> {
+  const res = await fetch("/api/pricing", { headers: proxyHeaders() });
+  if (!res.ok) throw new Error(`Failed to fetch pricing: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchBalance(): Promise<BalanceResponse> {
   const res = await fetch("/api/payments/balance", { headers: proxyHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch balance: ${res.status}`);

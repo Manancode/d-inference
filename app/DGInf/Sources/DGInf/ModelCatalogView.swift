@@ -4,7 +4,7 @@
 ///   - Fit indicators (green = fits, red = too large for RAM)
 ///   - Download status (Downloaded, Available, Downloading)
 ///   - Download/Remove actions
-///   - Multi-model selection support
+///   - Model type badges (text, image, transcription)
 
 import SwiftUI
 
@@ -68,27 +68,38 @@ struct ModelCatalogView: View {
         let fits = entry.fitsInMemory(totalGB: viewModel.memoryGB)
         let isActive = viewModel.currentModel == entry.id
         let isDownloading = downloadingModel == entry.id
+        let isDefault = ModelCatalog.defaultModel(ramGB: viewModel.memoryGB)?.id == entry.id
 
         return HStack(spacing: 12) {
             // Fit indicator
             Image(systemName: fits ? "checkmark.circle.fill" : "xmark.circle")
                 .foregroundColor(fits ? .green : .red)
                 .font(.caption)
-                .help(fits ? "Fits in memory" : "Requires more RAM than available")
+                .help(fits ? "Fits in memory" : "Requires more RAM")
 
             // Model info
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(entry.name)
                         .fontWeight(.medium)
-                    Text(entry.parameters)
+                    Text(entry.modelType)
                         .font(.caption2)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
-                        .background(Color.blue.opacity(0.15))
+                        .background(typeColor(entry.modelType).opacity(0.15))
+                        .foregroundColor(typeColor(entry.modelType))
                         .cornerRadius(3)
+                    if isDefault {
+                        Text("default")
+                            .font(.caption2)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundColor(.accentColor)
+                            .cornerRadius(3)
+                    }
                 }
-                Text(String(format: "%.1f GB", entry.sizeGB))
+                Text("\(String(format: "%.1f", entry.sizeGB)) GB  \(entry.architecture)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -147,6 +158,15 @@ struct ModelCatalogView: View {
         .padding(.horizontal, 8)
         .background(isActive ? Color.accentColor.opacity(0.08) : Color.clear)
         .cornerRadius(6)
+    }
+
+    private func typeColor(_ type: String) -> Color {
+        switch type {
+        case "text": return .blue
+        case "image": return .purple
+        case "transcription": return .orange
+        default: return .gray
+        }
     }
 
     private func downloadModel(_ modelId: String) async {

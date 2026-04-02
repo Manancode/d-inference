@@ -9,14 +9,10 @@ func TestOutputPriceKnownModels(t *testing.T) {
 		model string
 		want  int64
 	}{
-		{"mlx-community/Qwen2.5-0.5B-Instruct-4bit", 10_000},
-		{"mlx-community/Qwen2.5-3B-Instruct-4bit", 25_000},
-		{"mlx-community/Qwen2.5-7B-Instruct-4bit", 50_000},
-		{"mlx-community/Qwen3.5-9B-Instruct-4bit", 70_000},
-		{"mlx-community/Qwen2.5-14B-Instruct-4bit", 100_000},
-		{"mlx-community/Qwen2.5-32B-Instruct-4bit", 150_000},
-		{"mlx-community/Qwen2.5-72B-Instruct-4bit", 200_000},
-		{"mlx-community/Qwen3.5-122B-Instruct-4bit", 800_000},
+		{"mlx-community/qwen3.5-27b-claude-opus-8bit-text-only", 780_000},
+		{"mlx-community/Trinity-Mini-8bit", 75_000},
+		{"mlx-community/Qwen3.5-122B-A10B-8bit", 1_040_000},
+		{"mlx-community/MiniMax-M2.5-8bit", 500_000},
 	}
 
 	for _, tc := range tests {
@@ -32,11 +28,10 @@ func TestInputPriceKnownModels(t *testing.T) {
 		model string
 		want  int64
 	}{
-		{"mlx-community/Qwen2.5-0.5B-Instruct-4bit", 5_000},
-		{"mlx-community/Qwen2.5-7B-Instruct-4bit", 20_000},
-		{"mlx-community/Qwen3.5-9B-Instruct-4bit", 25_000},
-		{"mlx-community/Qwen2.5-72B-Instruct-4bit", 60_000},
-		{"mlx-community/Qwen3.5-122B-Instruct-4bit", 130_000},
+		{"mlx-community/qwen3.5-27b-claude-opus-8bit-text-only", 100_000},
+		{"mlx-community/Trinity-Mini-8bit", 23_000},
+		{"mlx-community/Qwen3.5-122B-A10B-8bit", 130_000},
+		{"mlx-community/MiniMax-M2.5-8bit", 60_000},
 	}
 
 	for _, tc := range tests {
@@ -78,53 +73,53 @@ func TestCalculateCost(t *testing.T) {
 		want             int64
 	}{
 		{
-			name:             "1M output tokens at 7B rate, no input",
-			model:            "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			name:             "1M output tokens at Trinity Mini rate, no input",
+			model:            "mlx-community/Trinity-Mini-8bit",
 			promptTokens:     0,
 			completionTokens: 1_000_000,
-			want:             50_000, // $0.05 output only
+			want:             75_000, // $0.075 output only
 		},
 		{
-			name:             "1M input + 1M output at 7B rate",
-			model:            "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			name:             "1M input + 1M output at Trinity Mini rate",
+			model:            "mlx-community/Trinity-Mini-8bit",
 			promptTokens:     1_000_000,
 			completionTokens: 1_000_000,
-			want:             70_000, // $0.02 input + $0.05 output = $0.07
+			want:             98_000, // $0.023 input + $0.075 output = $0.098
 		},
 		{
-			name:             "only input tokens at 72B rate",
-			model:            "mlx-community/Qwen2.5-72B-Instruct-4bit",
+			name:             "only input tokens at MiniMax rate",
+			model:            "mlx-community/MiniMax-M2.5-8bit",
 			promptTokens:     1_000_000,
 			completionTokens: 0,
 			want:             60_000, // $0.06 input, no output
 		},
 		{
 			name:             "122B model 1M each",
-			model:            "mlx-community/Qwen3.5-122B-Instruct-4bit",
+			model:            "mlx-community/Qwen3.5-122B-A10B-8bit",
 			promptTokens:     1_000_000,
 			completionTokens: 1_000_000,
-			want:             930_000, // $0.13 input + $0.80 output = $0.93
+			want:             1_170_000, // $0.13 input + $1.04 output = $1.17
 		},
 		{
 			name:             "small request hits minimum",
-			model:            "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+			model:            "mlx-community/Trinity-Mini-8bit",
 			promptTokens:     10,
 			completionTokens: 10,
 			want:             100, // minimum $0.0001
 		},
 		{
 			name:             "zero tokens hits minimum",
-			model:            "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			model:            "mlx-community/Trinity-Mini-8bit",
 			promptTokens:     0,
 			completionTokens: 0,
 			want:             100, // minimum
 		},
 		{
-			name:             "small 0.5B model is cheapest",
-			model:            "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+			name:             "Qwen3.5 27B Claude Opus 1M output",
+			model:            "mlx-community/qwen3.5-27b-claude-opus-8bit-text-only",
 			promptTokens:     0,
 			completionTokens: 1_000_000,
-			want:             10_000, // $0.01
+			want:             780_000, // $0.78
 		},
 	}
 
@@ -144,10 +139,10 @@ func TestPlatformFee(t *testing.T) {
 		totalCost int64
 		wantFee   int64
 	}{
-		{100_000, 5_000},      // 5% of $0.10
-		{1_000_000, 50_000},   // 5% of $1.00
-		{500_000, 25_000},     // 5% of $0.50
-		{1_000, 50},           // 5% of $0.001
+		{100_000, 5_000},    // 5% of $0.10
+		{1_000_000, 50_000}, // 5% of $1.00
+		{500_000, 25_000},   // 5% of $0.50
+		{1_000, 50},         // 5% of $0.001
 		{0, 0},
 	}
 
@@ -164,9 +159,9 @@ func TestProviderPayout(t *testing.T) {
 		totalCost  int64
 		wantPayout int64
 	}{
-		{100_000, 95_000},     // 95% of $0.10
-		{1_000_000, 950_000},  // 95% of $1.00
-		{1_000, 950},          // 95% of $0.001
+		{100_000, 95_000},    // 95% of $0.10
+		{1_000_000, 950_000}, // 95% of $1.00
+		{1_000, 950},         // 95% of $0.001
 		{0, 0},
 	}
 
@@ -190,87 +185,98 @@ func TestPlatformFeeAndProviderPayoutSumToTotal(t *testing.T) {
 	}
 }
 
-func TestBiggerModelsCostMore(t *testing.T) {
-	small := OutputPricePerMillion("mlx-community/Qwen2.5-0.5B-Instruct-4bit")
-	medium := OutputPricePerMillion("mlx-community/Qwen2.5-7B-Instruct-4bit")
-	large := OutputPricePerMillion("mlx-community/Qwen2.5-72B-Instruct-4bit")
-	huge := OutputPricePerMillion("mlx-community/Qwen3.5-122B-Instruct-4bit")
-
-	if small >= medium {
-		t.Errorf("0.5B (%d) should be cheaper than 7B (%d)", small, medium)
-	}
-	if medium >= large {
-		t.Errorf("7B (%d) should be cheaper than 72B (%d)", medium, large)
-	}
-	if large >= huge {
-		t.Errorf("72B (%d) should be cheaper than 122B (%d)", large, huge)
-	}
-}
-
-func TestAllModelPricesUndercutOpenRouter(t *testing.T) {
-	// OpenRouter output prices (micro-USD per 1M tokens)
-	openRouterOutput := map[string]int64{
-		"mlx-community/Qwen2.5-0.5B-Instruct-4bit": 20_000,    // ~$0.02
-		"mlx-community/Qwen2.5-7B-Instruct-4bit":   100_000,   // $0.10
-		"mlx-community/Qwen3.5-9B-Instruct-4bit":   150_000,   // $0.15
-		"mlx-community/Qwen2.5-72B-Instruct-4bit":  390_000,   // $0.39
-		"mlx-community/Qwen3.5-122B-Instruct-4bit": 1_560_000, // $1.56
+func TestAllModelPricesUndercutCompetitors(t *testing.T) {
+	// Competitor output prices (micro-USD per 1M tokens)
+	competitorOutput := map[string]int64{
+		"mlx-community/qwen3.5-27b-claude-opus-8bit-text-only": 1_560_000, // OpenRouter $1.56
+		"mlx-community/Trinity-Mini-8bit":                       150_000,   // OpenRouter $0.15
+		"mlx-community/Qwen3.5-122B-A10B-8bit":                  2_080_000, // OpenRouter $2.08
+		"mlx-community/MiniMax-M2.5-8bit":                       1_000_000, // OpenRouter $1.00
 	}
 
-	for model, orPrice := range openRouterOutput {
+	for model, compPrice := range competitorOutput {
 		ourPrice := OutputPricePerMillion(model)
-		if ourPrice >= orPrice {
-			t.Errorf("%s: our output price %d >= OpenRouter %d", model, ourPrice, orPrice)
+		if ourPrice >= compPrice {
+			t.Errorf("%s: our output price %d >= competitor %d", model, ourPrice, compPrice)
 		}
 	}
 
-	// OpenRouter input prices (micro-USD per 1M tokens)
-	openRouterInput := map[string]int64{
-		"mlx-community/Qwen2.5-7B-Instruct-4bit":   40_000,    // $0.04
-		"mlx-community/Qwen3.5-9B-Instruct-4bit":   50_000,    // $0.05
-		"mlx-community/Qwen2.5-72B-Instruct-4bit":  120_000,   // $0.12
-		"mlx-community/Qwen3.5-122B-Instruct-4bit": 260_000,   // $0.26
+	// Competitor input prices (micro-USD per 1M tokens)
+	competitorInput := map[string]int64{
+		"mlx-community/qwen3.5-27b-claude-opus-8bit-text-only": 200_000,   // OpenRouter $0.20
+		"mlx-community/Trinity-Mini-8bit":                       46_000,    // OpenRouter $0.046
+		"mlx-community/Qwen3.5-122B-A10B-8bit":                  260_000,   // OpenRouter $0.26
+		"mlx-community/MiniMax-M2.5-8bit":                       120_000,   // OpenRouter $0.12
 	}
 
-	for model, orPrice := range openRouterInput {
+	for model, compPrice := range competitorInput {
 		ourPrice := InputPricePerMillion(model)
-		if ourPrice >= orPrice {
-			t.Errorf("%s: our input price %d >= OpenRouter %d", model, ourPrice, orPrice)
+		if ourPrice >= compPrice {
+			t.Errorf("%s: our input price %d >= competitor %d", model, ourPrice, compPrice)
 		}
 	}
 }
 
 func TestCalculateImageCost(t *testing.T) {
-	// Base case: 1 image at 1024x1024 = $0.002 = 2000 micro-USD
-	cost := CalculateImageCost("flux-klein-4b", 1024, 1024, 1)
-	if cost != 2000 {
-		t.Errorf("expected 2000 micro-USD for 1x 1024x1024, got %d", cost)
+	// Known model: flux_2_klein_4b = 1500 micro-USD per image
+	cost := CalculateImageCost("flux_2_klein_4b_q8p.ckpt", 1024, 1024, 1)
+	if cost != 1500 {
+		t.Errorf("expected 1500 micro-USD for 1x image with 4B model, got %d", cost)
 	}
 
-	// 2 images at base resolution = $0.004
-	cost = CalculateImageCost("flux-klein-4b", 1024, 1024, 2)
-	if cost != 4000 {
-		t.Errorf("expected 4000 micro-USD for 2x 1024x1024, got %d", cost)
+	// 2 images with 4B model = 3000 micro-USD
+	cost = CalculateImageCost("flux_2_klein_4b_q8p.ckpt", 1024, 1024, 2)
+	if cost != 3000 {
+		t.Errorf("expected 3000 micro-USD for 2x images with 4B model, got %d", cost)
 	}
 
-	// Small image (512x512 = 1/4 pixels) should be cheaper but has minimum
-	cost = CalculateImageCost("flux-klein-4b", 512, 512, 1)
-	if cost >= 2000 {
-		t.Errorf("512x512 (%d) should be cheaper than 1024x1024 (2000)", cost)
-	}
-	if cost < 1000 {
-		t.Errorf("512x512 (%d) should be at least 1000 (minimum half-price)", cost)
+	// Known model: flux_2_klein_9b = 2500 micro-USD per image
+	cost = CalculateImageCost("flux_2_klein_9b_q8p.ckpt", 1024, 1024, 1)
+	if cost != 2500 {
+		t.Errorf("expected 2500 micro-USD for 1x image with 9B model, got %d", cost)
 	}
 
-	// Large image (2048x2048 = 4x pixels) should cost 4x base
-	cost = CalculateImageCost("flux-klein-4b", 2048, 2048, 1)
-	if cost != 8000 {
-		t.Errorf("expected 8000 micro-USD for 2048x2048, got %d", cost)
+	// Unknown model falls back to default (1500)
+	cost = CalculateImageCost("unknown-image-model", 1024, 1024, 1)
+	if cost != 1500 {
+		t.Errorf("expected 1500 micro-USD for unknown model, got %d", cost)
 	}
 
-	// Minimum charge applies
-	cost = CalculateImageCost("flux-klein-4b", 64, 64, 1)
+	// Minimum charge applies for small count
+	cost = CalculateImageCost("flux_2_klein_4b_q8p.ckpt", 64, 64, 1)
 	if cost < 100 {
 		t.Errorf("expected at least minimum charge (100), got %d", cost)
+	}
+}
+
+func TestTranscriptionPricing(t *testing.T) {
+	// Known model
+	price := TranscriptionPricePerMinute("CohereLabs/cohere-transcribe-03-2026")
+	if price != 1_000 {
+		t.Errorf("expected 1000 micro-USD for Cohere transcribe, got %d", price)
+	}
+
+	// Unknown model falls back to default
+	price = TranscriptionPricePerMinute("unknown-stt-model")
+	if price != defaultTranscriptionPricePerMinute {
+		t.Errorf("expected default %d for unknown model, got %d", defaultTranscriptionPricePerMinute, price)
+	}
+}
+
+func TestImagePricePerImage(t *testing.T) {
+	tests := []struct {
+		model string
+		want  int64
+	}{
+		{"flux_2_klein_4b_q8p.ckpt", 1_500},
+		{"flux_2_klein_9b_q8p.ckpt", 2_500},
+		{"unknown-model", 1_500}, // default
+	}
+
+	for _, tc := range tests {
+		got := ImagePricePerImage(tc.model)
+		if got != tc.want {
+			t.Errorf("ImagePricePerImage(%q) = %d, want %d", tc.model, got, tc.want)
+		}
 	}
 }
