@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"sort"
+	"time"
 
 	"github.com/dginf/coordinator/internal/registry"
 )
@@ -32,6 +34,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			status = "online"
 		}
 
+		// Collect available model IDs for this provider
+		provModels := make([]string, 0, len(p.Models))
+		for _, m := range p.Models {
+			provModels = append(provModels, m.ID)
+		}
+
 		prov := map[string]any{
 			"id":                   p.ID,
 			"chip":                 p.Hardware.ChipName,
@@ -47,9 +55,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			"decode_tps":          p.DecodeTPS,
 			"requests_served":     p.Stats.RequestsServed,
 			"tokens_generated":    p.Stats.TokensGenerated,
-		}
-		if p.CurrentModel != "" {
-			prov["current_model"] = p.CurrentModel
+			"models":              provModels,
+			"current_model":       p.CurrentModel,
 		}
 		providers = append(providers, prov)
 
@@ -99,6 +106,51 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		avgTokens = float64(totalTokens) / float64(totalRequests)
 	}
 
+	// Build time series from usage records (last 30 minutes, 1-minute buckets).
+	now := time.Now()
+	cutoff := now.Add(-30 * time.Minute)
+
+	type tsBucket struct {
+		Requests         int64
+		PromptTokens     int64
+		CompletionTokens int64
+	}
+	buckets := make(map[int64]*tsBucket)
+
+	for _, rec := range s.store.UsageRecords() {
+		if rec.Timestamp.Before(cutoff) {
+			continue
+		}
+		minuteKey := rec.Timestamp.Truncate(time.Minute).Unix()
+		b, ok := buckets[minuteKey]
+		if !ok {
+			b = &tsBucket{}
+			buckets[minuteKey] = b
+		}
+		b.Requests++
+		b.PromptTokens += int64(rec.PromptTokens)
+		b.CompletionTokens += int64(rec.CompletionTokens)
+	}
+
+	// Sort bucket keys and build the output slice.
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	timeSeries := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		b := buckets[k]
+		timeSeries = append(timeSeries, map[string]any{
+			"timestamp":         time.Unix(k, 0).UTC().Format(time.RFC3339),
+			"requests":          b.Requests,
+			"prompt_tokens":     b.PromptTokens,
+			"completion_tokens": b.CompletionTokens,
+			"total_tokens":      b.PromptTokens + b.CompletionTokens,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_requests":          totalRequests,
 		"total_prompt_tokens":     totalPromptTokens,
@@ -113,6 +165,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"network_capacity_tps":    0, // would need benchmark data
 		"providers":               providers,
 		"models":                  models,
-		"time_series":             []any{}, // not implemented yet
+		"time_series":             timeSeries,
 	})
 }
