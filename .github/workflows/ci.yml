@@ -35,6 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run tests
-        run: cd provider && cargo test
+        run: |
+          cd provider
+          # Skip proxy and server integration tests — they require SIP enabled
+          # which is not available on GitHub Actions macOS runners.
+          # These tests run locally on real Macs via the pre-push hook.
+          cargo test -- --skip proxy::tests --skip server::tests
       - name: Check formatting
         run: cd provider && cargo fmt --check
