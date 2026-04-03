@@ -29,7 +29,7 @@ jobs:
 
   test-provider:
     name: Provider Tests
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Run tests
