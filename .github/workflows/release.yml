@@ -90,18 +90,6 @@ jobs:
 
       # --- Register with coordinator ---
 
-      - name: Extract changelog from tag
-        id: changelog
-        run: |
-          # Use annotated tag message as the changelog.
-          # Create tags with: git tag -a v0.2.1 -m "- Feature one\n- Feature two"
-          TAG_MSG=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | head -20)
-          if [ -z "$TAG_MSG" ]; then
-            TAG_MSG="- Release ${GITHUB_REF_NAME}"
-          fi
-          CHANGELOG_ESCAPED=$(echo "$TAG_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")
-          echo "changelog=$CHANGELOG_ESCAPED" >> "$GITHUB_OUTPUT"
-
       - name: Register release with coordinator
         env:
           COORDINATOR_URL: ${{ secrets.COORDINATOR_URL }}
@@ -111,17 +99,31 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           BUNDLE_URL="${R2_PUBLIC_URL}/releases/v${VERSION}/dginf-bundle-macos-arm64.tar.gz"
 
+          # Extract annotated tag message for changelog.
+          TAG_MSG=$(git tag -l --format='%(contents:subject)%0a%(contents:body)' "$GITHUB_REF_NAME" 2>/dev/null || echo "")
+          if [ -z "$TAG_MSG" ] || [ "$TAG_MSG" = $'\n' ]; then
+            TAG_MSG="Release v${VERSION}"
+          fi
+
+          # Use python3 to build JSON safely (handles escaping).
+          python3 -c "
+          import json, subprocess, sys
+          payload = {
+              'version': '${VERSION}',
+              'platform': 'macos-arm64',
+              'binary_hash': '${{ steps.hash.outputs.binary_hash }}',
+              'bundle_hash': '${{ steps.hash.outputs.bundle_hash }}',
+              'url': '${BUNDLE_URL}',
+              'changelog': '''${TAG_MSG}'''.strip()
+          }
+          print(json.dumps(payload))
+          " > /tmp/release-payload.json
+
           curl -fsSL -X POST "${COORDINATOR_URL}/v1/releases" \
             -H "Authorization: Bearer ${RELEASE_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"version\": \"${VERSION}\",
-              \"platform\": \"macos-arm64\",
-              \"binary_hash\": \"${{ steps.hash.outputs.binary_hash }}\",
-              \"bundle_hash\": \"${{ steps.hash.outputs.bundle_hash }}\",
-              \"url\": \"${BUNDLE_URL}\",
-              \"changelog\": ${{ steps.changelog.outputs.changelog }}
-            }"
+            -d @/tmp/release-payload.json
+          echo ""
           echo "Release v${VERSION} registered with coordinator"
 
       # --- GitHub Release ---
