@@ -3525,6 +3525,19 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     std::fs::write(tmp_path, &bytes)?;
     println!("  Downloaded {} MB", bytes.len() / 1_048_576);
 
+    // Verify bundle hash if provided by the coordinator.
+    let expected_hash = info["bundle_hash"].as_str().unwrap_or("");
+    if !expected_hash.is_empty() {
+        let actual_hash = security::sha256_hex(&bytes);
+        if actual_hash != expected_hash {
+            std::fs::remove_file(tmp_path).ok();
+            anyhow::bail!(
+                "Bundle hash mismatch — download may be compromised!\n  Expected: {expected_hash}\n  Got:      {actual_hash}"
+            );
+        }
+        println!("  Hash verified ✓");
+    }
+
     // Extract and install
     let dginf_dir = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot find home directory"))?

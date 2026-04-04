@@ -1085,7 +1085,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleVersion returns the latest provider CLI version and download URL.
 // Providers call GET /api/version to check if they need to update.
+// If a release is registered in the store, uses that. Otherwise falls back
+// to the hardcoded LatestProviderVersion.
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	// Try release table first.
+	if release := s.store.GetLatestRelease("macos-arm64"); release != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"version":      release.Version,
+			"download_url": release.URL,
+			"bundle_hash":  release.BundleHash,
+		})
+		return
+	}
+
+	// Fallback to hardcoded version + coordinator download.
 	scheme := "https"
 	if r.TLS == nil && !strings.Contains(r.Host, "openinnovation.dev") {
 		scheme = "http"
