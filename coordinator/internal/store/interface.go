@@ -317,6 +317,7 @@ type Release struct {
 	BinaryHash string    `json:"binary_hash"` // SHA-256 of dginf-provider binary (attestation verification)
 	BundleHash string    `json:"bundle_hash"` // SHA-256 of the bundle tarball (install.sh download verification)
 	URL        string    `json:"url"`         // R2 download URL for the bundle tarball
+	Changelog  string    `json:"changelog"`   // human-readable changes in this version
 	Active     bool      `json:"active"`      // whether this version is accepted by the coordinator
 	CreatedAt  time.Time `json:"created_at"`
 }

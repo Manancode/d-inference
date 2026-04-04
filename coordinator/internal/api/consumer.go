@@ -1094,6 +1094,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			"version":      release.Version,
 			"download_url": release.URL,
 			"bundle_hash":  release.BundleHash,
+			"changelog":    release.Changelog,
 		})
 		return
 	}

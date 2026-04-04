@@ -206,10 +206,15 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			binary_hash TEXT NOT NULL DEFAULT '',
 			bundle_hash TEXT NOT NULL DEFAULT '',
 			url TEXT NOT NULL DEFAULT '',
+			changelog TEXT NOT NULL DEFAULT '',
 			active BOOLEAN NOT NULL DEFAULT TRUE,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (version, platform)
 		)`,
+		`DO $$ BEGIN
+			ALTER TABLE releases ADD COLUMN IF NOT EXISTS changelog TEXT NOT NULL DEFAULT '';
+		EXCEPTION WHEN others THEN NULL;
+		END $$`,
 
 		// Device authorization (RFC 8628-style)
 		`CREATE TABLE IF NOT EXISTS device_codes (
@@ -984,11 +989,11 @@ func (s *PostgresStore) SetRelease(release *Release) error {
 	defer cancel()
 
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO releases (version, platform, binary_hash, bundle_hash, url, active, created_at)
-		 VALUES ($1, $2, $3, $4, $5, TRUE, NOW())
+		`INSERT INTO releases (version, platform, binary_hash, bundle_hash, url, changelog, active, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
 		 ON CONFLICT (version, platform) DO UPDATE SET
-		   binary_hash = $3, bundle_hash = $4, url = $5, active = TRUE`,
-		release.Version, release.Platform, release.BinaryHash, release.BundleHash, release.URL,
+		   binary_hash = $3, bundle_hash = $4, url = $5, changelog = $6, active = TRUE`,
+		release.Version, release.Platform, release.BinaryHash, release.BundleHash, release.URL, release.Changelog,
 	)
 	if err != nil {
 		return fmt.Errorf("store: set release: %w", err)
@@ -1001,7 +1006,7 @@ func (s *PostgresStore) ListReleases() []Release {
 	defer cancel()
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT version, platform, binary_hash, bundle_hash, url, active, created_at
+		`SELECT version, platform, binary_hash, bundle_hash, url, changelog, active, created_at
 		 FROM releases ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -1013,7 +1018,7 @@ func (s *PostgresStore) ListReleases() []Release {
 	for rows.Next() {
 		var r Release
 		if err := rows.Scan(&r.Version, &r.Platform, &r.BinaryHash, &r.BundleHash,
-			&r.URL, &r.Active, &r.CreatedAt); err != nil {
+			&r.URL, &r.Changelog, &r.Active, &r.CreatedAt); err != nil {
 			continue
 		}
 		releases = append(releases, r)
@@ -1027,11 +1032,11 @@ func (s *PostgresStore) GetLatestRelease(platform string) *Release {
 
 	var r Release
 	err := s.pool.QueryRow(ctx,
-		`SELECT version, platform, binary_hash, bundle_hash, url, active, created_at
+		`SELECT version, platform, binary_hash, bundle_hash, url, changelog, active, created_at
 		 FROM releases WHERE platform = $1 AND active = TRUE
 		 ORDER BY created_at DESC LIMIT 1`, platform,
 	).Scan(&r.Version, &r.Platform, &r.BinaryHash, &r.BundleHash,
-		&r.URL, &r.Active, &r.CreatedAt)
+		&r.URL, &r.Changelog, &r.Active, &r.CreatedAt)
 	if err != nil {
 		return nil
 	}

@@ -647,6 +647,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     setup_logging(cli.verbose);
 
+    // Check for updates in the background — non-blocking, 2s timeout.
+    // Shows a one-line alert if a newer version is available.
+    check_for_update_alert().await;
+
     // NOTE: deny_debugger_attachment() is called AFTER subprocess spawning
     // in cmd_serve, not here. PT_DENY_ATTACH poisons mach_task_self_ in
     // the process memory space, causing child processes (Python backend)
@@ -707,6 +711,72 @@ async fn main() -> Result<()> {
         Command::Login { coordinator } => cmd_login(coordinator).await,
         Command::Logout => cmd_logout().await,
     }
+}
+
+/// Non-blocking update check. Hits /api/version with a short timeout.
+/// If a newer version exists, prints a one-line alert with changelog.
+async fn check_for_update_alert() {
+    let current = env!("CARGO_PKG_VERSION");
+
+    // Determine coordinator URL from config or default.
+    let coordinator_url = config::load(&config::default_config_path().unwrap_or_default())
+        .ok()
+        .map(|c| {
+            c.coordinator
+                .url
+                .replace("ws://", "http://")
+                .replace("wss://", "https://")
+                .replace("/ws/provider", "")
+        })
+        .unwrap_or_else(|| "https://inference-test.openinnovation.dev".to_string());
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let resp = match client
+        .get(format!("{coordinator_url}/api/version"))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return,
+    };
+
+    let info: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let latest = match info["version"].as_str() {
+        Some(v) if v != current && is_newer_version(current, v) => v,
+        _ => return,
+    };
+
+    let changelog = info["changelog"].as_str().unwrap_or("");
+
+    eprintln!();
+    eprintln!("  ╭──────────────────────────────────────────────╮");
+    eprintln!("  │  Update available: {current} → {:<17} │", latest);
+    if !changelog.is_empty() {
+        // Show first 2 lines of changelog.
+        for line in changelog.lines().take(2) {
+            let truncated = if line.len() > 42 {
+                format!("{}...", &line[..39])
+            } else {
+                line.to_string()
+            };
+            eprintln!("  │  {:<44}│", truncated);
+        }
+    }
+    eprintln!("  │                                              │");
+    eprintln!("  │  Run: dginf-provider update                  │");
+    eprintln!("  ╰──────────────────────────────────────────────╯");
+    eprintln!();
 }
 
 async fn cmd_init() -> Result<()> {
@@ -3506,6 +3576,16 @@ async fn cmd_update(coordinator: String) -> Result<()> {
 
     println!();
     println!("  Update available: {current_version} → {latest}");
+
+    // Show changelog if available.
+    let changelog = info["changelog"].as_str().unwrap_or("");
+    if !changelog.is_empty() {
+        println!();
+        println!("  What's new:");
+        for line in changelog.lines() {
+            println!("    {line}");
+        }
+    }
 
     if download_url.is_empty() {
         println!();

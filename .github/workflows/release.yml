@@ -90,6 +90,20 @@ jobs:
 
       # --- Register with coordinator ---
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commit messages since last tag.
+          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1)
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG"..HEAD -- ':!*.md' | head -20)
+          else
+            CHANGELOG="- Initial release"
+          fi
+          # Escape for JSON.
+          CHANGELOG_ESCAPED=$(echo "$CHANGELOG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")
+          echo "changelog=$CHANGELOG_ESCAPED" >> "$GITHUB_OUTPUT"
+
       - name: Register release with coordinator
         env:
           COORDINATOR_URL: ${{ secrets.COORDINATOR_URL }}
@@ -107,7 +121,8 @@ jobs:
               \"platform\": \"macos-arm64\",
               \"binary_hash\": \"${{ steps.hash.outputs.binary_hash }}\",
               \"bundle_hash\": \"${{ steps.hash.outputs.bundle_hash }}\",
-              \"url\": \"${BUNDLE_URL}\"
+              \"url\": \"${BUNDLE_URL}\",
+              \"changelog\": ${{ steps.changelog.outputs.changelog }}
             }"
           echo "Release v${VERSION} registered with coordinator"
 
