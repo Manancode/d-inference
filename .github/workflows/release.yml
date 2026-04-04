@@ -90,18 +90,16 @@ jobs:
 
       # --- Register with coordinator ---
 
-      - name: Generate changelog
+      - name: Extract changelog from tag
         id: changelog
         run: |
-          # Get commit messages since last tag.
-          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1)
-          if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG"..HEAD -- ':!*.md' | head -20)
-          else
-            CHANGELOG="- Initial release"
+          # Use annotated tag message as the changelog.
+          # Create tags with: git tag -a v0.2.1 -m "- Feature one\n- Feature two"
+          TAG_MSG=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | head -20)
+          if [ -z "$TAG_MSG" ]; then
+            TAG_MSG="- Release ${GITHUB_REF_NAME}"
           fi
-          # Escape for JSON.
-          CHANGELOG_ESCAPED=$(echo "$CHANGELOG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")
+          CHANGELOG_ESCAPED=$(echo "$TAG_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")
           echo "changelog=$CHANGELOG_ESCAPED" >> "$GITHUB_OUTPUT"
 
       - name: Register release with coordinator
