@@ -9,6 +9,7 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { TopBar } from "@/components/TopBar";
 import { Lock, Cpu, Globe, Mail } from "lucide-react";
+import { InviteCodeBanner } from "@/components/InviteCodeBanner";
 import type { Message } from "@/lib/store";
 
 function generateId() {
@@ -370,6 +371,8 @@ export default function ChatPage() {
           <div className="h-4" />
         </div>
       )}
+
+      {authenticated && <InviteCodeBanner />}
 
       <ChatInput
         onSend={handleSend}
