@@ -16,6 +16,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"crypto/x509"
 	"fmt"
 	"io"
@@ -362,6 +363,13 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			}
 			ctx := context.WithValue(r.Context(), ctxKeyConsumer, user.AccountID)
 			ctx = context.WithValue(ctx, auth.CtxKeyUser, user)
+			next(w, r.WithContext(ctx))
+			return
+		}
+
+		// Accept admin key (admin endpoints handle further authorization in-handler).
+		if s.adminKey != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.adminKey)) == 1 {
+			ctx := context.WithValue(r.Context(), ctxKeyConsumer, "admin")
 			next(w, r.WithContext(ctx))
 			return
 		}
