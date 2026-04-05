@@ -142,6 +142,7 @@ export default function ChatPage() {
               updateMessage(chatId!, assistantId, {
                 content: `Error: ${error}`,
                 streaming: false,
+                error: true,
               });
               addToast(error);
               setIsStreaming(false);
@@ -155,6 +156,7 @@ export default function ChatPage() {
           updateMessage(chatId!, assistantId, {
             content: `Connection error: ${msg}`,
             streaming: false,
+            error: true,
           });
           addToast(`Connection error: ${msg}`);
         }
@@ -178,6 +180,71 @@ export default function ChatPage() {
     abortRef.current?.abort();
     setIsStreaming(false);
   }, []);
+
+  const handleRetry = useCallback(
+    (errorMsgId: string) => {
+      if (!activeChat || isStreaming) return;
+      const messages = activeChat.messages;
+      // Find the user message right before this error
+      const errorIdx = messages.findIndex((m) => m.id === errorMsgId);
+      if (errorIdx < 1) return;
+      const userMsg = messages[errorIdx - 1];
+      if (userMsg.role !== "user") return;
+
+      // Reset the error message to streaming state
+      updateMessage(activeChat.id, errorMsgId, {
+        content: "",
+        error: false,
+        streaming: true,
+        thinking: undefined,
+      });
+
+      setIsStreaming(true);
+      const abort = new AbortController();
+      abortRef.current = abort;
+
+      // Rebuild message history up to (but not including) the error message
+      const allMessages = messages
+        .slice(0, errorIdx)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      streamChat(
+        allMessages,
+        selectedModel,
+        {
+          onToken: (token) => appendToMessage(activeChat.id, errorMsgId, token),
+          onThinking: (token) => appendToThinking(activeChat.id, errorMsgId, token),
+          onMetrics: (metrics) => updateMessage(activeChat.id, errorMsgId, {
+            tps: metrics.tps, ttft: metrics.ttft, tokenCount: metrics.tokenCount,
+          }),
+          onDone: (trust, metrics) => {
+            updateMessage(activeChat.id, errorMsgId, {
+              streaming: false, trust,
+              tps: metrics.tps, ttft: metrics.ttft, tokenCount: metrics.tokenCount,
+            });
+            setIsStreaming(false);
+          },
+          onError: (error) => {
+            updateMessage(activeChat.id, errorMsgId, {
+              content: `Error: ${error}`, streaming: false, error: true,
+            });
+            addToast(error);
+            setIsStreaming(false);
+          },
+        },
+        abort.signal
+      ).catch((err) => {
+        if ((err as Error).name !== "AbortError") {
+          updateMessage(activeChat.id, errorMsgId, {
+            content: `Connection error: ${(err as Error).message}`,
+            streaming: false, error: true,
+          });
+        }
+        setIsStreaming(false);
+      });
+    },
+    [activeChat, isStreaming, selectedModel, updateMessage, appendToMessage, appendToThinking, addToast]
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -293,7 +360,11 @@ export default function ChatPage() {
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="space-y-1">
             {activeChat.messages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} />
+              <ChatMessage
+                key={msg.id}
+                message={msg}
+                onRetry={msg.error ? () => handleRetry(msg.id) : undefined}
+              />
             ))}
           </div>
           <div className="h-4" />

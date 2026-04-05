@@ -16,6 +16,7 @@ export interface Message {
   thinking?: string;
   trust?: TrustMetadata;
   streaming?: boolean;
+  error?: boolean;
   timestamp: number;
   tps?: number;
   ttft?: number;

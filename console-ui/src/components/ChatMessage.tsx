@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { TrustBadge } from "./TrustBadge";
 import { VerificationPanel } from "./VerificationPanel";
 import type { Message } from "@/lib/store";
-import { Copy, Check, ChevronRight, Brain, Gauge, Clock, Hash, Sparkles } from "lucide-react";
+import { Copy, Check, ChevronRight, Brain, Gauge, Clock, Hash, Sparkles, RotateCcw } from "lucide-react";
 import { useState, useCallback } from "react";
 
 function CodeBlock({
@@ -216,7 +216,7 @@ function parseThinkFromContent(content: string, existingThinking?: string): { th
   return { thinking: "", content };
 }
 
-export function ChatMessage({ message }: { message: Message }) {
+export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: () => void }) {
   const isUser = message.role === "user";
 
   const parsed = !isUser && !message.streaming
@@ -298,6 +298,18 @@ export function ChatMessage({ message }: { message: Message }) {
                 tokenCount={message.tokenCount}
                 streaming={message.streaming}
               />
+            )}
+
+            {message.error && onRetry && (
+              <button
+                onClick={onRetry}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg
+                           bg-coral/10 border-2 border-coral/30 text-coral text-xs font-semibold
+                           hover:bg-coral/20 hover:border-coral/50 transition-all"
+              >
+                <RotateCcw size={12} />
+                Retry
+              </button>
             )}
           </div>
         </div>
