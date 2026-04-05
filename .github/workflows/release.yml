@@ -23,24 +23,32 @@ jobs:
           P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
           # Decode certificate
           echo "$P12_BASE64" | base64 --decode > /tmp/cert.p12
 
           # Create temporary keychain
-          security create-keychain -p "build" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "build" build.keychain
+          security create-keychain -p "build" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "build" "$KEYCHAIN_PATH"
+
+          # Add to search list (critical — without this, codesign can't find the cert)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
           # Import certificate
-          security import /tmp/cert.p12 -k build.keychain \
-            -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign -f pkcs12
 
           # Allow codesign to access the keychain without UI prompt
           security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "build" build.keychain
+            -s -k "build" "$KEYCHAIN_PATH"
 
           # Verify identity is available
-          security find-identity -v -p codesigning build.keychain
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          # Store path for later steps
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
           # Clean up
           rm /tmp/cert.p12
@@ -81,13 +89,13 @@ jobs:
 
           # Code sign with Developer ID (hardened runtime + entitlements)
           codesign --force --sign "$DEVELOPER_ID" \
-            --keychain build.keychain \
+            --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
             /tmp/eigeninference-bundle/eigeninference-provider
 
           codesign --force --sign "$DEVELOPER_ID" \
-            --keychain build.keychain \
+            --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
             /tmp/eigeninference-bundle/eigeninference-enclave
@@ -196,7 +204,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          security delete-keychain build.keychain 2>/dev/null || true
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
       # --- GitHub Release ---
 
