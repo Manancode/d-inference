@@ -55,6 +55,7 @@ libc = "0.2"
 
 # Misc
 dirs = "6"
+chrono = "0.4"
 
 # Crypto — NaCl-compatible X25519 + XSalsa20-Poly1305
 crypto_box = "0.9"

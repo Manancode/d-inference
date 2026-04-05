@@ -11,6 +11,7 @@
 //! config values at runtime.
 
 use crate::hardware::HardwareInfo;
+use crate::scheduling::ScheduleConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,8 @@ pub struct ProviderConfig {
     pub provider: ProviderSettings,
     pub backend: BackendSettings,
     pub coordinator: CoordinatorSettings,
+    #[serde(default)]
+    pub schedule: Option<ScheduleConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +71,7 @@ impl ProviderConfig {
                 url: "ws://localhost:8080/ws/provider".to_string(),
                 heartbeat_interval_secs: 30,
             },
+            schedule: None,
         }
     }
 }
@@ -314,6 +318,7 @@ heartbeat_interval_secs = 30
                 url: "wss://example.com/ws/provider".to_string(),
                 heartbeat_interval_secs: 15,
             },
+            schedule: None,
         };
 
         save(&path, &config).unwrap();

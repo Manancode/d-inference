@@ -33,6 +33,7 @@ mod inference;
 mod models;
 mod protocol;
 mod proxy;
+mod scheduling;
 mod security;
 mod server;
 mod service;
@@ -1231,6 +1232,15 @@ async fn cmd_serve(
         cfg
     };
 
+    // Parse schedule from config
+    let schedule = cfg
+        .schedule
+        .as_ref()
+        .and_then(scheduling::Schedule::from_config);
+    if let Some(ref sched) = schedule {
+        tracing::info!("Schedule enabled: {}", sched.describe());
+    }
+
     // Load or generate E2E encryption key pair
     let key_path = crypto::default_key_path()?;
     let node_keypair = std::sync::Arc::new(crypto::NodeKeyPair::load_or_generate(&key_path)?);
@@ -2061,8 +2071,47 @@ async fn cmd_serve(
             }
         });
 
-        // Wait for Ctrl+C
-        tokio::signal::ctrl_c().await?;
+        // Wait for Ctrl+C or schedule window end
+        if let Some(ref sched) = schedule {
+            // Schedule-aware loop: serve during active windows, sleep between them.
+            'schedule_loop: loop {
+                // Wait for schedule window if not currently active
+                if !sched.is_active_now() {
+                    let wait = sched.duration_until_next_active();
+                    tracing::info!(
+                        "Outside schedule window — sleeping for {}",
+                        scheduling::format_duration(wait)
+                    );
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait) => {},
+                        _ = tokio::signal::ctrl_c() => break 'schedule_loop,
+                    }
+                    tracing::info!("Schedule window active — coming online");
+                }
+
+                // Serve until window closes or Ctrl+C
+                let window_remaining = sched
+                    .duration_until_inactive()
+                    .unwrap_or(std::time::Duration::from_secs(86400));
+
+                tokio::select! {
+                    _ = tokio::time::sleep(window_remaining) => {
+                        tracing::info!("Schedule window closed — going offline");
+                        // Shut down backend between windows to free GPU memory
+                        shutdown_backend().await;
+                        tracing::info!("Backend stopped — waiting for next schedule window");
+                        continue 'schedule_loop;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        break 'schedule_loop;
+                    }
+                }
+            }
+        } else {
+            // No schedule — just wait for Ctrl+C (original behavior)
+            tokio::signal::ctrl_c().await?;
+        }
+
         tracing::info!("Shutting down...");
         let _ = shutdown_tx.send(true);
 
