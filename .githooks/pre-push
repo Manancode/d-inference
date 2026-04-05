@@ -77,8 +77,8 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$HAS_TS" = "1" ]; then
     echo ">> [pre-push] TypeScript lint check..."
-    if ! (cd console-ui && npx next lint 2>&1 | tail -10); then
-        echo "ERROR: TypeScript lint failed. Fix with: cd console-ui && npx next lint --fix"
+    if ! (cd console-ui && npx eslint src/ 2>&1 | tail -10); then
+        echo "ERROR: TypeScript lint failed. Fix with: cd console-ui && npx eslint --fix src/"
         FAILED=1
     fi
 

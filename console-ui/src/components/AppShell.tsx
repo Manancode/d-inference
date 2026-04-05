@@ -19,8 +19,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg-primary">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">
-            Eigen<span className="font-normal text-text-secondary">Inference</span>
+          <h1 className="text-3xl font-display text-ink tracking-tight">
+            Eigen<span className="text-coral">Inference</span>
           </h1>
           <p className="mt-2 text-sm text-text-tertiary">Loading...</p>
         </div>
@@ -28,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Unauthenticated — show page content without sidebar (page handles its own CTA)
+  // Unauthenticated — show page content without sidebar
   if (!authenticated) {
     return (
       <div className="flex h-screen overflow-hidden bg-bg-primary">

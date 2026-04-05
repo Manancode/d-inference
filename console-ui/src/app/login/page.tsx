@@ -18,26 +18,26 @@ function LoginContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg-primary">
-      <div
-        className="absolute inset-0 opacity-30"
-        style={{
-          background:
-            "radial-gradient(ellipse at 50% 30%, var(--accent-brand-dim) 0%, transparent 70%)",
-        }}
-      />
-
       <div className="relative z-10 text-center max-w-md mx-auto px-6">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-text-primary tracking-tight">
-            Eigen<span className="font-normal text-text-secondary">Inference</span>
+        {/* Floating shield illustration */}
+        <div className="float-gentle mb-8">
+          <svg width="80" height="80" viewBox="0 0 64 64" fill="none" className="mx-auto">
+            <circle cx="32" cy="32" r="28" fill="var(--teal-light)" stroke="var(--ink)" strokeWidth="3"/>
+            <path d="M22 28 Q22 20, 32 20 Q42 20, 42 28 L42 34 Q42 42, 32 44 Q22 42, 22 34Z" fill="var(--teal)" stroke="var(--ink)" strokeWidth="2"/>
+            <polyline points="26,32 30,36 38,26" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+
+        <div className="mb-6">
+          <h1 className="text-5xl font-display text-ink tracking-tight">
+            Eigen<span className="text-coral">Inference</span>
           </h1>
-          <p className="mt-2 text-sm text-text-tertiary">
+          <p className="mt-2 text-sm text-text-tertiary font-display text-lg">
             An Eigen Labs Research Project
           </p>
         </div>
 
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-amber/10 text-accent-amber text-xs font-medium mb-6">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-amber animate-pulse" />
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gold-light border-2 border-gold text-ink text-xs font-bold mb-6 font-display">
           Experimental Research Preview
         </div>
 
@@ -50,10 +50,10 @@ function LoginContent() {
           onClick={login}
           disabled={!ready}
           className="inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl
-                     bg-accent-brand text-white font-medium text-base
-                     hover:bg-accent-brand-hover transition-colors
+                     bg-coral text-white font-bold text-base border-[3px] border-ink
+                     hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)]
                      disabled:opacity-40 disabled:cursor-not-allowed
-                     shadow-lg focus-ring"
+                     transition-all focus-ring"
         >
           {!ready ? "Loading..." : "Sign In"}
         </button>

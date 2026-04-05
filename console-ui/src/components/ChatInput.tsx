@@ -61,8 +61,8 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
   return (
     <div className="bg-bg-primary/80 backdrop-blur-sm">
       <div className="max-w-4xl mx-auto px-6 py-4">
-        <div className="relative flex flex-col gap-2 bg-bg-secondary rounded-2xl shadow-lg
-                        focus-within:shadow-xl focus-within:ring-1 focus-within:ring-accent-brand/20 transition-all">
+        <div className="relative flex flex-col gap-2 bg-bg-white rounded-2xl border-[3px] border-ink
+                        shadow-md focus-within:shadow-lg focus-within:translate-x-[-1px] focus-within:translate-y-[-1px] transition-all">
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -84,15 +84,15 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                     e.stopPropagation();
                     setModelOpen(!modelOpen);
                   }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-tertiary hover:text-text-secondary hover:bg-bg-hover transition-all"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-tertiary hover:text-text-secondary hover:bg-bg-hover border-2 border-transparent hover:border-border-subtle transition-all"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent-green" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal" />
                   <span className="font-mono">{displayModel}</span>
                   <ChevronDown size={12} />
                 </button>
 
                 {modelOpen && chatModels.length > 0 && (
-                  <div className="absolute bottom-full left-0 mb-1 w-80 bg-bg-secondary border border-border-subtle rounded-xl shadow-xl overflow-hidden z-50">
+                  <div className="absolute bottom-full left-0 mb-1 w-80 bg-bg-white border-[3px] border-ink rounded-xl shadow-lg overflow-hidden z-50">
                     {chatModels.map((m) => {
                       const name = m.display_name || m.id.split("/").pop() || m.id;
                       return (
@@ -104,7 +104,7 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                           }}
                           className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-bg-hover transition-colors ${
                             selectedModel === m.id
-                              ? "text-accent-brand bg-accent-brand-dim/20"
+                              ? "text-coral bg-coral/10 font-semibold"
                               : "text-text-secondary"
                           }`}
                         >
@@ -112,7 +112,7 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                             {name}
                           </span>
                           {m.quantization && (
-                            <span className="text-xs text-text-tertiary px-1.5 py-0.5 bg-bg-tertiary rounded">
+                            <span className="text-xs text-text-tertiary px-1.5 py-0.5 bg-bg-tertiary rounded border border-border-dim">
                               {m.quantization}
                             </span>
                           )}
@@ -128,7 +128,7 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
             {isStreaming ? (
               <button
                 onClick={onStop}
-                className="flex items-center justify-center w-9 h-9 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-accent-red/20 hover:bg-accent-red/30 text-accent-red border-2 border-accent-red transition-colors"
               >
                 <Square size={16} />
               </button>
@@ -136,7 +136,10 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || isStreaming}
-                className="flex items-center justify-center w-9 h-9 rounded-xl bg-accent-brand hover:bg-accent-brand-hover text-white disabled:opacity-30 disabled:hover:bg-accent-brand transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-coral border-2 border-ink text-white
+                           disabled:opacity-30 disabled:border-border-subtle
+                           hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)]
+                           transition-all"
               >
                 <Send size={16} />
               </button>

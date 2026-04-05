@@ -24,7 +24,7 @@ export function UsageChart({ usage }: Props) {
   const maxCost = Math.max(...days.map(([, v]) => v), 1);
 
   return (
-    <div className="rounded-xl bg-bg-secondary p-5 shadow-sm">
+    <div className="rounded-xl bg-bg-white border-[3px] border-ink p-5 shadow-md">
       <h3 className="text-sm font-medium text-text-primary mb-4">
         Spend Over Time
       </h3>
@@ -43,7 +43,7 @@ export function UsageChart({ usage }: Props) {
               {/* Bar */}
               <div className="w-full flex items-end justify-center" style={{ height: "100%" }}>
                 <div
-                  className="w-full max-w-[28px] rounded-t bg-accent-brand/60 hover:bg-accent-brand transition-colors"
+                  className="w-full max-w-[28px] rounded-t bg-coral/60 hover:bg-coral transition-colors"
                   style={{ height: `${pct}%` }}
                 />
               </div>

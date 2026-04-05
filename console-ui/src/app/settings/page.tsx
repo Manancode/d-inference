@@ -61,7 +61,7 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-8 space-y-8">
           {/* Coordinator URL */}
-          <section className="rounded-xl bg-bg-secondary p-6 shadow-sm">
+          <section className="rounded-xl bg-bg-white border-[3px] border-ink p-6 shadow-md">
             <div className="flex items-center gap-2 mb-4">
               <Globe size={14} className="text-accent-green" />
               <h3 className="text-sm font-medium text-text-primary">
@@ -112,7 +112,7 @@ export default function SettingsPage() {
           {/* Save */}
           <button
             onClick={handleSave}
-            className="w-full py-3 rounded-lg bg-accent-brand text-white font-medium text-sm hover:bg-accent-brand/90 transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-lg bg-coral text-white font-bold text-sm border-[3px] border-ink hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)] transition-all flex items-center justify-center gap-2"
           >
             {saved ? (
               <>
@@ -125,7 +125,7 @@ export default function SettingsPage() {
           </button>
 
           {/* Info */}
-          <div className="rounded-xl bg-bg-secondary p-5 shadow-sm">
+          <div className="rounded-xl bg-bg-white border-[3px] border-ink p-5 shadow-md">
             <h4 className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-3">
               About EigenInference
             </h4>

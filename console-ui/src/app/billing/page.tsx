@@ -36,8 +36,8 @@ function Modal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-bg-secondary border border-border-subtle rounded-xl w-full max-w-md mx-4 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-bg-white border-[3px] border-ink rounded-xl w-full max-w-md mx-4 shadow-lg">
         <div className="flex justify-end p-3">
           <button
             onClick={onClose}
@@ -148,9 +148,7 @@ export default function BillingPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
           {/* Balance Card */}
-          <div className="relative overflow-hidden rounded-2xl border border-border-subtle bg-bg-secondary p-8">
-            {/* Decorative gradient */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-accent-brand/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+          <div className="relative overflow-hidden rounded-2xl border-[3px] border-ink bg-bg-white p-8 shadow-md">
 
             <div className="relative">
               <p className="text-xs font-mono text-text-tertiary uppercase tracking-widest mb-2">
@@ -192,7 +190,7 @@ export default function BillingPage() {
           </div>
 
           {/* Invite Code Redemption */}
-          <div className="rounded-2xl border border-border-subtle bg-bg-secondary p-6">
+          <div className="rounded-2xl border-[3px] border-ink bg-bg-white p-6 shadow-md">
             <div className="flex items-center gap-2 mb-4">
               <Ticket size={16} className="text-accent-brand" />
               <h3 className="text-sm font-medium text-text-primary">Invite Code</h3>
@@ -256,7 +254,7 @@ export default function BillingPage() {
             ].map(({ icon: Icon, label, value, color }) => (
               <div
                 key={label}
-                className="rounded-xl bg-bg-secondary p-4 shadow-sm"
+                className="rounded-xl bg-bg-white p-4 border-2 border-border-dim shadow-sm"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <Icon size={13} className={color} />
@@ -275,7 +273,7 @@ export default function BillingPage() {
           <UsageChart usage={usage} />
 
           {/* Usage Table */}
-          <div className="rounded-xl bg-bg-secondary overflow-hidden shadow-sm">
+          <div className="rounded-xl bg-bg-white border-[3px] border-ink overflow-hidden shadow-md">
             <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-2">
               <Clock size={14} className="text-text-tertiary" />
               <h3 className="text-sm font-medium text-text-primary">

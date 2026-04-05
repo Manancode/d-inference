@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { TopBar } from "@/components/TopBar";
-import { Sparkles, Lock, Cpu, Globe, Mail } from "lucide-react";
+import { Lock, Cpu, Globe, Mail } from "lucide-react";
 import type { Message } from "@/lib/store";
 
 function generateId() {
@@ -186,14 +186,15 @@ export default function ChatPage() {
       {!authenticated ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-lg px-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-amber/10 text-accent-amber text-xs font-medium mb-4">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent-amber animate-pulse" />
+            {/* Research badge */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gold-light border-2 border-gold text-ink text-xs font-bold mb-4 font-display">
               Research Preview
             </div>
-            <h2 className="text-3xl font-bold text-text-primary tracking-tight mb-2">
-              Eigen<span className="font-normal text-text-secondary">Inference</span>
+
+            <h2 className="text-5xl font-display text-ink tracking-tight mb-3">
+              Eigen<span className="text-coral">Inference</span>
             </h2>
-            <p className="text-base text-text-tertiary mb-8 leading-relaxed">
+            <p className="text-base text-text-secondary mb-8 leading-relaxed">
               Private AI inference through hardware-attested Apple Silicon providers.
               <br />
               Your prompts stay encrypted, your data stays yours.
@@ -203,10 +204,10 @@ export default function ChatPage() {
               onClick={login}
               disabled={!ready}
               className="inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl
-                         bg-accent-brand text-white font-medium text-base
-                         hover:bg-accent-brand-hover transition-colors
+                         bg-coral text-white font-bold text-base border-[3px] border-ink
+                         hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)]
                          disabled:opacity-40 disabled:cursor-not-allowed
-                         shadow-lg"
+                         transition-all"
             >
               <Mail size={18} />
               {!ready ? "Loading..." : "Sign In"}
@@ -218,15 +219,14 @@ export default function ChatPage() {
 
             <div className="flex flex-wrap justify-center gap-3 mt-10">
               {[
-                { icon: Lock, label: "End-to-end encrypted" },
-                { icon: Sparkles, label: "Secure Enclave attested" },
-                { icon: Cpu, label: "Apple Silicon native" },
-                { icon: Globe, label: "Decentralized network" },
-              ].map(({ icon: Icon, label }) => (
+                { icon: Lock, label: "End-to-end encrypted", color: "teal" },
+                { icon: Cpu, label: "Apple Silicon native", color: "purple" },
+                { icon: Globe, label: "Decentralized network", color: "blue" },
+              ].map(({ icon: Icon, label, color }) => (
                 <span
                   key={label}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                             bg-bg-secondary text-xs text-text-tertiary"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                             bg-${color}-light border-2 border-${color} text-xs text-ink font-semibold`}
                 >
                   <Icon size={12} />
                   {label}
@@ -238,13 +238,22 @@ export default function ChatPage() {
       ) : !activeChat || activeChat.messages.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-lg px-6">
-            <h2 className="text-3xl font-bold text-text-primary tracking-tight mb-2">
-              Eigen<span className="font-normal text-text-secondary">Inference</span>
+            {/* Hero illustration (floating) */}
+            <div className="float-gentle mb-6">
+              <svg width="80" height="80" viewBox="0 0 64 64" fill="none" className="mx-auto">
+                <circle cx="32" cy="32" r="28" fill="var(--teal-light)" stroke="var(--ink)" strokeWidth="3"/>
+                <path d="M22 28 Q22 20, 32 20 Q42 20, 42 28 L42 34 Q42 42, 32 44 Q22 42, 22 34Z" fill="var(--teal)" stroke="var(--ink)" strokeWidth="2"/>
+                <polyline points="26,32 30,36 38,26" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+
+            <h2 className="text-4xl font-display text-ink tracking-tight mb-2">
+              Eigen<span className="text-coral">Inference</span>
             </h2>
-            <p className="text-base text-text-tertiary mb-10 leading-relaxed">
+            <p className="text-base text-text-secondary mb-10 leading-relaxed">
               Private AI inference through hardware-attested providers.
               <br />
-              <span className="text-xs">This is an experimental research project — results may vary.</span>
+              <span className="text-xs text-text-tertiary font-display">This is an experimental research project &mdash; results may vary.</span>
             </p>
 
             <div className="grid grid-cols-2 gap-3 mb-8">
@@ -252,9 +261,10 @@ export default function ChatPage() {
                 <button
                   key={label}
                   onClick={() => handleSend(prompt)}
-                  className="text-left px-4 py-3 rounded-xl bg-bg-secondary hover:bg-bg-tertiary
-                             text-sm text-text-secondary hover:text-text-primary
-                             shadow-sm hover:shadow-md transition-all"
+                  className="text-left px-4 py-3 rounded-xl bg-bg-white border-[3px] border-ink
+                             text-sm text-text-secondary hover:text-text-primary font-semibold
+                             hover:translate-x-[-2px] hover:translate-y-[-2px]
+                             hover:shadow-[4px_4px_0_var(--ink)] transition-all"
                 >
                   {label}
                 </button>
@@ -263,15 +273,14 @@ export default function ChatPage() {
 
             <div className="flex flex-wrap justify-center gap-3">
               {[
-                { icon: Lock, label: "End-to-end encrypted" },
-                { icon: Sparkles, label: "Secure Enclave attested" },
-                { icon: Cpu, label: "Apple Silicon native" },
-                { icon: Globe, label: "Decentralized network" },
-              ].map(({ icon: Icon, label }) => (
+                { icon: Lock, label: "End-to-end encrypted", color: "bg-teal-light border-teal" },
+                { icon: Cpu, label: "Apple Silicon native", color: "bg-purple-light border-purple" },
+                { icon: Globe, label: "Decentralized network", color: "bg-blue-light border-blue" },
+              ].map(({ icon: Icon, label, color }) => (
                 <span
                   key={label}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                             bg-bg-secondary text-xs text-text-tertiary"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                             ${color} border-2 text-xs text-ink font-semibold`}
                 >
                   <Icon size={12} />
                   {label}

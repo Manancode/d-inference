@@ -100,8 +100,8 @@ export default function ImagesPage() {
   return (
     <div className="flex-1 flex flex-col h-full">
       {/* Header */}
-      <div className="border-b border-border-dim px-6 py-4">
-        <h1 className="text-lg font-semibold text-text-primary">Image Generation</h1>
+      <div className="squiggly-border-bottom px-6 py-4">
+        <h1 className="text-2xl font-display text-ink">Image Generation</h1>
         <p className="text-sm text-text-tertiary mt-0.5">
           Generate images with FLUX models running on attested Apple Silicon
         </p>
@@ -111,7 +111,7 @@ export default function ImagesPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
           {/* Prompt input */}
-          <div className="bg-bg-secondary rounded-2xl shadow-lg p-4 space-y-3">
+          <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-4 space-y-3">
             <textarea
               ref={textareaRef}
               value={prompt}
@@ -198,7 +198,7 @@ export default function ImagesPage() {
               <button
                 onClick={handleGenerate}
                 disabled={!prompt.trim() || !selectedModel || generating}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent-brand hover:bg-accent-brand-hover text-white text-sm font-medium disabled:opacity-30 disabled:hover:bg-accent-brand transition-colors"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-coral border-2 border-ink text-white text-sm font-bold disabled:opacity-30 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] transition-all"
               >
                 {generating ? (
                   <>

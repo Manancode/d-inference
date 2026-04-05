@@ -43,30 +43,31 @@ export function Sidebar() {
   const isChatActive = pathname === "/";
 
   return (
-    <aside className="sidebar-animate w-[260px] h-screen flex flex-col bg-bg-secondary shadow-lg shrink-0">
+    <aside className="sidebar-animate w-[260px] h-screen flex flex-col bg-bg-secondary border-r-[3px] border-border-default shrink-0">
       {/* Brand header */}
       <div className="px-5 pt-5 pb-4 flex items-center justify-between">
         <Link href="/" className="group">
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-text-primary tracking-tight">
-              Eigen<span className="font-normal text-text-secondary">Inference</span>
+            <h1 className="text-2xl text-ink tracking-tight font-display">
+              Eigen<span className="text-coral">Inference</span>
             </h1>
-            <span className="px-1.5 py-0.5 rounded bg-accent-amber/15 text-accent-amber text-[10px] font-semibold uppercase tracking-wide">
-              Preview
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="px-2 py-0.5 rounded-full bg-gold-light border-[1.5px] border-ink text-ink text-[10px] font-bold uppercase tracking-wide font-display">
+              Research Preview
             </span>
           </div>
-          <p className="text-xs text-text-tertiary mt-0.5">Eigen Labs Research</p>
         </Link>
         <button
           onClick={() => setSidebarOpen(false)}
-          className="p-1.5 rounded-lg hover:bg-bg-hover text-text-tertiary hover:text-text-secondary transition-colors"
+          className="p-1.5 rounded-lg hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors"
         >
           <X size={16} />
         </button>
       </div>
 
       {/* Primary navigation */}
-      <nav className="px-3 space-y-0.5">
+      <nav className="px-3 space-y-1">
         {[
           { href: "/", icon: MessageSquare, label: "Chat" },
           { href: "/images", icon: ImageIcon, label: "Images" },
@@ -82,13 +83,13 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                 isActive
-                  ? "bg-accent-brand/10 text-accent-brand border-l-2 border-accent-brand"
-                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  ? "bg-coral/15 text-coral border-2 border-coral"
+                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary border-2 border-transparent"
               }`}
             >
-              <Icon size={18} className={isActive ? "text-accent-brand" : "opacity-60"} />
+              <Icon size={18} className={isActive ? "text-coral" : "opacity-60"} />
               {label}
             </Link>
           );
@@ -102,22 +103,24 @@ export function Sidebar() {
             <button
               onClick={() => createChat()}
               className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg
-                         bg-accent-brand/10 hover:bg-accent-brand/15
-                         text-accent-brand text-sm font-medium transition-all"
+                         bg-coral text-white border-[3px] border-ink
+                         text-sm font-bold transition-all
+                         hover:translate-x-[-1px] hover:translate-y-[-1px]
+                         hover:shadow-[3px_3px_0_var(--ink)]"
             >
               <Plus size={16} />
               New chat
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 mt-2 space-y-0.5">
+          <div className="flex-1 overflow-y-auto px-3 mt-2 space-y-1">
             {chats.map((chat) => (
               <div
                 key={chat.id}
                 className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all text-sm ${
                   activeChatId === chat.id
-                    ? "bg-bg-elevated text-text-primary"
-                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    ? "bg-bg-elevated text-text-primary border-2 border-border-subtle font-semibold"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary border-2 border-transparent"
                 }`}
                 onClick={() => {
                   setActiveChat(chat.id);
@@ -145,7 +148,7 @@ export function Sidebar() {
       {!isChatActive && <div className="flex-1" />}
 
       {/* Secondary navigation */}
-      <nav className="px-3 pt-3 border-t border-border-dim space-y-0.5">
+      <nav className="px-3 pt-3 squiggly-border-top space-y-1">
         {[
           { href: "/stats", icon: Activity, label: "Network" },
           { href: "/models", icon: Cpu, label: "Models" },
@@ -157,7 +160,7 @@ export function Sidebar() {
             href={href}
             className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all ${
               pathname === href
-                ? "bg-bg-elevated text-text-primary font-medium"
+                ? "bg-bg-elevated text-text-primary font-semibold"
                 : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             }`}
           >
@@ -168,18 +171,18 @@ export function Sidebar() {
       </nav>
 
       {/* Research disclaimer */}
-      <div className="px-4 py-2 border-t border-border-dim">
+      <div className="px-4 py-2 squiggly-border-top">
         <p className="text-[10px] text-text-tertiary leading-relaxed">
           Experimental research preview. Provided as-is for evaluation. Not for production use.
         </p>
       </div>
 
       {/* User footer */}
-      <div className="px-3 py-3 border-t border-border-dim">
+      <div className="px-3 py-3 squiggly-border-top">
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0">
             {displayName && (
-              <p className="text-xs text-text-secondary truncate">{displayName}</p>
+              <p className="text-xs text-text-secondary font-semibold truncate">{displayName}</p>
             )}
           </div>
           <button

@@ -27,13 +27,17 @@ function CodeBlock({
 
   return (
     <div className="relative group my-3">
-      <div className="flex items-center justify-between px-3 py-2 bg-bg-tertiary rounded-t-lg border border-b-0 border-border-dim">
-        <span className="text-xs font-mono text-text-tertiary uppercase tracking-wider">
+      {/* Terminal-style header (landing page code block style) */}
+      <div className="code-header">
+        <div className="code-dot code-dot-r" />
+        <div className="code-dot code-dot-y" />
+        <div className="code-dot code-dot-g" />
+        <span className="ml-2 text-xs text-white/30 font-sans uppercase tracking-wider">
           {language || "code"}
         </span>
         <button
           onClick={copyCode}
-          className="flex items-center gap-1.5 text-xs font-mono text-text-tertiary hover:text-text-secondary transition-colors"
+          className="ml-auto flex items-center gap-1.5 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? "Copied" : "Copy"}
@@ -60,8 +64,8 @@ function ThinkingBlock({
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 px-3 py-2 rounded-lg
-                   bg-accent-amber/8 hover:bg-accent-amber/12
-                   transition-all text-accent-amber group"
+                   bg-gold-light/50 border-2 border-gold hover:bg-gold-light/70
+                   transition-all text-ink group"
       >
         <ChevronRight
           size={14}
@@ -69,8 +73,8 @@ function ThinkingBlock({
             expanded ? "rotate-90" : ""
           }`}
         />
-        <Brain size={14} />
-        <span className="text-xs font-medium">
+        <Brain size={14} className="text-gold" />
+        <span className="text-xs font-semibold">
           {streaming && !thinking.length
             ? "Thinking..."
             : `Thinking${streaming ? "..." : ""}`}
@@ -83,7 +87,7 @@ function ThinkingBlock({
       </button>
 
       {expanded && (
-        <div className="mt-2 ml-1 pl-3 border-l-2 border-accent-amber/20">
+        <div className="mt-2 ml-1 pl-3 border-l-[3px] border-gold/30">
           <div
             className={`prose text-text-secondary text-sm leading-relaxed opacity-80 ${
               streaming ? "streaming-cursor" : ""
@@ -114,20 +118,20 @@ function StreamMetrics({
 
   return (
     <div
-      className={`flex items-center gap-3 mt-3 py-2 px-3 rounded-lg text-xs font-mono ${
+      className={`flex items-center gap-3 mt-3 py-2 px-3 rounded-lg text-xs font-mono border-2 ${
         streaming
-          ? "bg-accent-green/8 shadow-sm"
-          : "bg-bg-secondary"
+          ? "bg-teal-light/30 border-teal shadow-sm"
+          : "bg-bg-secondary border-border-dim"
       }`}
     >
       <span
         className={`flex items-center gap-1 ${
-          streaming ? "text-accent-green" : "text-text-secondary"
+          streaming ? "text-teal" : "text-text-secondary"
         }`}
       >
         <Gauge size={12} />
         <span className="tabular-nums font-semibold">
-          {tps ? tps.toFixed(1) : "—"}
+          {tps ? tps.toFixed(1) : "\u2014"}
         </span>
         <span className="text-text-tertiary">tok/s</span>
       </span>
@@ -136,12 +140,12 @@ function StreamMetrics({
 
       <span
         className={`flex items-center gap-1 ${
-          streaming ? "text-accent-amber" : "text-text-secondary"
+          streaming ? "text-gold" : "text-text-secondary"
         }`}
       >
         <Clock size={12} />
         <span className="tabular-nums font-semibold">
-          {ttft ? (ttft < 1000 ? `${Math.round(ttft)}ms` : `${(ttft / 1000).toFixed(2)}s`) : "—"}
+          {ttft ? (ttft < 1000 ? `${Math.round(ttft)}ms` : `${(ttft / 1000).toFixed(2)}s`) : "\u2014"}
         </span>
         <span className="text-text-tertiary">TTFT</span>
       </span>
@@ -157,16 +161,15 @@ function StreamMetrics({
       </span>
 
       {streaming && (
-        <span className="ml-auto flex items-center gap-1.5 text-accent-green">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
-          <span className="text-xs">live</span>
+        <span className="ml-auto flex items-center gap-1.5 text-teal">
+          <span className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse" />
+          <span className="text-xs font-semibold">live</span>
         </span>
       )}
     </div>
   );
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 const markdownComponents: any = {
   code({ className, children, ...props }: any) {
     const isInline = !className;
@@ -230,7 +233,7 @@ export function ChatMessage({ message }: { message: Message }) {
     return (
       <div className="message-animate py-4">
         <div className="max-w-4xl mx-auto px-6 flex justify-end">
-          <div className="max-w-[80%] bg-bg-elevated rounded-2xl rounded-br-md px-4 py-3">
+          <div className="max-w-[80%] bg-coral/10 border-2 border-coral/30 rounded-2xl rounded-br-md px-4 py-3">
             <p className="text-[15px] text-text-primary leading-relaxed whitespace-pre-wrap">
               {message.content}
             </p>
@@ -244,15 +247,15 @@ export function ChatMessage({ message }: { message: Message }) {
     <div className="message-animate py-4">
       <div className="max-w-4xl mx-auto px-6">
         <div className="flex gap-3">
-          {/* Avatar */}
-          <div className="shrink-0 w-7 h-7 rounded-lg bg-accent-brand/10 flex items-center justify-center mt-0.5">
-            <Sparkles size={14} className="text-accent-brand" />
+          {/* Avatar — hand-drawn style */}
+          <div className="shrink-0 w-7 h-7 rounded-lg bg-teal-light border-2 border-teal flex items-center justify-center mt-0.5">
+            <Sparkles size={14} className="text-teal" />
           </div>
 
           {/* Content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-medium text-text-tertiary">
+              <span className="text-sm font-display font-bold text-text-secondary">
                 EigenInference
               </span>
               {message.trust && <TrustBadge trust={message.trust} />}

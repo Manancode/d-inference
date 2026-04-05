@@ -7,22 +7,22 @@ const config = {
   hardware_mda: {
     icon: ShieldCheck,
     label: "Apple Attested",
-    color: "text-accent-green",
-    bg: "bg-accent-green-dim/40",
+    color: "text-teal",
+    bg: "bg-teal-light/50",
     glow: "trust-glow-hardware",
   },
   hardware: {
     icon: ShieldCheck,
     label: "Hardware Attested",
-    color: "text-accent-green",
-    bg: "bg-accent-green-dim/40",
+    color: "text-teal",
+    bg: "bg-teal-light/50",
     glow: "trust-glow-hardware",
   },
   self_signed: {
     icon: ShieldAlert,
     label: "Self-Signed",
-    color: "text-accent-amber",
-    bg: "bg-accent-amber-dim/40",
+    color: "text-gold",
+    bg: "bg-gold-light/50",
     glow: "",
   },
   none: {

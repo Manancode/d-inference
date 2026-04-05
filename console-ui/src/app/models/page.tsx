@@ -114,7 +114,7 @@ export default function ModelsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-6 py-8">
           <div className="mb-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-1">
+            <h2 className="text-2xl font-display text-ink mb-1">
               Available Models
             </h2>
             <p className="text-sm text-text-tertiary">
@@ -149,13 +149,13 @@ export default function ModelsPage() {
                 return (
                   <div
                     key={model.id}
-                    className="group rounded-xl shadow-sm bg-bg-secondary p-5 hover:border-accent-brand/30 hover:bg-bg-tertiary transition-all"
+                    className="group rounded-xl bg-bg-white border-[3px] border-ink p-5 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)] transition-all"
                   >
                     {/* Header */}
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-accent-brand/10 border border-accent-brand/20 flex items-center justify-center">
-                          <Cpu size={14} className="text-accent-brand" />
+                        <div className="w-8 h-8 rounded-lg bg-coral-light border-2 border-coral flex items-center justify-center">
+                          <Cpu size={14} className="text-coral" />
                         </div>
                         <div>
                           <h3 className="text-sm font-medium text-text-primary leading-tight">
@@ -242,7 +242,7 @@ export default function ModelsPage() {
           {/* Pricing comparison table */}
           <div className="mt-12 mb-8">
             <div className="mb-4">
-              <h2 className="text-lg font-semibold text-text-primary mb-1">
+              <h2 className="text-2xl font-display text-ink mb-1">
                 Pricing vs Competitors
               </h2>
               <p className="text-sm text-text-tertiary">
@@ -250,7 +250,7 @@ export default function ModelsPage() {
               </p>
             </div>
 
-            <div className="rounded-xl shadow-sm bg-bg-secondary overflow-hidden">
+            <div className="rounded-xl bg-bg-white border-[3px] border-ink overflow-hidden shadow-md">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border-dim">
