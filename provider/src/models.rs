@@ -86,6 +86,9 @@ pub fn resolve_local_path(model_id: &str) -> Option<PathBuf> {
 
 /// Scan for locally cached MLX models in the given HuggingFace cache directory.
 /// Filters models to only those that fit in available memory (from HardwareInfo).
+///
+/// This performs a fast scan (no weight hashing). Call `compute_weight_hash()`
+/// on individual models that need attestation verification.
 pub fn scan_models(hw: &HardwareInfo) -> Vec<ModelInfo> {
     let cache_dir = match default_hf_cache_dir() {
         Some(d) if d.exists() => d,
@@ -96,6 +99,27 @@ pub fn scan_models(hw: &HardwareInfo) -> Vec<ModelInfo> {
     };
 
     scan_models_in_dir(&cache_dir, hw.memory_available_gb)
+}
+
+/// Compute the weight hash for a specific model by ID.
+///
+/// This is the expensive operation (SHA-256 over all weight files) that we
+/// skip during the initial scan. Call this only for models we plan to serve.
+pub fn compute_weight_hash(model_id: &str) -> Option<String> {
+    let snapshot_dir = resolve_local_path(model_id)?;
+    let (_size_bytes, weight_paths) = collect_weight_files(&snapshot_dir);
+    if weight_paths.is_empty() {
+        return None;
+    }
+    tracing::info!(
+        "Computing weight hash for {model_id} ({} files)...",
+        weight_paths.len()
+    );
+    let hash = crate::security::hash_files_sorted(&weight_paths);
+    if let Some(ref h) = hash {
+        tracing::info!("Weight hash for {model_id}: {}", &h[..16]);
+    }
+    hash
 }
 
 /// Scan for models in a specific cache directory, filtering by available memory in GB.
@@ -145,8 +169,10 @@ pub fn scan_models_in_dir(cache_dir: &Path, available_memory_gb: u64) -> Vec<Mod
             continue;
         }
 
-        // Parse model info
-        if let Some(info) = parse_model_info(&latest_snapshot, &model_name) {
+        // Parse model info — skip weight hashing for fast discovery.
+        // Hashes are computed on-demand via compute_weight_hash() for
+        // models we actually plan to serve.
+        if let Some(info) = parse_model_info_opt(&latest_snapshot, &model_name, false) {
             if info.estimated_memory_gb <= available_memory_gb as f64 {
                 models.push(info);
             } else {
@@ -230,7 +256,14 @@ fn is_mlx_model(snapshot_dir: &Path, model_name: &str) -> bool {
 }
 
 /// Parse model info from a snapshot directory.
-fn parse_model_info(snapshot_dir: &Path, model_name: &str) -> Option<ModelInfo> {
+///
+/// When `compute_hash` is true, SHA-256 hashes all weight files (slow but
+/// needed for attestation). When false, skips hashing for fast discovery.
+fn parse_model_info_opt(
+    snapshot_dir: &Path,
+    model_name: &str,
+    compute_hash: bool,
+) -> Option<ModelInfo> {
     let config_path = snapshot_dir.join("config.json");
 
     let (model_type, parameters) = if config_path.exists() {
@@ -246,9 +279,14 @@ fn parse_model_info(snapshot_dir: &Path, model_name: &str) -> Option<ModelInfo> 
         return None;
     }
 
-    // Compute deterministic weight fingerprint: sort files by name,
-    // stream each sequentially through SHA-256.
-    let weight_hash = crate::security::hash_files_sorted(&weight_paths);
+    // Only compute the expensive weight fingerprint when requested.
+    // During discovery we skip this; it's computed on-demand for models
+    // we actually plan to serve.
+    let weight_hash = if compute_hash {
+        crate::security::hash_files_sorted(&weight_paths)
+    } else {
+        None
+    };
 
     // Memory overhead factor: ~1.2x for runtime buffers, KV cache, etc.
     let overhead = 1.2;
@@ -263,6 +301,11 @@ fn parse_model_info(snapshot_dir: &Path, model_name: &str) -> Option<ModelInfo> 
         estimated_memory_gb,
         weight_hash,
     })
+}
+
+/// Parse model info from a snapshot directory (with weight hashing).
+fn parse_model_info(snapshot_dir: &Path, model_name: &str) -> Option<ModelInfo> {
+    parse_model_info_opt(snapshot_dir, model_name, true)
 }
 
 /// Parse config.json to extract model_type and parameter count.

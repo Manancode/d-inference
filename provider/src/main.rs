@@ -1483,11 +1483,10 @@ async fn cmd_serve(
         let current_model: std::sync::Arc<std::sync::Mutex<Option<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Some(model.clone())));
 
-        // Shared current model weight hash (cached at load time for challenge responses).
-        let initial_model_hash = advertised_models
-            .iter()
-            .find(|m| m.id == model)
-            .and_then(|m| m.weight_hash.clone());
+        // Compute weight hash on-demand for the served model only.
+        // scan_models() skips hashing for fast startup; we hash just the
+        // model we're about to serve (needed for attestation challenges).
+        let initial_model_hash = models::compute_weight_hash(&model);
         let current_model_hash: std::sync::Arc<std::sync::Mutex<Option<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash));
 
