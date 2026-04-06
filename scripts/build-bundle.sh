@@ -106,10 +106,13 @@ source "$BUNDLE_DIR/python/bin/activate"
 echo "   Installing vllm-mlx from our fork..."
 pip install --quiet 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
 
+echo "   Installing image bridge dependencies..."
+pip install --quiet grpcio flatbuffers Pillow
+
 echo "   Stripping unnecessary packages..."
 cd "$BUNDLE_DIR/python/lib/python3.12/site-packages"
-rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* PIL* pillow* \
-       sympy* networkx* mcp* miniaudio* pydub* datasets* Pillow*
+rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \
+       sympy* networkx* mcp* miniaudio* pydub* datasets*
 find "$BUNDLE_DIR/python" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
 deactivate
