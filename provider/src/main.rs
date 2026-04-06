@@ -153,6 +153,199 @@ fn get_available_disk_gb() -> f64 {
     0.0
 }
 
+/// Download a single file from a URL to a local path with a progress bar.
+/// Retries up to 3 times with HTTP Range resume on failure.
+///
+/// Shows: [████████░░░░░░░░░░░░] 42% · 3.9/9.5 GB · 245 MB/s · ~23s
+fn download_file_with_progress(url: &str, dest: &std::path::Path, label: &str) -> bool {
+    use std::io::{Seek, Write};
+
+    // Use the current tokio runtime if inside one, otherwise create a new one.
+    let handle = tokio::runtime::Handle::try_current();
+    match handle {
+        Ok(h) => {
+            // We're inside an async context — use block_in_place to avoid nesting
+            tokio::task::block_in_place(|| h.block_on(download_file_async(url, dest, label)))
+        }
+        Err(_) => {
+            // Not in async context — create a runtime
+            match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt.block_on(download_file_async(url, dest, label)),
+                Err(_) => curl_download(url, dest),
+            }
+        }
+    }
+}
+
+async fn download_file_async(url: &str, dest: &std::path::Path, label: &str) -> bool {
+    use futures_util::StreamExt;
+    use std::io::{Seek, Write};
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let max_retries = 3;
+
+    for attempt in 0..=max_retries {
+        // Check how much we already have (for resume)
+        let existing_bytes = dest.metadata().map(|m| m.len()).unwrap_or(0);
+
+        let mut req = client.get(url);
+        if attempt > 0 && existing_bytes > 0 {
+            // Resume from where we left off
+            req = req.header("Range", format!("bytes={}-", existing_bytes));
+            eprintln!(
+                "\r  Resuming from {:.1} GB (attempt {}/{})...              ",
+                existing_bytes as f64 / 1_073_741_824.0,
+                attempt + 1,
+                max_retries + 1
+            );
+        }
+
+        let resp = match req.send().await {
+            Ok(r) if r.status().is_success() || r.status().as_u16() == 206 => r,
+            Ok(r) => {
+                eprintln!(
+                    "\r  ⚠ HTTP {} — retrying...                    ",
+                    r.status()
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            Err(e) => {
+                eprintln!("\r  ⚠ Connection failed: {} — retrying...      ", e);
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+        };
+
+        let is_resume = resp.status().as_u16() == 206;
+        let content_length = resp.content_length().unwrap_or(0);
+        let total = if is_resume {
+            existing_bytes + content_length
+        } else {
+            content_length
+        };
+        let mut downloaded: u64 = if is_resume { existing_bytes } else { 0 };
+        let start = std::time::Instant::now();
+
+        // Open file for append (resume) or create (fresh)
+        let mut file = if is_resume {
+            match std::fs::OpenOptions::new().append(true).open(dest) {
+                Ok(f) => f,
+                Err(_) => return false,
+            }
+        } else {
+            match std::fs::File::create(dest) {
+                Ok(f) => f,
+                Err(_) => return false,
+            }
+        };
+
+        let mut stdout = std::io::stdout();
+        let mut stream = resp.bytes_stream();
+        let mut stream_failed = false;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(_) => {
+                    stream_failed = true;
+                    break;
+                }
+            };
+            if file.write_all(&chunk).is_err() {
+                return false;
+            }
+            downloaded += chunk.len() as u64;
+
+            // Render progress bar
+            if total > 0 {
+                let pct = (downloaded as f64 / total as f64 * 100.0).min(100.0) as u32;
+                let elapsed = start.elapsed().as_secs_f64();
+                let bytes_this_session = downloaded - if is_resume { existing_bytes } else { 0 };
+                let speed = if elapsed > 0.5 {
+                    bytes_this_session as f64 / elapsed
+                } else {
+                    0.0
+                };
+                let eta = if speed > 0.0 {
+                    (total - downloaded) as f64 / speed
+                } else {
+                    0.0
+                };
+
+                let bar_width = 30;
+                let filled = (pct as usize * bar_width / 100).min(bar_width);
+                let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+
+                let (dl_val, dl_unit) = human_bytes(downloaded);
+                let (tot_val, tot_unit) = human_bytes(total);
+                let (spd_val, spd_unit) = human_bytes(speed as u64);
+
+                write!(
+                    stdout,
+                    "\r  {} [{}] {}% · {:.1}{}/{:.1}{} · {:.0}{}/s · ~{:.0}s   ",
+                    label, bar, pct, dl_val, dl_unit, tot_val, tot_unit, spd_val, spd_unit, eta
+                )
+                .ok();
+                stdout.flush().ok();
+            }
+        }
+
+        if stream_failed {
+            if attempt < max_retries {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            write!(stdout, "\r{}\r", " ".repeat(100)).ok();
+            println!("  ⚠ Download failed after {} retries", max_retries + 1);
+            return false;
+        }
+
+        // Success — clear progress line and print completion
+        write!(stdout, "\r{}\r", " ".repeat(100)).ok();
+        let (tot_val, tot_unit) = human_bytes(total);
+        let elapsed = start.elapsed().as_secs_f64();
+        let avg_speed = if elapsed > 0.0 {
+            (downloaded as f64 / elapsed) as u64
+        } else {
+            0
+        };
+        let (spd_val, spd_unit) = human_bytes(avg_speed);
+        println!(
+            "  ✓ {} ({:.1}{}, {:.0}{}/s)",
+            label, tot_val, tot_unit, spd_val, spd_unit
+        );
+        return true;
+    }
+
+    false
+}
+
+fn human_bytes(bytes: u64) -> (f64, &'static str) {
+    if bytes >= 1_073_741_824 {
+        (bytes as f64 / 1_073_741_824.0, " GB")
+    } else if bytes >= 1_048_576 {
+        (bytes as f64 / 1_048_576.0, " MB")
+    } else if bytes >= 1024 {
+        (bytes as f64 / 1024.0, " KB")
+    } else {
+        (bytes as f64, " B")
+    }
+}
+
+/// Fallback to curl if reqwest streaming isn't available.
+fn curl_download(url: &str, dest: &std::path::Path) -> bool {
+    std::process::Command::new("curl")
+        .args(["-f#L", url, "-o", &dest.to_string_lossy()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Download a model from the CDN (R2) into the given cache directory.
 ///
 /// Handles text models (safetensors) and image models (.ckpt) from R2.
@@ -212,19 +405,10 @@ fn download_model_from_cdn(s3_name: &str, cache_dir: &std::path::Path, display_n
         .unwrap_or(false);
 
     if single_ok {
-        println!("  Downloading {} weights...", display_name);
-        let ok = std::process::Command::new("curl")
-            .args([
-                "-f#L",
-                &format!("{}/model.safetensors", base),
-                "-o",
-                &cache_dir.join("model.safetensors").to_string_lossy(),
-            ])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let url = format!("{}/model.safetensors", base);
+        let ok =
+            download_file_with_progress(&url, &cache_dir.join("model.safetensors"), display_name);
         if ok {
-            println!("  ✓ {} downloaded", display_name);
             return true;
         }
     }
@@ -280,33 +464,15 @@ fn download_model_from_cdn(s3_name: &str, cache_dir: &std::path::Path, display_n
         return false;
     }
 
-    println!(
-        "  Downloading {} ({} shards)...",
-        display_name,
-        shards.len()
-    );
     let mut all_ok = true;
     for (i, shard) in shards.iter().enumerate() {
-        println!("  [{}/{}] {}", i + 1, shards.len(), shard);
-        let ok = std::process::Command::new("curl")
-            .args([
-                "-f#L",
-                &format!("{}/{}", base, shard),
-                "-o",
-                &cache_dir.join(shard).to_string_lossy(),
-            ])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
+        let label = format!("{} [{}/{}]", display_name, i + 1, shards.len());
+        let url = format!("{}/{}", base, shard);
+        if !download_file_with_progress(&url, &cache_dir.join(shard), &label) {
             println!("  ⚠ Failed to download {}", shard);
             all_ok = false;
             break;
         }
-    }
-
-    if all_ok {
-        println!("  ✓ {} downloaded ({} shards)", display_name, shards.len());
     }
     all_ok
 }
@@ -340,26 +506,13 @@ fn download_ckpt_model_from_cdn(
 
     let mut all_ok = true;
     for (i, f) in ckpt_files.iter().enumerate() {
-        println!("  [{}/{}] {}", i + 1, ckpt_files.len(), f);
-        let ok = std::process::Command::new("curl")
-            .args([
-                "-f#L",
-                &format!("{}/{}", base_url, f),
-                "-o",
-                &cache_dir.join(f).to_string_lossy(),
-            ])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
+        let label = format!("{} [{}/{}]", display_name, i + 1, ckpt_files.len());
+        let url = format!("{}/{}", base_url, f);
+        if !download_file_with_progress(&url, &cache_dir.join(f), &label) {
             println!("  ⚠ Failed to download {}", f);
             all_ok = false;
             break;
         }
-    }
-
-    if all_ok {
-        println!("  ✓ {} downloaded", display_name);
     }
     all_ok
 }
@@ -2786,23 +2939,35 @@ async fn cmd_enroll(coordinator_url: String) -> Result<()> {
         std::env::temp_dir().join(format!("EigenInference-Enroll-{serial}.mobileconfig"));
     std::fs::write(&profile_path, &bytes)?;
 
-    // Open for install
+    // Register the profile and open System Settings to the Device Management pane
     #[cfg(target_os = "macos")]
     {
-        println!("→ Opening attestation profile...");
-        println!();
-        println!("  Install it in System Settings → General → Device Management");
-        println!("  This will:");
-        println!("    1. Enroll in MDM for security verification");
-        println!("    2. Generate a key in your Secure Enclave");
-        println!("    3. Apple verifies your device is genuine hardware");
-        println!("    4. A certificate is issued binding the SE key to your device");
-        println!();
+        // Step 1: open .mobileconfig registers it with System Settings
         let _ = std::process::Command::new("open")
             .arg(&profile_path)
             .status();
+
+        // Small delay so the profile registers before we open the pane
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // Step 2: open System Settings directly to Device Management
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.settings.PrivacySecurity.DeviceManagement")
+            .status();
+
+        println!("→ System Settings opened to Device Management");
+        println!();
+        println!("  Click \"Install\" on the EigenInference profile, then enter your password.");
+        println!("  This verifies:");
+        println!("    • SIP and Secure Boot are enabled");
+        println!("    • Your Secure Enclave is genuine Apple hardware");
+        println!("    • Device identity signed by Apple's Root CA");
+        println!();
+        println!("  EigenInference CANNOT erase, lock, or control your Mac.");
+        println!("  Remove anytime in System Settings → Device Management.");
     }
 
+    println!();
     println!("After installing, verify with: eigeninference-provider doctor");
     Ok(())
 }

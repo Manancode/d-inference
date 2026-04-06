@@ -230,13 +230,17 @@ elif [ -n "$SERIAL" ]; then
         echo "  │ your Mac. Remove anytime in System Settings.      │"
         echo "  └──────────────────────────────────────────────────┘"
         echo ""
+        # Register the profile, then open System Settings to the install pane
         open "/tmp/EigenInference-Enroll-${SERIAL}.mobileconfig"
+        sleep 1
+        open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.DeviceManagement"
 
+        echo "  System Settings opened — click Install and enter your password."
+        echo ""
         if [ "$INTERACTIVE" = true ]; then
             read -p "  Press Enter after installing the profile..."
         else
-            echo "  Profile opened in System Settings."
-            echo "  Install it, then the provider will verify on start."
+            echo "  Install the profile, then the provider will verify on start."
             sleep 3
         fi
         echo "  Enrollment ✓"
