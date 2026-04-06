@@ -7,14 +7,11 @@ import {
   fetchBalance,
   fetchUsage,
   deposit,
-  withdraw,
   redeemInviteCode,
   type BalanceResponse,
   type UsageEntry,
 } from "@/lib/api";
 import {
-  ArrowUpRight,
-  ArrowDownLeft,
   Clock,
   X,
   Loader2,
@@ -22,6 +19,7 @@ import {
   TrendingUp,
   Ticket,
   Check,
+  CreditCard,
 } from "lucide-react";
 import { UsageChart } from "@/components/UsageChart";
 
@@ -37,7 +35,7 @@ function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-bg-white border-[3px] border-ink rounded-xl w-full max-w-md mx-4 shadow-lg">
+      <div className="bg-bg-white border-[3px] border-ink rounded-xl w-full max-w-md mx-2 sm:mx-4 shadow-lg">
         <div className="flex justify-end p-3">
           <button
             onClick={onClose}
@@ -57,11 +55,8 @@ export default function BillingPage() {
   const [balance, setBalance] = useState<BalanceResponse | null>(null);
   const [usage, setUsage] = useState<UsageEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [depositOpen, setDepositOpen] = useState(false);
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
-  const [depositAmount, setDepositAmount] = useState("10");
-  const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [walletAddr, setWalletAddr] = useState("");
+  const [buyOpen, setBuyOpen] = useState(false);
+  const [buyAmount, setBuyAmount] = useState("10");
   const [actionLoading, setActionLoading] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -87,15 +82,19 @@ export default function BillingPage() {
     loadData();
   }, [loadData]);
 
-  const handleDeposit = async () => {
+  const handleBuyCredits = async () => {
     setActionLoading(true);
     try {
-      await deposit(parseFloat(depositAmount));
-      setDepositOpen(false);
-      addToast("Deposit successful", "success");
+      // Currently uses the coordinator's deposit endpoint.
+      // In mock mode, this credits directly.
+      // When Solana is configured, this will be replaced with
+      // a USDC transfer via Privy embedded wallet + tx signature submission.
+      await deposit(parseFloat(buyAmount));
+      setBuyOpen(false);
+      addToast(`$${buyAmount} credits added`, "success");
       loadData();
     } catch (e) {
-      addToast(`Deposit failed: ${(e as Error).message}`);
+      addToast(`Purchase failed: ${(e as Error).message}`);
     }
     setActionLoading(false);
   };
@@ -114,19 +113,6 @@ export default function BillingPage() {
       addToast(`${(e as Error).message}`);
     }
     setInviteLoading(false);
-  };
-
-  const handleWithdraw = async () => {
-    setActionLoading(true);
-    try {
-      await withdraw(parseFloat(withdrawAmount), walletAddr);
-      setWithdrawOpen(false);
-      addToast("Withdrawal submitted", "success");
-      loadData();
-    } catch (e) {
-      addToast(`Withdrawal failed: ${(e as Error).message}`);
-    }
-    setActionLoading(false);
   };
 
   const sortedUsage = [...usage].sort((a, b) => {
@@ -148,11 +134,10 @@ export default function BillingPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 py-6 sm:py-8 space-y-8">
           {/* Balance Card */}
-          <div className="relative overflow-hidden rounded-2xl border-[3px] border-ink bg-bg-white p-8 shadow-md">
-
+          <div className="relative overflow-hidden rounded-2xl border-[3px] border-ink bg-bg-white p-6 sm:p-8 shadow-md">
             <div className="relative">
               <p className="text-xs font-mono text-text-tertiary uppercase tracking-widest mb-2">
-                Available Balance
+                Available Credits
               </p>
               {loading ? (
                 <div className="flex items-center gap-2 text-text-tertiary">
@@ -170,30 +155,22 @@ export default function BillingPage() {
                 </div>
               )}
 
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setDepositOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-accent-green/15 border border-accent-green/25 text-accent-green text-sm font-mono hover:bg-accent-green/25 transition-colors"
-                >
-                  <ArrowDownLeft size={14} />
-                  Deposit
-                </button>
-                <button
-                  onClick={() => setWithdrawOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-bg-tertiary border border-border-subtle text-text-secondary text-sm font-mono hover:bg-bg-hover transition-colors"
-                >
-                  <ArrowUpRight size={14} />
-                  Withdraw
-                </button>
-              </div>
+              <button
+                onClick={() => setBuyOpen(true)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-coral border-[3px] border-ink text-white text-sm font-bold
+                           hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)] transition-all"
+              >
+                <CreditCard size={14} />
+                Buy Credits
+              </button>
             </div>
           </div>
 
           {/* Invite Code Redemption */}
           <div className="rounded-2xl border-[3px] border-ink bg-bg-white p-6 shadow-md">
             <div className="flex items-center gap-2 mb-4">
-              <Ticket size={16} className="text-accent-brand" />
-              <h3 className="text-sm font-medium text-text-primary">Invite Code</h3>
+              <Ticket size={16} className="text-gold" />
+              <h3 className="text-sm font-semibold text-text-primary">Invite Code</h3>
             </div>
             <div className="flex gap-3">
               <input
@@ -206,13 +183,13 @@ export default function BillingPage() {
                 }}
                 placeholder="INV-XXXXXXXX"
                 maxLength={20}
-                className="flex-1 bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-2.5 text-text-primary font-mono text-sm tracking-wider outline-none focus:border-accent-brand/50 transition-colors placeholder:text-text-tertiary/50"
+                className="flex-1 bg-bg-primary border-2 border-border-dim rounded-lg px-4 py-2.5 text-text-primary font-mono text-sm tracking-wider outline-none focus:border-coral transition-colors placeholder:text-text-tertiary/50"
                 onKeyDown={(e) => e.key === "Enter" && handleRedeem()}
               />
               <button
                 onClick={handleRedeem}
                 disabled={inviteLoading || !inviteCode.trim()}
-                className="px-5 py-2.5 rounded-lg bg-accent-brand text-white text-sm font-medium hover:bg-accent-brand-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                className="px-5 py-2.5 rounded-lg bg-coral border-2 border-ink text-white text-sm font-bold hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
               >
                 {inviteLoading ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -223,7 +200,7 @@ export default function BillingPage() {
               </button>
             </div>
             {inviteSuccess && (
-              <div className="mt-3 flex items-center gap-2 text-sm text-accent-green">
+              <div className="mt-3 flex items-center gap-2 text-sm text-teal font-semibold">
                 <Check size={14} />
                 {inviteSuccess}
               </div>
@@ -237,19 +214,19 @@ export default function BillingPage() {
                 icon: DollarSign,
                 label: "Total Spent",
                 value: `$${(totalSpent / 1_000_000).toFixed(4)}`,
-                color: "text-accent-brand",
+                color: "text-coral",
               },
               {
                 icon: TrendingUp,
                 label: "Total Tokens",
                 value: totalTokens.toLocaleString(),
-                color: "text-accent-green",
+                color: "text-teal",
               },
               {
                 icon: Clock,
                 label: "Requests",
                 value: usage.length.toString(),
-                color: "text-accent-amber",
+                color: "text-gold",
               },
             ].map(({ icon: Icon, label, value, color }) => (
               <div
@@ -276,7 +253,7 @@ export default function BillingPage() {
           <div className="rounded-xl bg-bg-white border-[3px] border-ink overflow-hidden shadow-md">
             <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-2">
               <Clock size={14} className="text-text-tertiary" />
-              <h3 className="text-sm font-medium text-text-primary">
+              <h3 className="text-sm font-semibold text-text-primary">
                 Usage History
               </h3>
             </div>
@@ -307,14 +284,14 @@ export default function BillingPage() {
                               }
                             }
                           }}
-                          className={`px-5 py-3 text-left text-xs font-mono text-text-tertiary uppercase tracking-wider ${
+                          className={`px-3 sm:px-5 py-3 text-left text-xs font-mono text-text-tertiary uppercase tracking-wider ${
                             key === "timestamp" || key === "cost_micro_usd"
                               ? "cursor-pointer hover:text-text-secondary"
                               : ""
                           }`}
                         >
                           {label}
-                          {sortField === key && (sortAsc ? " ↑" : " ↓")}
+                          {sortField === key && (sortAsc ? " \u2191" : " \u2193")}
                         </th>
                       ))}
                     </tr>
@@ -325,21 +302,21 @@ export default function BillingPage() {
                         key={entry.request_id}
                         className="border-b border-border-subtle/50 hover:bg-bg-hover/50 transition-colors"
                       >
-                        <td className="px-5 py-3 font-mono text-xs text-text-secondary">
+                        <td className="px-3 sm:px-5 py-3 font-mono text-xs text-text-secondary">
                           {new Date(entry.timestamp).toLocaleString()}
                         </td>
-                        <td className="px-5 py-3">
-                          <span className="font-mono text-xs text-accent-brand">
+                        <td className="px-3 sm:px-5 py-3">
+                          <span className="font-mono text-xs text-coral">
                             {entry.model.split("/").pop()}
                           </span>
                         </td>
-                        <td className="px-5 py-3 font-mono text-xs text-text-secondary">
+                        <td className="px-3 sm:px-5 py-3 font-mono text-xs text-text-secondary">
                           {entry.prompt_tokens + entry.completion_tokens}
                           <span className="text-text-tertiary ml-1">
                             ({entry.prompt_tokens}p / {entry.completion_tokens}c)
                           </span>
                         </td>
-                        <td className="px-5 py-3 font-mono text-xs text-accent-green">
+                        <td className="px-3 sm:px-5 py-3 font-mono text-xs text-teal">
                           ${(entry.cost_micro_usd / 1_000_000).toFixed(6)}
                         </td>
                       </tr>
@@ -352,82 +329,58 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* Deposit Modal */}
-      <Modal open={depositOpen} onClose={() => setDepositOpen(false)}>
+      {/* Buy Credits Modal */}
+      <Modal open={buyOpen} onClose={() => setBuyOpen(false)}>
         <div className="px-6 pb-6">
-          <h3 className="text-lg font-semibold text-text-primary mb-4">
-            Deposit Funds
+          <h3 className="text-2xl font-display text-ink mb-4">
+            Buy Credits
           </h3>
+          <p className="text-sm text-text-secondary mb-4">
+            Credits are used to pay for inference. Select an amount below.
+          </p>
           <label className="block text-xs font-mono text-text-tertiary uppercase tracking-wider mb-2">
             Amount (USD)
           </label>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-text-tertiary text-lg">$</span>
+            <span className="text-text-tertiary text-lg font-display">$</span>
             <input
               type="number"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              className="flex-1 bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono text-lg outline-none focus:border-accent-green/50 transition-colors"
+              value={buyAmount}
+              onChange={(e) => setBuyAmount(e.target.value)}
+              className="flex-1 bg-bg-primary border-[3px] border-ink rounded-lg px-4 py-3 text-text-primary font-mono text-lg outline-none focus:border-coral transition-colors"
               min="1"
               step="1"
             />
           </div>
-          <div className="flex gap-2 mb-4">
+          <div className="flex gap-2 mb-6">
             {[5, 10, 25, 50].map((amt) => (
               <button
                 key={amt}
-                onClick={() => setDepositAmount(String(amt))}
-                className="flex-1 py-2 rounded-lg bg-bg-tertiary border border-border-subtle text-text-secondary text-sm font-mono hover:border-accent-green/30 hover:text-accent-green transition-colors"
+                onClick={() => setBuyAmount(String(amt))}
+                className={`flex-1 py-2 rounded-lg border-2 text-sm font-mono font-bold transition-all ${
+                  buyAmount === String(amt)
+                    ? "bg-coral/15 border-coral text-coral"
+                    : "bg-bg-primary border-border-dim text-text-secondary hover:border-coral/30 hover:text-coral"
+                }`}
               >
                 ${amt}
               </button>
             ))}
           </div>
           <button
-            onClick={handleDeposit}
-            disabled={actionLoading || !depositAmount}
-            className="w-full py-3 rounded-lg bg-accent-green text-white font-medium text-sm hover:bg-accent-green/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+            onClick={handleBuyCredits}
+            disabled={actionLoading || !buyAmount || parseFloat(buyAmount) <= 0}
+            className="w-full py-3 rounded-lg bg-coral border-[3px] border-ink text-white font-bold text-sm
+                       hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)]
+                       disabled:opacity-50 disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-none
+                       transition-all flex items-center justify-center gap-2"
           >
             {actionLoading && <Loader2 size={14} className="animate-spin" />}
-            Confirm Deposit
+            {actionLoading ? "Processing..." : `Buy $${buyAmount} Credits`}
           </button>
-        </div>
-      </Modal>
-
-      {/* Withdraw Modal */}
-      <Modal open={withdrawOpen} onClose={() => setWithdrawOpen(false)}>
-        <div className="px-6 pb-6">
-          <h3 className="text-lg font-semibold text-text-primary mb-4">
-            Withdraw Funds
-          </h3>
-          <label className="block text-xs font-mono text-text-tertiary uppercase tracking-wider mb-2">
-            Amount (USD)
-          </label>
-          <input
-            type="number"
-            value={withdrawAmount}
-            onChange={(e) => setWithdrawAmount(e.target.value)}
-            placeholder="0.00"
-            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono mb-4 outline-none focus:border-accent-brand/50 transition-colors"
-          />
-          <label className="block text-xs font-mono text-text-tertiary uppercase tracking-wider mb-2">
-            Wallet Address
-          </label>
-          <input
-            type="text"
-            value={walletAddr}
-            onChange={(e) => setWalletAddr(e.target.value)}
-            placeholder="0x..."
-            className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-4 py-3 text-text-primary font-mono text-sm mb-4 outline-none focus:border-accent-brand/50 transition-colors"
-          />
-          <button
-            onClick={handleWithdraw}
-            disabled={actionLoading || !withdrawAmount || !walletAddr}
-            className="w-full py-3 rounded-lg bg-accent-brand text-white font-medium text-sm hover:bg-accent-brand/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-          >
-            {actionLoading && <Loader2 size={14} className="animate-spin" />}
-            Confirm Withdrawal
-          </button>
+          <p className="mt-4 text-xs text-text-tertiary text-center">
+            Paid via USDC on Solana. Transaction fees are sponsored.
+          </p>
         </div>
       </Modal>
     </div>
