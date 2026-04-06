@@ -89,10 +89,10 @@ fn fallback_catalog() -> Vec<CatalogModel> {
             s3_name: "flux-klein-9b-q8".into(),
             display_name: "FLUX.2 Klein 9B".into(),
             model_type: "image".into(),
-            size_gb: 13.0,
+            size_gb: 8.8,
             architecture: "9B diffusion".into(),
             description: "Higher quality image gen".into(),
-            min_ram_gb: 24,
+            min_ram_gb: 16,
         },
         CatalogModel {
             id: "qwen3.5-27b-claude-opus-8bit".into(),
@@ -4165,11 +4165,11 @@ async fn cmd_start(
                 .iter()
                 .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
                 .map(|c| {
-                    // Check if model is downloaded AND complete (>90% of expected size).
-                    // Partial downloads from interrupted transfers show as tiny files.
+                    // Check if model is downloaded AND not a trivial partial file.
+                    // A real model is at least 500 MB. Partial downloads from interrupted
+                    // transfers are typically much smaller.
                     let on_disk = downloaded.iter().find(|m| m.id == c.id);
-                    let is_downloaded =
-                        on_disk.is_some_and(|m| m.estimated_memory_gb >= c.size_gb * 0.9);
+                    let is_downloaded = on_disk.is_some_and(|m| m.size_bytes > 500_000_000);
                     let size = if is_downloaded {
                         on_disk.map(|m| m.estimated_memory_gb).unwrap_or(c.size_gb)
                     } else {
