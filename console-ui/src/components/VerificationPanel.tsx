@@ -140,7 +140,7 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
   }
 
   return (
-    <div className={`rounded-xl ${bg} shadow-sm overflow-hidden`}>
+    <div className={`rounded-xl ${bg} shadow-sm overflow-hidden max-w-full`}>
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-2 px-3 py-2.5 text-left"

@@ -118,7 +118,7 @@ function StreamMetrics({
 
   return (
     <div
-      className={`flex items-center gap-3 mt-3 py-2 px-3 rounded-lg text-xs font-mono border-2 ${
+      className={`flex items-center gap-2 sm:gap-3 mt-3 py-2 px-2 sm:px-3 rounded-lg text-xs font-mono border-2 flex-wrap ${
         streaming
           ? "bg-teal-light/30 border-teal shadow-sm"
           : "bg-bg-secondary border-border-dim"
@@ -232,8 +232,8 @@ export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: 
   if (isUser) {
     return (
       <div className="message-animate py-4">
-        <div className="max-w-4xl mx-auto px-6 flex justify-end">
-          <div className="max-w-[80%] bg-coral/10 border-2 border-coral/30 rounded-2xl rounded-br-md px-4 py-3">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 flex justify-end">
+          <div className="max-w-[90%] sm:max-w-[80%] bg-coral/10 border-2 border-coral/30 rounded-2xl rounded-br-md px-4 py-3">
             <p className="text-[15px] text-text-primary leading-relaxed whitespace-pre-wrap">
               {message.content}
             </p>
@@ -245,20 +245,25 @@ export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: 
 
   return (
     <div className="message-animate py-4">
-      <div className="max-w-4xl mx-auto px-6">
-        <div className="flex gap-3">
+      <div className="max-w-4xl mx-auto px-3 sm:px-6">
+        <div className="flex gap-2 sm:gap-3">
           {/* Avatar — hand-drawn style */}
-          <div className="shrink-0 w-7 h-7 rounded-lg bg-teal-light border-2 border-teal flex items-center justify-center mt-0.5">
+          <div className="shrink-0 w-7 h-7 rounded-lg bg-teal-light border-2 border-teal flex items-center justify-center mt-0.5 hidden sm:flex">
             <Sparkles size={14} className="text-teal" />
           </div>
 
           {/* Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <span className="text-sm font-display font-bold text-text-secondary">
                 EigenInference
               </span>
-              {message.trust && <TrustBadge trust={message.trust} />}
+              {message.trust && (
+                <>
+                  <span className="hidden sm:inline"><TrustBadge trust={message.trust} /></span>
+                  <span className="sm:hidden"><TrustBadge trust={message.trust} compact /></span>
+                </>
+              )}
             </div>
 
             {hasThinking && (

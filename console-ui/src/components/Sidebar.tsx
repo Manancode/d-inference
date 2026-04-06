@@ -43,7 +43,7 @@ export function Sidebar() {
   const isChatActive = pathname === "/";
 
   return (
-    <aside className="sidebar-animate w-[260px] h-screen flex flex-col bg-bg-secondary border-r-[3px] border-border-default shrink-0">
+    <aside className="sidebar-animate fixed inset-0 z-50 w-full sm:static sm:w-[260px] h-screen flex flex-col bg-bg-secondary sm:border-r-[3px] sm:border-border-default shrink-0">
       {/* Brand header */}
       <div className="px-5 pt-5 pb-4 flex items-center justify-between">
         <Link href="/" className="group">

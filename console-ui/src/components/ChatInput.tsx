@@ -60,7 +60,7 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
 
   return (
     <div className="bg-bg-primary/80 backdrop-blur-sm">
-      <div className="max-w-4xl mx-auto px-6 py-4">
+      <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-4">
         <div className="relative flex flex-col gap-2 bg-bg-white rounded-2xl border-[3px] border-ink
                         shadow-md focus-within:shadow-lg focus-within:translate-x-[-1px] focus-within:translate-y-[-1px] transition-all">
           {/* Textarea */}
@@ -86,8 +86,8 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
                   }}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-tertiary hover:text-text-secondary hover:bg-bg-hover border-2 border-transparent hover:border-border-subtle transition-all"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal" />
-                  <span className="font-mono">{displayModel}</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal shrink-0" />
+                  <span className="font-mono truncate max-w-[120px] sm:max-w-none">{displayModel}</span>
                   <ChevronDown size={12} />
                 </button>
 

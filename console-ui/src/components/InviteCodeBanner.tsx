@@ -43,7 +43,7 @@ export function InviteCodeBanner() {
   if (dismissed) return null;
 
   return (
-    <div className="fixed bottom-24 right-6 z-40 max-w-sm message-animate">
+    <div className="fixed bottom-24 right-3 sm:right-6 z-40 w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-sm message-animate">
       <div className="bg-bg-white border-[3px] border-ink rounded-xl shadow-lg overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">

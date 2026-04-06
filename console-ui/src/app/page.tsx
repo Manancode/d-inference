@@ -324,7 +324,7 @@ export default function ChatPage() {
               <span className="text-xs text-text-tertiary font-display">This is an experimental research project &mdash; results may vary.</span>
             </p>
 
-            <div className="grid grid-cols-2 gap-3 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
               {SUGGESTED_PROMPTS.map(({ label, prompt }) => (
                 <button
                   key={label}
