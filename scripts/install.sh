@@ -90,7 +90,12 @@ echo "  Hash verified ✓"
 
 echo "  Installing binaries..."
 tar xzf /tmp/eigeninference-bundle.tar.gz -C "$BIN_DIR"
-chmod +x "$BIN_DIR/eigeninference-provider" "$BIN_DIR/eigeninference-enclave" 2>/dev/null || true
+chmod +x "$BIN_DIR/eigeninference-provider" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" 2>/dev/null || true
+# Move image bridge to the expected location
+if [ -d "$BIN_DIR/image-bridge" ]; then
+    rm -rf "$INSTALL_DIR/image-bridge"
+    mv "$BIN_DIR/image-bridge" "$INSTALL_DIR/image-bridge"
+fi
 rm -f /tmp/eigeninference-bundle.tar.gz
 
 # Verify code signature (codesign is part of base macOS, no CLT needed)

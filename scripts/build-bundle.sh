@@ -178,8 +178,40 @@ else
 fi
 echo ""
 
-# ─── 7. Create tarball ───────────────────────────────────────
-echo "7. Creating tarball..."
+# ─── 7. Build and include gRPCServerCLI (Draw Things image backend) ──
+echo "7. Building gRPCServerCLI (Draw Things community)..."
+DRAWTHINGS_DIR="/tmp/draw-things-community"
+if [ ! -d "$DRAWTHINGS_DIR" ]; then
+    git clone --depth 1 https://github.com/drawthingsai/draw-things-community.git "$DRAWTHINGS_DIR"
+fi
+cd "$DRAWTHINGS_DIR"
+swift build -c release --product gRPCServerCLI 2>&1 | tail -3
+GRPC_BIN="$DRAWTHINGS_DIR/.build/arm64-apple-macosx/release/gRPCServerCLI"
+if [ -f "$GRPC_BIN" ]; then
+    cp "$GRPC_BIN" "$BUNDLE_DIR/gRPCServerCLI"
+    chmod +x "$BUNDLE_DIR/gRPCServerCLI"
+    echo "   ✓ gRPCServerCLI ($(du -h "$BUNDLE_DIR/gRPCServerCLI" | cut -f1))"
+else
+    echo "   ⚠ gRPCServerCLI build failed — image generation will not work"
+fi
+echo ""
+
+# ─── 8. Include image bridge ────────────────────────────────
+echo "8. Including image bridge..."
+IMAGE_BRIDGE_SRC="$PROJECT_DIR/image-bridge/eigeninference_image_bridge"
+if [ -d "$IMAGE_BRIDGE_SRC" ]; then
+    mkdir -p "$BUNDLE_DIR/image-bridge/eigeninference_image_bridge"
+    cp -r "$IMAGE_BRIDGE_SRC/"*.py "$BUNDLE_DIR/image-bridge/eigeninference_image_bridge/"
+    # Copy generated protobuf/flatbuffers if they exist
+    [ -d "$IMAGE_BRIDGE_SRC/generated" ] && cp -r "$IMAGE_BRIDGE_SRC/generated" "$BUNDLE_DIR/image-bridge/eigeninference_image_bridge/"
+    echo "   ✓ image bridge"
+else
+    echo "   ⚠ image bridge not found at $IMAGE_BRIDGE_SRC"
+fi
+echo ""
+
+# ─── 9. Create tarball ────────────────────────────────────────
+echo "9. Creating tarball..."
 rm -f "$TARBALL"
 cd /tmp && tar czf "$TARBALL" -C eigeninference-bundle .
 TARBALL_SIZE=$(du -h "$TARBALL" | cut -f1)
@@ -187,7 +219,7 @@ echo "   ✓ $TARBALL ($TARBALL_SIZE)"
 echo ""
 
 # ─── 8. Build macOS app + DMG ─────────────────────────────────
-echo "8. Building macOS app..."
+echo "10. Building macOS app..."
 cd "$PROJECT_DIR/app/EigenInference"
 swift build -c release 2>&1 | tail -3
 APP_BIN=$(swift build -c release --show-bin-path)/EigenInference

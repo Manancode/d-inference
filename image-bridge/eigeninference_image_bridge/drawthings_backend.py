@@ -198,14 +198,17 @@ class DrawThingsBackend(ImageBackend):
     def _find_binary() -> str:
         """Find the gRPCServerCLI binary on the system."""
         candidates = [
-            "/usr/local/bin/gRPCServerCLI-macOS",
+            os.path.expanduser("~/.eigeninference/bin/gRPCServerCLI"),
+            os.path.expanduser("~/.eigeninference/gRPCServerCLI"),
+            "/usr/local/bin/gRPCServerCLI",
+            os.path.expanduser("~/.eigeninference/bin/gRPCServerCLI-macOS"),
             os.path.expanduser("~/.eigeninference/gRPCServerCLI-macOS"),
-            "gRPCServerCLI-macOS",
+            "/usr/local/bin/gRPCServerCLI-macOS",
         ]
         for path in candidates:
             if os.path.isfile(path) and os.access(path, os.X_OK):
                 return path
-        return "gRPCServerCLI-macOS"  # hope it's on PATH
+        return "gRPCServerCLI"  # hope it's on PATH
 
     def start_server(self):
         """Start the gRPCServerCLI subprocess."""
