@@ -4146,13 +4146,13 @@ async fn cmd_start(
                 .iter()
                 .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
                 .map(|c| {
-                    let is_downloaded = downloaded_ids.contains(&c.id);
+                    // Check if model is downloaded AND complete (>90% of expected size).
+                    // Partial downloads from interrupted transfers show as tiny files.
+                    let on_disk = downloaded.iter().find(|m| m.id == c.id);
+                    let is_downloaded =
+                        on_disk.is_some_and(|m| m.estimated_memory_gb >= c.size_gb * 0.9);
                     let size = if is_downloaded {
-                        downloaded
-                            .iter()
-                            .find(|m| m.id == c.id)
-                            .map(|m| m.estimated_memory_gb)
-                            .unwrap_or(c.size_gb)
+                        on_disk.map(|m| m.estimated_memory_gb).unwrap_or(c.size_gb)
                     } else {
                         c.size_gb
                     };
