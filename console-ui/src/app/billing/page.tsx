@@ -2,14 +2,17 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useToastStore } from "@/hooks/useToast";
+import { useAuth } from "@/hooks/useAuth";
 import { TopBar } from "@/components/TopBar";
 import {
   fetchBalance,
   fetchUsage,
+  fetchWalletInfo,
   deposit,
   redeemInviteCode,
   type BalanceResponse,
   type UsageEntry,
+  type WalletInfo,
 } from "@/lib/api";
 import {
   Clock,
@@ -20,6 +23,8 @@ import {
   Ticket,
   Check,
   CreditCard,
+  Wallet,
+  Copy,
 } from "lucide-react";
 import { UsageChart } from "@/components/UsageChart";
 
@@ -50,10 +55,29 @@ function Modal({
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      className="p-1 rounded hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors"
+      title="Copy"
+    >
+      {copied ? <Check size={12} className="text-teal" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
 export default function BillingPage() {
   const addToast = useToastStore((s) => s.addToast);
+  const { walletAddress } = useAuth();
   const [balance, setBalance] = useState<BalanceResponse | null>(null);
   const [usage, setUsage] = useState<UsageEntry[]>([]);
+  const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [buyOpen, setBuyOpen] = useState(false);
   const [buyAmount, setBuyAmount] = useState("10");
@@ -69,9 +93,14 @@ export default function BillingPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, u] = await Promise.all([fetchBalance(), fetchUsage()]);
+      const [b, u, w] = await Promise.all([
+        fetchBalance(),
+        fetchUsage(),
+        fetchWalletInfo().catch(() => null),
+      ]);
       setBalance(b);
       setUsage(u);
+      if (w) setWalletInfo(w);
     } catch (e) {
       addToast(`Failed to load billing data: ${(e as Error).message}`);
     }
@@ -85,16 +114,12 @@ export default function BillingPage() {
   const handleBuyCredits = async () => {
     setActionLoading(true);
     try {
-      // Currently uses the coordinator's deposit endpoint.
-      // In mock mode, this credits directly.
-      // When Solana is configured, this will be replaced with
-      // a USDC transfer via Privy embedded wallet + tx signature submission.
       await deposit(parseFloat(buyAmount));
       setBuyOpen(false);
       addToast(`$${buyAmount} credits added`, "success");
       loadData();
     } catch (e) {
-      addToast(`Purchase failed: ${(e as Error).message}`);
+      addToast(`${(e as Error).message}`);
     }
     setActionLoading(false);
   };
@@ -127,6 +152,11 @@ export default function BillingPage() {
     0
   );
 
+  const displayWallet = walletInfo?.wallet_address || walletAddress;
+  const truncatedWallet = displayWallet
+    ? `${displayWallet.slice(0, 6)}...${displayWallet.slice(-4)}`
+    : null;
+
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Billing" />
@@ -145,13 +175,27 @@ export default function BillingPage() {
                   <span className="text-sm">Loading...</span>
                 </div>
               ) : (
-                <div className="flex items-baseline gap-1 mb-6">
+                <div className="flex items-baseline gap-1 mb-4">
                   <span className="text-4xl font-bold text-text-primary font-mono tracking-tight">
                     ${Number(balance?.balance_usd ?? 0).toFixed(2)}
                   </span>
                   <span className="text-sm text-text-tertiary font-mono">
                     USD
                   </span>
+                </div>
+              )}
+
+              {/* Wallet info */}
+              {truncatedWallet && (
+                <div className="flex items-center gap-2 mb-4 text-xs text-text-tertiary font-mono">
+                  <Wallet size={12} />
+                  <span>{truncatedWallet}</span>
+                  <CopyButton text={displayWallet!} />
+                  {walletInfo?.wallet_usdc_usd && (
+                    <span className="ml-2 text-teal font-semibold">
+                      {walletInfo.wallet_usdc_usd} USDC
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -332,12 +376,31 @@ export default function BillingPage() {
       {/* Buy Credits Modal */}
       <Modal open={buyOpen} onClose={() => setBuyOpen(false)}>
         <div className="px-6 pb-6">
-          <h3 className="text-2xl font-display text-ink mb-4">
+          <h3 className="text-2xl font-display text-ink mb-2">
             Buy Credits
           </h3>
           <p className="text-sm text-text-secondary mb-4">
-            Credits are used to pay for inference. Select an amount below.
+            Credits are used to pay for inference requests.
           </p>
+
+          {/* Wallet info in modal */}
+          {truncatedWallet && (
+            <div className="rounded-lg bg-bg-primary border-2 border-border-dim p-3 mb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-text-tertiary">
+                  <Wallet size={12} />
+                  <span className="font-mono">{truncatedWallet}</span>
+                  <CopyButton text={displayWallet!} />
+                </div>
+                {walletInfo?.wallet_usdc_usd && (
+                  <span className="text-xs font-mono font-semibold text-teal">
+                    {walletInfo.wallet_usdc_usd} USDC
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <label className="block text-xs font-mono text-text-tertiary uppercase tracking-wider mb-2">
             Amount (USD)
           </label>
