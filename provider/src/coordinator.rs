@@ -89,6 +89,8 @@ pub struct CoordinatorClient {
     inference_active: Arc<AtomicBool>,
     /// The model currently loaded / being served (set by the main event loop).
     current_model: Arc<std::sync::Mutex<Option<String>>>,
+    /// All models currently loaded and warm (for multi-model serving).
+    warm_models: Arc<std::sync::Mutex<Vec<String>>>,
     /// SHA-256 weight fingerprint of the currently loaded model (cached at load time).
     current_model_hash: Arc<std::sync::Mutex<Option<String>>>,
 }
@@ -115,6 +117,7 @@ impl CoordinatorClient {
             stats: Arc::new(AtomicProviderStats::new()),
             inference_active: Arc::new(AtomicBool::new(false)),
             current_model: Arc::new(std::sync::Mutex::new(None)),
+            warm_models: Arc::new(std::sync::Mutex::new(Vec::new())),
             current_model_hash: Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -155,6 +158,12 @@ impl CoordinatorClient {
     /// Set the shared current-model name (model currently loaded on this provider).
     pub fn with_current_model(mut self, model: Arc<std::sync::Mutex<Option<String>>>) -> Self {
         self.current_model = model;
+        self
+    }
+
+    /// Set the shared warm-models list (all models currently loaded in multi-model mode).
+    pub fn with_warm_models(mut self, warm: Arc<std::sync::Mutex<Vec<String>>>) -> Self {
+        self.warm_models = warm;
         self
     }
 
@@ -282,9 +291,11 @@ impl CoordinatorClient {
                     );
                     let is_active = self.inference_active.load(Ordering::Relaxed);
                     let active_model = self.current_model.lock().unwrap().clone();
+                    let warm = self.warm_models.lock().unwrap().clone();
                     let heartbeat = ProviderMessage::Heartbeat {
                         status: if is_active { ProviderStatus::Serving } else { ProviderStatus::Idle },
                         active_model,
+                        warm_models: warm,
                         stats: ProviderStats {
                             requests_served: self.stats.requests_served.load(Ordering::Relaxed),
                             tokens_generated: self.stats.tokens_generated.load(Ordering::Relaxed),

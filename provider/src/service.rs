@@ -31,7 +31,7 @@ fn uid() -> u32 {
 fn write_plist(
     binary_path: &Path,
     coordinator_url: &str,
-    model: &str,
+    models: &[String],
     image_model: Option<&str>,
     image_model_path: Option<&str>,
 ) -> Result<()> {
@@ -54,10 +54,11 @@ fn write_plist(
         "        <string>serve</string>".to_string(),
         "        <string>--coordinator</string>".to_string(),
         format!("        <string>{coordinator_url}</string>"),
-        "        <string>--model</string>".to_string(),
-        format!("        <string>{model}</string>"),
-        "        <string>--all-models</string>".to_string(),
     ];
+    for model in models {
+        args.push("        <string>--model</string>".to_string());
+        args.push(format!("        <string>{model}</string>"));
+    }
     if let Some(im) = image_model {
         args.push("        <string>--image-model</string>".to_string());
         args.push(format!("        <string>{im}</string>"));
@@ -173,7 +174,7 @@ pub fn is_installed() -> bool {
 /// It does NOT auto-restart on crash or auto-start on login.
 pub fn install_and_start(
     coordinator_url: &str,
-    model: &str,
+    models: &[String],
     image_model: Option<&str>,
     image_model_path: Option<&str>,
 ) -> Result<()> {
@@ -191,7 +192,7 @@ pub fn install_and_start(
     write_plist(
         &binary_path,
         coordinator_url,
-        model,
+        models,
         image_model,
         image_model_path,
     )?;

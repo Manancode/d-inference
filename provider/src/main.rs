@@ -489,10 +489,10 @@ enum Command {
         #[arg(long, default_value_t = 8000)]
         port: u16,
 
-        /// Model to serve (serves largest downloaded model if not specified)
-        /// Can specify multiple: --model model1 --model model2
+        /// Models to serve. Can specify multiple: --model model1 --model model2
+        /// Serves largest downloaded model if not specified.
         #[arg(long)]
-        model: Option<String>,
+        model: Vec<String>,
 
         /// Port for the inference backend
         #[arg(long)]
@@ -1108,7 +1108,7 @@ async fn cmd_install(
     println!("  Model: {}", model);
     println!();
 
-    service::install_and_start(&coordinator_url, &model, None, None)?;
+    service::install_and_start(&coordinator_url, &[model.clone()], None, None)?;
 
     let log_path = dirs::home_dir()
         .unwrap_or_default()
@@ -1153,7 +1153,7 @@ async fn cmd_serve(
     local: bool,
     coordinator_url: String,
     port: u16,
-    model_override: Option<String>,
+    model_overrides: Vec<String>,
     backend_port_override: Option<u16>,
     _all_models: bool,
 ) -> Result<()> {
@@ -1245,15 +1245,14 @@ async fn cmd_serve(
 
     // Determine models to serve
     let available_models = models::scan_models(&hw);
-    let model = if let Some(m) = model_override {
-        m
+    let selected_models: Vec<String> = if !model_overrides.is_empty() {
+        model_overrides
     } else if let Some(m) = cfg.backend.model.clone() {
-        m
+        vec![m]
     } else if let Some(m) = available_models.last() {
-        // Default to largest model that fits
-        m.id.clone()
+        vec![m.id.clone()]
     } else {
-        "mlx-community/Qwen3.5-9B-MLX-4bit".to_string()
+        vec!["mlx-community/Qwen3.5-9B-MLX-4bit".to_string()]
     };
 
     // Log all available models
@@ -1263,29 +1262,53 @@ async fn cmd_serve(
             tracing::info!("  {} ({:.1} GB)", m.id, m.estimated_memory_gb);
         }
     }
-    tracing::info!("Primary model: {}", model);
+    tracing::info!(
+        "Serving {} model(s): {:?}",
+        selected_models.len(),
+        selected_models
+    );
 
-    // Now that we know the model, size and allocate the hypervisor
-    // memory pool. Pool = 2x model file size to cover weights +
-    // activations + KV cache. If the pool can't be allocated, the
-    // provider continues with software-only protection (but will
-    // refuse to serve if RDMA is enabled — fail closed).
+    // Build backend slots: one vllm-mlx process per model on sequential ports.
+    struct BackendSlot {
+        model_id: String,
+        port: u16,
+        pid: Option<u32>,
+        backend_url: String,
+    }
+    let mut backend_slots: Vec<BackendSlot> = selected_models
+        .iter()
+        .enumerate()
+        .map(|(i, model_id)| {
+            let port = be_port + i as u16;
+            BackendSlot {
+                model_id: model_id.clone(),
+                port,
+                pid: None,
+                backend_url: format!("http://127.0.0.1:{}", port),
+            }
+        })
+        .collect();
+
+    // For backwards compat, keep a "primary model" (first in list)
+    let model = selected_models[0].clone();
+
+    // Hypervisor memory pool: sum of all model sizes × 2
     if hypervisor::is_active() {
-        let model_bytes = available_models
+        let total_model_bytes: u64 = selected_models
             .iter()
-            .find(|m| m.id == model)
+            .filter_map(|mid| available_models.iter().find(|m| m.id == *mid))
             .map(|m| m.size_bytes)
-            .unwrap_or(0);
+            .sum();
 
-        if model_bytes > 0 {
-            let pool_bytes = model_bytes as usize * 2;
+        if total_model_bytes > 0 {
+            let pool_bytes = total_model_bytes as usize * 2;
             match hypervisor::allocate_pool(pool_bytes) {
                 Ok(()) => {
                     let cap_gb = hypervisor::pool_capacity() as f64 / (1024.0 * 1024.0 * 1024.0);
                     tracing::info!(
-                        "Hypervisor memory pool: {:.1} GB (2x model size {:.1} GB)",
+                        "Hypervisor memory pool: {:.1} GB (2x total model size {:.1} GB)",
                         cap_gb,
-                        model_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+                        total_model_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
                     );
                 }
                 Err(e) => tracing::warn!("Hypervisor pool allocation failed: {e}"),
@@ -1293,33 +1316,29 @@ async fn cmd_serve(
         }
     }
 
-    // Backend URL is deterministic — set it early so coordinator and proxy
-    // can reference it before the backend process is actually running.
-    let backend_url_str = format!("http://127.0.0.1:{}", be_port);
-    let backend_url = backend_url_str.clone();
-    tracing::info!("Backend URL: {backend_url}");
-
-    // Kill any existing process on our backend port to avoid EADDRINUSE
-    if let Ok(output) = std::process::Command::new("lsof")
-        .args(["-ti", &format!(":{}", be_port)])
-        .output()
-    {
-        let pids = String::from_utf8_lossy(&output.stdout);
-        for pid in pids.split_whitespace() {
-            if let Ok(pid_num) = pid.parse::<u32>() {
-                if pid_num != std::process::id() {
-                    tracing::info!(
-                        "Killing existing process on port {}: PID {}",
-                        be_port,
-                        pid_num
-                    );
-                    let _ = std::process::Command::new("kill").arg(pid).output();
+    // Kill any existing processes on our backend ports to avoid EADDRINUSE
+    for slot in &backend_slots {
+        if let Ok(output) = std::process::Command::new("lsof")
+            .args(["-ti", &format!(":{}", slot.port)])
+            .output()
+        {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            for pid in pids.split_whitespace() {
+                if let Ok(pid_num) = pid.parse::<u32>() {
+                    if pid_num != std::process::id() {
+                        tracing::info!(
+                            "Killing existing process on port {}: PID {}",
+                            slot.port,
+                            pid_num
+                        );
+                        let _ = std::process::Command::new("kill").arg(pid).output();
+                    }
                 }
             }
         }
-        if !pids.trim().is_empty() {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
+    }
+    if !backend_slots.is_empty() {
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
     // Find bundled Python at ~/.eigeninference/python (standalone Python 3.12 + vllm-mlx)
@@ -1361,42 +1380,30 @@ async fn cmd_serve(
         tracing::info!("Connecting to coordinator: {coordinator_url}");
     }
 
-    // Advertise downloaded models. If enabled_models is set in config,
-    // only those are offered to the network. Otherwise all downloaded models.
+    // Honest advertising: only advertise models that are actually being served
+    // (i.e. have a running backend). This prevents the coordinator from routing
+    // requests for models that aren't loaded.
     let all_scanned = models::scan_models(&hw);
-    let mut advertised_models = if cfg.backend.enabled_models.is_empty() {
-        all_scanned
-    } else {
-        let enabled = &cfg.backend.enabled_models;
-        let filtered: Vec<_> = all_scanned
-            .into_iter()
-            .filter(|m| {
-                enabled
-                    .iter()
-                    .any(|e| m.id.contains(e) || e.contains(&m.id))
-            })
-            .collect();
-        if filtered.is_empty() {
-            tracing::warn!("No enabled_models matched downloaded models — advertising all");
-            models::scan_models(&hw)
-        } else {
-            tracing::info!(
-                "Advertising {} of {} downloaded models (filtered by enabled_models)",
-                filtered.len(),
-                models::scan_models(&hw).len()
-            );
-            filtered
-        }
-    };
+    let selected_set: std::collections::HashSet<&str> =
+        selected_models.iter().map(|s| s.as_str()).collect();
+    let mut advertised_models: Vec<_> = all_scanned
+        .into_iter()
+        .filter(|m| selected_set.contains(m.id.as_str()))
+        .collect();
+    tracing::info!(
+        "Advertising {} model(s) (only loaded models)",
+        advertised_models.len()
+    );
 
     // STT model env vars (needed for both advertising and backend startup)
-    let stt_port = be_port + 1;
+    // Allocate STT/image ports after all text model ports
+    let stt_port = be_port + backend_slots.len() as u16;
     let stt_model_path = std::env::var("EIGENINFERENCE_STT_MODEL").unwrap_or_default();
     let stt_model_id = std::env::var("EIGENINFERENCE_STT_MODEL_ID")
         .unwrap_or_else(|_| "CohereLabs/cohere-transcribe-03-2026".to_string());
 
     // Image model env vars (needed for both advertising and backend startup)
-    let image_port = be_port + 2;
+    let image_port = stt_port + 1;
     let image_model = std::env::var("EIGENINFERENCE_IMAGE_MODEL").unwrap_or_default();
     let image_model_id =
         std::env::var("EIGENINFERENCE_IMAGE_MODEL_ID").unwrap_or_else(|_| image_model.clone());
@@ -1474,9 +1481,11 @@ async fn cmd_serve(
         let current_model: std::sync::Arc<std::sync::Mutex<Option<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Some(model.clone())));
 
-        // Compute weight hash on-demand for the served model only.
-        // scan_models() skips hashing for fast startup; we hash just the
-        // model we're about to serve (needed for attestation challenges).
+        // All warm models (for multi-model heartbeat reporting).
+        let warm_models: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(selected_models.clone()));
+
+        // Compute weight hash on-demand for the primary served model only.
         let initial_model_hash = models::compute_weight_hash(&model);
         let current_model_hash: std::sync::Arc<std::sync::Mutex<Option<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash));
@@ -1499,6 +1508,7 @@ async fn cmd_serve(
         .with_stats(provider_stats.clone())
         .with_inference_active(inference_active.clone())
         .with_current_model(current_model)
+        .with_warm_models(warm_models)
         .with_current_model_hash(current_model_hash);
 
         // Spawn coordinator connection — this connects immediately while
@@ -1535,67 +1545,85 @@ async fn cmd_serve(
     // =========================================================================
 
     // Resolve model ID to local path on disk so the backend loads from disk
-    // directly instead of trying to download from HuggingFace.
-    let model_path = models::resolve_local_path(&model)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| {
-            tracing::warn!("Could not resolve local path for {model} — using ID directly");
-            model.clone()
-        });
-    tracing::info!(
-        "Starting inference backend for model: {} (path: {})",
-        model,
-        model_path
-    );
-
-    // Ensure the model's tokenizer_config.json has a chat_template.
-    // Some models (especially custom quantizations) ship without one,
-    // which causes vllm-mlx to crash with "tokenizer.chat_template is not set".
-    ensure_chat_template(&model_path);
-
-    // Backend stdout/stderr is suppressed to prevent prompt content from
-    // leaking into provider logs. Some backends log request previews at INFO
-    // level, which would expose user prompts to the provider operator.
-    // Health/crash detection uses HTTP health checks, not log parsing.
+    // Spawn one vllm-mlx backend per selected model on sequential ports.
     let backend_module = preferred_inference_backend_module();
-
-    let child = spawn_inference_backend(&python_cmd, backend_module, &model_path, be_port)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to start {backend_module}: {e}.\n\
-             Reinstall: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
-            )
-        })?;
-
     let backend_name = backend_name_for_module(backend_module);
-    tracing::info!(
-        "{} started (PID: {:?}) on port {}",
-        backend_module,
-        child.id(),
-        be_port
-    );
-    tracing::info!("Backend: {} on port {}", backend_name, be_port);
 
-    // Wait for model to load
-    tracing::info!("Waiting for model to load...");
-    let mut backend_ready = false;
-    for i in 0..150 {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        if backend::check_health(&backend_url_str).await {
-            tracing::info!("Backend ready after {}s", (i + 1) * 2);
-            backend_ready = true;
-            break;
+    for slot in &mut backend_slots {
+        let model_path = models::resolve_local_path(&slot.model_id)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    "Could not resolve local path for {} — using ID directly",
+                    slot.model_id
+                );
+                slot.model_id.clone()
+            });
+        tracing::info!(
+            "Starting backend for {} on port {} (path: {})",
+            slot.model_id,
+            slot.port,
+            model_path
+        );
+
+        ensure_chat_template(&model_path);
+
+        match spawn_inference_backend(&python_cmd, backend_module, &model_path, slot.port) {
+            Ok(child) => {
+                slot.pid = Some(child.id());
+                tracing::info!(
+                    "{} started (PID: {:?}) on port {}",
+                    backend_module,
+                    slot.pid,
+                    slot.port
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to start backend for {}: {e}", slot.model_id);
+            }
         }
     }
 
-    if !backend_ready {
-        tracing::error!(
-            "Backend {} failed to become healthy after 300s. \
-             The provider will stay registered but cannot serve requests. \
-             The coordinator will route to other providers.",
-            backend_name
-        );
+    // Wait for all backends to become healthy
+    for slot in &backend_slots {
+        if slot.pid.is_none() {
+            continue;
+        }
+        tracing::info!("Waiting for {} to load...", slot.model_id);
+        let mut ready = false;
+        for i in 0..150 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if backend::check_health(&slot.backend_url).await {
+                tracing::info!(
+                    "{} ready after {}s on port {}",
+                    slot.model_id,
+                    (i + 1) * 2,
+                    slot.port
+                );
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            tracing::error!(
+                "Backend for {} failed to become healthy after 300s",
+                slot.model_id
+            );
+        }
     }
+
+    // Build model→URL lookup for request routing
+    let model_to_url: std::collections::HashMap<String, String> = backend_slots
+        .iter()
+        .map(|s| (s.model_id.clone(), s.backend_url.clone()))
+        .collect();
+    // Primary backend URL for backwards compat (local server, health monitor)
+    let backend_url_str = backend_slots[0].backend_url.clone();
+    let backend_url = backend_url_str.clone();
+    // Primary model path for health monitor restart
+    let primary_model_path = models::resolve_local_path(&model)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| model.clone());
 
     // Start STT backend (continuous-batching stt_server.py) on be_port + 1 if available.
     // EIGENINFERENCE_STT_MODEL: local path or HuggingFace repo ID for the STT model.
@@ -1765,7 +1793,7 @@ async fn cmd_serve(
         let health_url = backend_url_str.clone();
         let health_python = python_cmd.clone();
         let health_backend = backend_name.to_string();
-        let health_model = model_path.clone();
+        let health_model = primary_model_path.clone();
         let health_port = be_port;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -1833,15 +1861,31 @@ async fn cmd_serve(
         let proxy_backend_url = backend_url.clone();
         let proxy_keypair = node_keypair.clone();
         let is_inprocess = proxy_backend_url.starts_with("inprocess://");
-        let idle_model = model_path.clone();
         let idle_python_cmd = python_cmd.clone();
         let idle_be_port = be_port;
         let idle_backend_name = backend_name.to_string();
         let proxy_stats = provider_stats.clone();
-        // The backend knows the model by its local path (e.g. /Users/.../.cache/.../snapshots/main/)
-        // but consumer requests use the short model ID (e.g. "qwen3.5-27b-claude-opus-8bit").
-        // We need to rewrite the model field before forwarding to the backend.
-        let backend_model_name = model_path.clone();
+        let model_to_url = model_to_url.clone();
+        // Build model→local-path lookup for rewriting the model field in requests
+        let model_to_path: std::collections::HashMap<String, String> = backend_slots
+            .iter()
+            .map(|s| {
+                let path = models::resolve_local_path(&s.model_id)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| s.model_id.clone());
+                (s.model_id.clone(), path)
+            })
+            .collect();
+        // For backwards compat (idle reload of primary model)
+        let idle_model = model_to_path
+            .get(&model)
+            .cloned()
+            .unwrap_or_else(|| model.clone());
+        // Collect PIDs for per-process shutdown
+        let backend_pids: Vec<(String, Option<u32>)> = backend_slots
+            .iter()
+            .map(|s| (s.model_id.clone(), s.pid))
+            .collect();
 
         #[cfg(feature = "python")]
         let shared_engine: Option<
@@ -1935,11 +1979,35 @@ async fn cmd_serve(
                                     }
                                 }
 
-                                // Rewrite the model field to match what the backend expects
-                                // (local path instead of short model ID).
+                                // Route to the correct backend based on the requested model.
+                                let requested_model = body.get("model")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                // Find the backend URL for this model
+                                let target_url = model_to_url.get(&requested_model)
+                                    .or_else(|| {
+                                        // Fuzzy match: coordinator may send slightly different IDs
+                                        model_to_url.iter()
+                                            .find(|(k, _)| k.contains(&requested_model) || requested_model.contains(k.as_str()))
+                                            .map(|(_, v)| v)
+                                    })
+                                    .cloned()
+                                    .unwrap_or_else(|| proxy_backend_url.clone());
+
+                                // Rewrite the model field to the local path the backend expects
                                 let mut body = body;
-                                if let Some(obj) = body.as_object_mut() {
-                                    obj.insert("model".to_string(), serde_json::json!(backend_model_name));
+                                if let Some(local_path) = model_to_path.get(&requested_model)
+                                    .or_else(|| {
+                                        model_to_path.iter()
+                                            .find(|(k, _)| k.contains(&requested_model) || requested_model.contains(k.as_str()))
+                                            .map(|(_, v)| v)
+                                    })
+                                {
+                                    if let Some(obj) = body.as_object_mut() {
+                                        obj.insert("model".to_string(), serde_json::json!(local_path));
+                                    }
                                 }
 
                                 let tx = outbound_tx.clone();
@@ -1959,24 +2027,22 @@ async fn cmd_serve(
                                             let _ = done_tx.send(rid).await;
                                         })
                                     } else {
-                                        let url = proxy_backend_url.clone();
                                         let kp = proxy_keypair.clone();
                                         let rid2 = rid.clone();
                                         let stats = proxy_stats.clone();
                                         tokio::spawn(async move {
-                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone, Some(stats)).await;
+                                            proxy::handle_inference_request(rid2, body, target_url, tx, Some(kp), token_clone, Some(stats)).await;
                                             let _ = done_tx.send(rid).await;
                                         })
                                     }
 
                                     #[cfg(not(feature = "python"))]
                                     {
-                                        let url = proxy_backend_url.clone();
                                         let kp = proxy_keypair.clone();
                                         let rid2 = rid.clone();
                                         let stats = proxy_stats.clone();
                                         tokio::spawn(async move {
-                                            proxy::handle_inference_request(rid2, body, url, tx, Some(kp), token_clone, Some(stats)).await;
+                                            proxy::handle_inference_request(rid2, body, target_url, tx, Some(kp), token_clone, Some(stats)).await;
                                             let _ = done_tx.send(rid).await;
                                         })
                                     }
@@ -2059,10 +2125,10 @@ async fn cmd_serve(
                     }
                     _ = idle_sleep => {
                         tracing::info!(
-                            "No requests for 10 minutes — shutting down backend to free GPU memory. \
-                             Next request will reload and warmup the model (~30-60s cold start)."
+                            "No requests for 1 hour — shutting down backends to free GPU memory. \
+                             Next request will reload (~30-60s cold start)."
                         );
-                        shutdown_backend().await;
+                        shutdown_backends(&backend_pids).await;
                         backend_running = false;
                     }
                 }
@@ -2096,7 +2162,7 @@ async fn cmd_serve(
                     _ = tokio::time::sleep(window_remaining) => {
                         tracing::info!("Schedule window closed — going offline");
                         // Shut down backend between windows to free GPU memory
-                        shutdown_backend().await;
+                        shutdown_backends(&[]).await;
                         tracing::info!("Backend stopped — waiting for next schedule window");
                         continue 'schedule_loop;
                     }
@@ -2131,18 +2197,34 @@ async fn cmd_serve(
     Ok(())
 }
 
-/// Kill the inference backend process to free GPU memory.
-async fn shutdown_backend() {
-    #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "vllm_mlx"])
-            .status();
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "mlx_lm.server"])
-            .status();
+/// Kill inference backend processes to free GPU memory.
+/// Uses per-PID SIGTERM when PIDs are known, falls back to pkill.
+async fn shutdown_backends(pids: &[(String, Option<u32>)]) {
+    let mut killed = false;
+    for (model_id, pid) in pids {
+        if let Some(pid) = pid {
+            #[cfg(unix)]
+            {
+                let result = unsafe { libc::kill(*pid as i32, libc::SIGTERM) };
+                if result == 0 {
+                    tracing::info!("Sent SIGTERM to backend for {} (PID {})", model_id, pid);
+                    killed = true;
+                }
+            }
+        }
     }
-    // Give processes time to exit and release GPU memory
+    if !killed {
+        // Fallback if no tracked PIDs
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "vllm_mlx"])
+                .status();
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "mlx_lm.server"])
+                .status();
+        }
+    }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     tracing::info!("Backend processes terminated — GPU memory freed");
 }
@@ -3065,17 +3147,17 @@ async fn cmd_status() -> Result<()> {
         if security::check_mdm_enrolled() {
             "✓ Yes (hardware trust)"
         } else {
-            "✗ No (self-signed trust only)"
+            "✗ No — not routable without MDM enrollment"
         }
     );
     println!();
 
     // Account
-    let auth_token = eigeninference_dir.join("auth_token");
+    let linked = load_auth_token().is_some();
     println!("  Account:");
     println!(
         "    Linked:   {}",
-        if auth_token.exists() {
+        if linked {
             "✓ Yes"
         } else {
             "✗ No — run: eigeninference-provider login"
@@ -3653,6 +3735,201 @@ async fn cmd_doctor(coordinator_url: String) -> Result<()> {
     Ok(())
 }
 
+struct PickerEntry {
+    display: String,
+    size_gb: f64,
+    downloaded: bool,
+}
+
+/// Multi-select model picker. Space toggles, Enter confirms.
+/// Returns indices of selected items. Enforces memory budget.
+fn run_model_picker(entries: &[PickerEntry], memory_gb: f64) -> Result<Vec<usize>> {
+    use crossterm::{
+        cursor,
+        event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+        execute,
+        terminal::{self, ClearType},
+    };
+    use std::io::Write;
+
+    let mut stdout = std::io::stdout();
+    let mut cursor_pos: usize = 0;
+    let mut selected: Vec<bool> = vec![false; entries.len()];
+    // Pre-select the largest downloaded model
+    if let Some(idx) = entries.iter().position(|e| e.downloaded) {
+        selected[idx] = true;
+    }
+
+    let os_reserve = 4.0_f64;
+    let budget = memory_gb - os_reserve;
+
+    let downloaded_count = entries.iter().filter(|e| e.downloaded).count();
+    let available_count = entries.len() - downloaded_count;
+
+    terminal::enable_raw_mode()?;
+    execute!(stdout, cursor::Hide)?;
+
+    let render = |pos: usize, sel: &[bool], stdout: &mut std::io::Stdout| -> std::io::Result<()> {
+        execute!(stdout, cursor::MoveToColumn(0))?;
+
+        let total_lines = entries.len()
+            + if downloaded_count > 0 { 2 } else { 0 }
+            + if available_count > 0 { 2 } else { 0 }
+            + 3;
+        for _ in 0..total_lines {
+            execute!(
+                stdout,
+                terminal::Clear(ClearType::CurrentLine),
+                cursor::MoveDown(1)
+            )?;
+        }
+        execute!(stdout, cursor::MoveUp(total_lines as u16))?;
+
+        let used: f64 = entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sel[*i])
+            .map(|(_, e)| e.size_gb)
+            .sum();
+        let remaining = budget - used;
+        let count = sel.iter().filter(|s| **s).count();
+
+        write!(
+            stdout,
+            "  Select models (RAM: {:.0} GB)  ↑↓ navigate · Space toggle · Enter confirm\r\n",
+            memory_gb
+        )?;
+        write!(
+            stdout,
+            "  \x1b[2m{} selected · {:.1} GB used · {:.1} GB remaining\x1b[0m\r\n\r\n",
+            count, used, remaining
+        )?;
+
+        let mut idx = 0;
+
+        if downloaded_count > 0 {
+            write!(stdout, "  \x1b[1mReady to serve:\x1b[0m\r\n")?;
+            for e in entries.iter().filter(|e| e.downloaded) {
+                let arrow = if idx == pos { "▸" } else { " " };
+                let check = if sel[idx] { "✓" } else { " " };
+                let highlight = if idx == pos { "\x1b[36m" } else { "" };
+                let reset = if !highlight.is_empty() { "\x1b[0m" } else { "" };
+                write!(
+                    stdout,
+                    "    {}{} [{}] {} ({:.1} GB){}\r\n",
+                    highlight, arrow, check, e.display, e.size_gb, reset
+                )?;
+                idx += 1;
+            }
+        }
+
+        if available_count > 0 {
+            if downloaded_count > 0 {
+                write!(stdout, "\r\n")?;
+            }
+            write!(stdout, "  \x1b[1mAvailable to download:\x1b[0m\r\n")?;
+            for e in entries.iter().filter(|e| !e.downloaded) {
+                let arrow = if idx == pos { "▸" } else { " " };
+                let check = if sel[idx] { "✓" } else { " " };
+                let fits = !sel[idx] && e.size_gb > remaining;
+                let highlight = if idx == pos {
+                    "\x1b[33m"
+                } else if fits {
+                    "\x1b[2;31m"
+                } else {
+                    "\x1b[2m"
+                };
+                let reset = "\x1b[0m";
+                let warn = if fits { " ⚠ won't fit" } else { "" };
+                write!(
+                    stdout,
+                    "    {}{} [{}] ↓ {} ({:.1} GB){}{}\r\n",
+                    highlight, arrow, check, e.display, e.size_gb, warn, reset
+                )?;
+                idx += 1;
+            }
+        }
+
+        stdout.flush()?;
+        Ok(())
+    };
+
+    // Reserve screen space
+    let total_render_lines = entries.len()
+        + if downloaded_count > 0 { 2 } else { 0 }
+        + if available_count > 0 { 2 } else { 0 }
+        + 3;
+    for _ in 0..total_render_lines {
+        write!(stdout, "\r\n")?;
+    }
+    execute!(stdout, cursor::MoveUp(total_render_lines as u16))?;
+    render(cursor_pos, &selected, &mut stdout)?;
+
+    loop {
+        if let Event::Key(KeyEvent {
+            code,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event::read()?
+        {
+            match code {
+                KeyCode::Up => {
+                    if cursor_pos > 0 {
+                        cursor_pos -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if cursor_pos < entries.len() - 1 {
+                        cursor_pos += 1;
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    if selected[cursor_pos] {
+                        // Always allow deselect
+                        selected[cursor_pos] = false;
+                    } else {
+                        // Check memory budget before selecting
+                        let used: f64 = entries
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| selected[*i])
+                            .map(|(_, e)| e.size_gb)
+                            .sum();
+                        if used + entries[cursor_pos].size_gb <= budget {
+                            selected[cursor_pos] = true;
+                        }
+                        // If it doesn't fit, the render will show ⚠
+                    }
+                }
+                KeyCode::Enter => {
+                    if selected.iter().any(|s| *s) {
+                        break;
+                    }
+                    // Don't allow confirm with nothing selected
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    terminal::disable_raw_mode()?;
+                    execute!(stdout, cursor::Show)?;
+                    anyhow::bail!("Cancelled");
+                }
+                _ => {}
+            }
+            render(cursor_pos, &selected, &mut stdout)?;
+        }
+    }
+
+    terminal::disable_raw_mode()?;
+    execute!(stdout, cursor::Show)?;
+    write!(stdout, "\r\n")?;
+
+    Ok(selected
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| **s)
+        .map(|(i, _)| i)
+        .collect())
+}
+
 async fn cmd_start(
     coordinator_url: String,
     model_override: Option<String>,
@@ -3665,112 +3942,126 @@ async fn cmd_start(
     let hw = hardware::detect()?;
     let downloaded = models::scan_models(&hw);
 
-    if downloaded.is_empty() {
-        anyhow::bail!("No models downloaded. Run: eigeninference-provider install");
+    // Fetch catalog from coordinator
+    let catalog = fetch_catalog(&coordinator_url).await;
+    if catalog.is_empty() {
+        anyhow::bail!("Could not fetch model catalog from coordinator");
     }
 
-    // Fetch catalog from coordinator to filter to supported models only
-    let catalog = fetch_catalog(&coordinator_url).await;
-    let catalog_ids: std::collections::HashSet<String> =
-        catalog.iter().map(|c| c.id.clone()).collect();
-
-    // Only show models that are both downloaded AND in the catalog
-    let servable: Vec<_> = downloaded
-        .iter()
-        .filter(|m| catalog_ids.contains(&m.id))
-        .collect();
+    let downloaded_ids: std::collections::HashSet<String> =
+        downloaded.iter().map(|m| m.id.clone()).collect();
 
     // Interactive model selection if no --model specified
-    let model = if let Some(m) = model_override {
-        m
-    } else if servable.is_empty() {
-        // Fall back to all downloaded if catalog is empty/unreachable
-        println!(
-            "Select a model to serve (available memory: {} GB):",
-            hw.memory_available_gb
-        );
-        println!();
-        for (i, m) in downloaded.iter().enumerate() {
-            println!("    [{}] {} ({:.1} GB)", i + 1, m.id, m.estimated_memory_gb);
-        }
-        println!();
-        println!(
-            "  Enter number [1-{}] (or press Enter for [{}] - largest):",
-            downloaded.len(),
-            downloaded.len()
-        );
-
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let idx = input
-            .trim()
-            .parse::<usize>()
-            .unwrap_or(downloaded.len())
-            .saturating_sub(1)
-            .min(downloaded.len() - 1);
-        let selected = &downloaded[idx];
-        println!("  → {}", selected.id);
-        selected.id.clone()
+    let selected_models: Vec<String> = if let Some(m) = model_override {
+        vec![m]
     } else {
-        println!(
-            "Select a model to serve (available memory: {} GB):",
-            hw.memory_available_gb
-        );
-        println!();
-        for (i, m) in servable.iter().enumerate() {
-            // Find catalog entry for display name
-            let display = catalog
-                .iter()
-                .find(|c| c.id == m.id)
-                .map(|c| c.display_name.as_str())
-                .unwrap_or(&m.id);
-            println!(
-                "    [{}] {} ({:.1} GB)",
-                i + 1,
-                display,
-                m.estimated_memory_gb
-            );
+        // Build picker items from catalog: text models that fit in RAM.
+        struct PickerItem {
+            id: String,
+            display: String,
+            size_gb: f64,
+            downloaded: bool,
+            s3_name: String,
         }
-        println!();
-        println!(
-            "  Enter number [1-{}] (or press Enter for [{}] - largest):",
-            servable.len(),
-            servable.len()
-        );
 
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let idx = input
-            .trim()
-            .parse::<usize>()
-            .unwrap_or(servable.len())
-            .saturating_sub(1)
-            .min(servable.len() - 1);
-        let selected = &servable[idx];
-        println!("  → {}", selected.id);
-        selected.id.clone()
+        let mut items: Vec<PickerItem> = catalog
+            .iter()
+            .filter(|c| c.model_type == "text")
+            .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
+            .map(|c| {
+                let is_downloaded = downloaded_ids.contains(&c.id);
+                let size = if is_downloaded {
+                    downloaded
+                        .iter()
+                        .find(|m| m.id == c.id)
+                        .map(|m| m.estimated_memory_gb)
+                        .unwrap_or(c.size_gb)
+                } else {
+                    c.size_gb
+                };
+                PickerItem {
+                    id: c.id.clone(),
+                    display: c.display_name.clone(),
+                    size_gb: size,
+                    downloaded: is_downloaded,
+                    s3_name: c.s3_name.clone(),
+                }
+            })
+            .collect();
+
+        // Sort: downloaded first, then by size descending
+        items.sort_by(|a, b| {
+            b.downloaded.cmp(&a.downloaded).then(
+                b.size_gb
+                    .partial_cmp(&a.size_gb)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+
+        if items.is_empty() {
+            anyhow::bail!("No supported text models fit in {} GB RAM", hw.memory_gb);
+        }
+
+        // Convert to PickerEntry for the interactive picker
+        let entries: Vec<PickerEntry> = items
+            .iter()
+            .map(|i| PickerEntry {
+                display: i.display.clone(),
+                size_gb: i.size_gb,
+                downloaded: i.downloaded,
+            })
+            .collect();
+
+        let selected_indices = run_model_picker(&entries, hw.memory_gb as f64)?;
+
+        // Download any selected models that aren't local yet
+        for &idx in &selected_indices {
+            let item = &items[idx];
+            if !item.downloaded {
+                println!();
+                println!("  Downloading {}...", item.display);
+                let cache_dir = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".cache/huggingface/hub")
+                    .join(format!("models--{}", item.id.replace('/', "--")))
+                    .join("snapshots/main");
+                std::fs::create_dir_all(&cache_dir)?;
+                if !download_model_from_cdn(&item.s3_name, &cache_dir, &item.display) {
+                    anyhow::bail!("Failed to download {}", item.display);
+                }
+                println!("  ✓ Downloaded {}", item.display);
+            }
+        }
+
+        selected_indices
+            .iter()
+            .map(|&i| items[i].id.clone())
+            .collect()
     };
 
     let log_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".eigeninference/provider.log");
 
-    // Install as launchd user agent (auto-restarts on crash)
+    // Install as launchd user agent
     service::install_and_start(
         &coordinator_url,
-        &model,
+        &selected_models,
         image_model.as_deref(),
         image_model_path.as_deref(),
     )?;
 
     println!("Provider installed as system service");
-    println!("  Model:   {}", model);
+    println!(
+        "  Models:  {} ({})",
+        selected_models.len(),
+        selected_models.join(", ")
+    );
     if let Some(ref im) = image_model {
         println!("  Image:   {}", im);
     }
     println!("  Logs:    {}", log_path.display());
     println!("  Service: io.eigeninference.provider (launchd)");
-    println!("  Auto-restart: enabled (KeepAlive)");
     println!();
     println!("  eigeninference-provider stop    Stop the provider");
     println!("  eigeninference-provider logs    View logs");

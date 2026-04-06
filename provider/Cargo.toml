@@ -1,6 +1,6 @@
 [package]
 name = "eigeninference-provider"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 description = "EigenInference provider agent for Apple Silicon Macs"
 
@@ -56,6 +56,9 @@ libc = "0.2"
 # Misc
 dirs = "6"
 chrono = "0.4"
+
+# Terminal UI — raw key input for interactive model picker
+crossterm = "0.28"
 
 # Crypto — NaCl-compatible X25519 + XSalsa20-Poly1305
 crypto_box = "0.9"

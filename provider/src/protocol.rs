@@ -54,6 +54,8 @@ pub enum ProviderMessage {
         status: ProviderStatus,
         #[serde(skip_serializing_if = "Option::is_none")]
         active_model: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warm_models: Vec<String>,
         stats: ProviderStats,
         system_metrics: SystemMetrics,
     },
@@ -415,6 +417,7 @@ mod tests {
         let msg = ProviderMessage::Heartbeat {
             status: ProviderStatus::Idle,
             active_model: None,
+            warm_models: vec![],
             stats: ProviderStats::default(),
             system_metrics: SystemMetrics {
                 memory_pressure: 0.0,
@@ -437,6 +440,7 @@ mod tests {
         let msg = ProviderMessage::Heartbeat {
             status: ProviderStatus::Serving,
             active_model: Some("qwen3.5-9b".to_string()),
+            warm_models: vec![],
             stats: ProviderStats {
                 requests_served: 10,
                 tokens_generated: 5000,
@@ -612,6 +616,7 @@ mod tests {
         let msg = ProviderMessage::Heartbeat {
             status: ProviderStatus::Idle,
             active_model: None,
+            warm_models: vec![],
             stats: ProviderStats::default(),
             system_metrics: SystemMetrics {
                 memory_pressure: 0.65,
@@ -957,6 +962,7 @@ mod tests {
             ProviderMessage::Heartbeat {
                 status: ProviderStatus::Idle,
                 active_model: None,
+                warm_models: vec![],
                 stats: ProviderStats::default(),
                 system_metrics: SystemMetrics {
                     memory_pressure: 0.0,
@@ -968,6 +974,7 @@ mod tests {
             ProviderMessage::Heartbeat {
                 status: ProviderStatus::Serving,
                 active_model: Some("test-model".to_string()),
+                warm_models: vec![],
                 stats: ProviderStats {
                     requests_served: 42,
                     tokens_generated: 10000,
