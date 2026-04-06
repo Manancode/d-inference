@@ -1396,16 +1396,28 @@ async fn cmd_serve(
     // Determine backend port (CLI override > config)
     let be_port = backend_port_override.unwrap_or(cfg.backend.port);
 
-    // Determine models to serve
+    // Determine text models to serve (vmlm-mlx backends).
+    // Filter out .ckpt files at every stage — they're image models for the
+    // image-bridge, not vllm-mlx text models.
     let available_models = models::scan_models(&hw);
+    let is_image_model = |id: &str| id.ends_with(".ckpt");
     let selected_models: Vec<String> = if !model_overrides.is_empty() {
+        // Only keep text models from overrides — .ckpt models are handled by image-bridge
         model_overrides
+            .into_iter()
+            .filter(|m| !is_image_model(m))
+            .collect()
     } else if let Some(m) = cfg.backend.model.clone() {
-        vec![m]
-    } else if let Some(m) = available_models.last() {
+        if is_image_model(&m) { vec![] } else { vec![m] }
+    } else if let Some(m) = available_models
+        .iter()
+        .filter(|m| !is_image_model(&m.id))
+        .last()
+    {
+        // Default to largest non-image model
         vec![m.id.clone()]
     } else {
-        vec!["mlx-community/Qwen3.5-9B-MLX-4bit".to_string()]
+        vec![]
     };
 
     // Log all available models
@@ -1443,7 +1455,7 @@ async fn cmd_serve(
         .collect();
 
     // For backwards compat, keep a "primary model" (first in list)
-    let model = selected_models[0].clone();
+    let model = selected_models.first().cloned().unwrap_or_default();
 
     // Hypervisor memory pool: sum of all model sizes × 2
     if hypervisor::is_active() {
@@ -1773,12 +1785,19 @@ async fn cmd_serve(
         .map(|s| (s.model_id.clone(), s.backend_url.clone()))
         .collect();
     // Primary backend URL for backwards compat (local server, health monitor)
-    let backend_url_str = backend_slots[0].backend_url.clone();
+    let backend_url_str = backend_slots
+        .first()
+        .map(|s| s.backend_url.clone())
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", be_port));
     let backend_url = backend_url_str.clone();
     // Primary model path for health monitor restart
-    let primary_model_path = models::resolve_local_path(&model)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| model.clone());
+    let primary_model_path = if !model.is_empty() {
+        models::resolve_local_path(&model)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| model.clone())
+    } else {
+        String::new()
+    };
 
     // Start STT backend (continuous-batching stt_server.py) on be_port + 1 if available.
     // EIGENINFERENCE_STT_MODEL: local path or HuggingFace repo ID for the STT model.
