@@ -71,8 +71,8 @@ export function DeviceLinkForm() {
 
   if (!ready) {
     return (
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 text-center">
-        <div className="animate-pulse text-slate-400">Loading...</div>
+      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+        <div className="animate-pulse text-text-tertiary">Loading...</div>
       </div>
     );
   }
@@ -80,10 +80,10 @@ export function DeviceLinkForm() {
   // Success state
   if (status === "success") {
     return (
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+        <div className="w-16 h-16 bg-teal-light border-2 border-teal rounded-full flex items-center justify-center mx-auto mb-4">
           <svg
-            className="w-8 h-8 text-green-600"
+            className="w-8 h-8 text-teal"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -91,19 +91,19 @@ export function DeviceLinkForm() {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={2.5}
               d="M5 13l4 4L19 7"
             />
           </svg>
         </div>
-        <h2 className="text-xl font-semibold text-slate-900 mb-2">
+        <h2 className="text-2xl font-display text-ink mb-2">
           Device Linked!
         </h2>
-        <p className="text-slate-500">
+        <p className="text-text-secondary">
           Your provider is now connected to your account. Earnings will be
           credited automatically.
         </p>
-        <p className="text-slate-400 text-sm mt-4">
+        <p className="text-text-tertiary text-sm mt-4">
           You can close this page.
         </p>
       </div>
@@ -113,13 +113,14 @@ export function DeviceLinkForm() {
   // Not authenticated — show login prompt
   if (!authenticated) {
     return (
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 text-center">
-        <p className="text-slate-600 mb-6">
+      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+        <p className="text-text-secondary mb-6">
           Sign in to your EigenInference account to link your device.
         </p>
         <button
           onClick={login}
-          className="w-full px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border-[3px] border-ink
+                     hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)] transition-all"
         >
           Sign In
         </button>
@@ -129,10 +130,10 @@ export function DeviceLinkForm() {
 
   // Authenticated — show code entry form
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8">
-      <div className="text-sm text-slate-500 mb-6 text-center">
+    <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8">
+      <div className="text-sm text-text-secondary mb-6 text-center">
         Signed in as{" "}
-        <span className="font-medium text-slate-700">
+        <span className="font-semibold text-ink">
           {(user as { email?: { address?: string }; wallet?: { address?: string } })?.email?.address ||
             (user as { wallet?: { address?: string } })?.wallet?.address ||
             "your account"}
@@ -143,7 +144,7 @@ export function DeviceLinkForm() {
         <div>
           <label
             htmlFor="device-code"
-            className="block text-sm font-medium text-slate-700 mb-2"
+            className="block text-sm font-semibold text-ink mb-2"
           >
             Enter the code shown in your terminal
           </label>
@@ -154,14 +155,17 @@ export function DeviceLinkForm() {
             onChange={(e) => handleCodeChange(e.target.value)}
             placeholder="XXXX-XXXX"
             maxLength={9}
-            className="w-full px-4 py-3 text-center text-2xl font-mono tracking-widest border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+            className="w-full px-4 py-3 text-center text-2xl font-mono tracking-widest
+                       bg-bg-primary border-[3px] border-ink rounded-xl
+                       focus:border-coral outline-none transition-colors
+                       placeholder:text-text-tertiary/40"
             autoFocus
             autoComplete="off"
           />
         </div>
 
         {status === "error" && (
-          <div className="text-red-600 text-sm bg-red-50 rounded-lg p-3">
+          <div className="text-accent-red text-sm bg-accent-red-dim border-2 border-accent-red/20 rounded-lg p-3">
             {errorMsg}
           </div>
         )}
@@ -169,15 +173,18 @@ export function DeviceLinkForm() {
         <button
           type="submit"
           disabled={code.replace("-", "").length !== 8 || status === "submitting"}
-          className="w-full px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border-[3px] border-ink
+                     hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)]
+                     transition-all disabled:opacity-40 disabled:cursor-not-allowed
+                     disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-none"
         >
           {status === "submitting" ? "Linking..." : "Link Device"}
         </button>
       </form>
 
-      <div className="mt-6 text-xs text-slate-400 text-center">
+      <div className="mt-6 text-xs text-text-tertiary text-center">
         Run{" "}
-        <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">
+        <code className="bg-bg-tertiary px-1.5 py-0.5 rounded font-mono text-coral border border-border-dim">
           eigeninference-provider login
         </code>{" "}
         on your Mac to get a code.
