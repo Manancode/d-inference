@@ -3,12 +3,21 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Send, Download, Loader2, ChevronDown, X } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { generateImage } from "@/lib/api";
+import { generateImage, fetchModels } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 
 const SIZE_OPTIONS = ["512x512", "768x768", "1024x1024"];
 
 export default function ImagesPage() {
-  const { models } = useStore();
+  const { models, setModels } = useStore();
+  const { authenticated } = useAuth();
+
+  // Fetch models if store is empty (e.g. direct navigation to /images)
+  useEffect(() => {
+    if (models.length === 0 && authenticated) {
+      fetchModels().then(setModels).catch(() => {});
+    }
+  }, [models.length, authenticated, setModels]);
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
