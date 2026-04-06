@@ -3965,97 +3965,115 @@ async fn cmd_start(
         downloaded.iter().map(|m| m.id.clone()).collect();
 
     // Interactive model selection if no --model specified
-    let selected_models: Vec<String> = if let Some(m) = model_override {
-        vec![m]
-    } else {
-        // Build picker items from catalog: all models that fit in RAM.
-        struct PickerItem {
-            id: String,
-            display: String,
-            size_gb: f64,
-            downloaded: bool,
-            s3_name: String,
-        }
-
-        let mut items: Vec<PickerItem> = catalog
-            .iter()
-            .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
-            .map(|c| {
-                let is_downloaded = downloaded_ids.contains(&c.id);
-                let size = if is_downloaded {
-                    downloaded
-                        .iter()
-                        .find(|m| m.id == c.id)
-                        .map(|m| m.estimated_memory_gb)
-                        .unwrap_or(c.size_gb)
-                } else {
-                    c.size_gb
-                };
-                // Show model type tag for non-text models
-                let display = if c.model_type != "text" {
-                    format!("{} [{}]", c.display_name, c.model_type)
-                } else {
-                    c.display_name.clone()
-                };
-                PickerItem {
-                    id: c.id.clone(),
-                    display,
-                    size_gb: size,
-                    downloaded: is_downloaded,
-                    s3_name: c.s3_name.clone(),
-                }
-            })
-            .collect();
-
-        // Sort: downloaded first, then by size descending
-        items.sort_by(|a, b| {
-            b.downloaded.cmp(&a.downloaded).then(
-                b.size_gb
-                    .partial_cmp(&a.size_gb)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
-        });
-
-        if items.is_empty() {
-            anyhow::bail!("No supported text models fit in {} GB RAM", hw.memory_gb);
-        }
-
-        // Convert to PickerEntry for the interactive picker
-        let entries: Vec<PickerEntry> = items
-            .iter()
-            .map(|i| PickerEntry {
-                display: i.display.clone(),
-                size_gb: i.size_gb,
-                downloaded: i.downloaded,
-            })
-            .collect();
-
-        let selected_indices = run_model_picker(&entries, hw.memory_gb as f64)?;
-
-        // Download any selected models that aren't local yet
-        for &idx in &selected_indices {
-            let item = &items[idx];
-            if !item.downloaded {
-                println!();
-                println!("  Downloading {}...", item.display);
-                let cache_dir = dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".cache/huggingface/hub")
-                    .join(format!("models--{}", item.id.replace('/', "--")))
-                    .join("snapshots/main");
-                std::fs::create_dir_all(&cache_dir)?;
-                if !download_model_from_cdn(&item.s3_name, &cache_dir, &item.display) {
-                    anyhow::bail!("Failed to download {}", item.display);
-                }
-                println!("  ✓ Downloaded {}", item.display);
+    let (selected_models, picked_image): (Vec<String>, Option<String>) =
+        if let Some(m) = model_override {
+            (vec![m], None)
+        } else {
+            // Build picker items from catalog: all models that fit in RAM.
+            struct PickerItem {
+                id: String,
+                display: String,
+                size_gb: f64,
+                downloaded: bool,
+                s3_name: String,
+                model_type: String,
             }
-        }
 
-        selected_indices
-            .iter()
-            .map(|&i| items[i].id.clone())
-            .collect()
-    };
+            let mut items: Vec<PickerItem> = catalog
+                .iter()
+                .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
+                .map(|c| {
+                    let is_downloaded = downloaded_ids.contains(&c.id);
+                    let size = if is_downloaded {
+                        downloaded
+                            .iter()
+                            .find(|m| m.id == c.id)
+                            .map(|m| m.estimated_memory_gb)
+                            .unwrap_or(c.size_gb)
+                    } else {
+                        c.size_gb
+                    };
+                    // Show model type tag for non-text models
+                    let display = if c.model_type != "text" {
+                        format!("{} [{}]", c.display_name, c.model_type)
+                    } else {
+                        c.display_name.clone()
+                    };
+                    PickerItem {
+                        id: c.id.clone(),
+                        display,
+                        size_gb: size,
+                        downloaded: is_downloaded,
+                        s3_name: c.s3_name.clone(),
+                        model_type: c.model_type.clone(),
+                    }
+                })
+                .collect();
+
+            // Sort: downloaded first, then by size descending
+            items.sort_by(|a, b| {
+                b.downloaded.cmp(&a.downloaded).then(
+                    b.size_gb
+                        .partial_cmp(&a.size_gb)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+            });
+
+            if items.is_empty() {
+                anyhow::bail!("No supported models fit in {} GB RAM", hw.memory_gb);
+            }
+
+            // Convert to PickerEntry for the interactive picker
+            let entries: Vec<PickerEntry> = items
+                .iter()
+                .map(|i| PickerEntry {
+                    display: i.display.clone(),
+                    size_gb: i.size_gb,
+                    downloaded: i.downloaded,
+                })
+                .collect();
+
+            let selected_indices = run_model_picker(&entries, hw.memory_gb as f64)?;
+
+            // Download any selected models that aren't local yet
+            for &idx in &selected_indices {
+                let item = &items[idx];
+                if !item.downloaded {
+                    println!();
+                    println!("  Downloading {}...", item.display);
+                    let cache_dir = dirs::home_dir()
+                        .unwrap_or_default()
+                        .join(".cache/huggingface/hub")
+                        .join(format!("models--{}", item.id.replace('/', "--")))
+                        .join("snapshots/main");
+                    std::fs::create_dir_all(&cache_dir)?;
+                    if !download_model_from_cdn(&item.s3_name, &cache_dir, &item.display) {
+                        anyhow::bail!("Failed to download {}", item.display);
+                    }
+                    println!("  ✓ Downloaded {}", item.display);
+                }
+            }
+
+            // Split selected models by type: text → --model, image → --image-model
+            let mut text_models = Vec::new();
+            let mut picked_image_model: Option<String> = None;
+            for &idx in &selected_indices {
+                let item = &items[idx];
+                if item.model_type == "image" {
+                    picked_image_model = Some(item.id.clone());
+                } else {
+                    text_models.push(item.id.clone());
+                }
+            }
+            (text_models, picked_image_model)
+        };
+
+    // Merge CLI --image-model with picker selection
+    let final_image_model = picked_image.or(image_model);
+
+    if selected_models.is_empty() && final_image_model.is_none() {
+        anyhow::bail!("No models selected");
+    }
 
     let log_path = dirs::home_dir()
         .unwrap_or_default()
@@ -4065,17 +4083,19 @@ async fn cmd_start(
     service::install_and_start(
         &coordinator_url,
         &selected_models,
-        image_model.as_deref(),
+        final_image_model.as_deref(),
         image_model_path.as_deref(),
     )?;
 
     println!("Provider installed as system service");
-    println!(
-        "  Models:  {} ({})",
-        selected_models.len(),
-        selected_models.join(", ")
-    );
-    if let Some(ref im) = image_model {
+    if !selected_models.is_empty() {
+        println!(
+            "  Models:  {} ({})",
+            selected_models.len(),
+            selected_models.join(", ")
+        );
+    }
+    if let Some(ref im) = final_image_model {
         println!("  Image:   {}", im);
     }
     println!("  Logs:    {}", log_path.display());
