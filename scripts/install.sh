@@ -99,19 +99,25 @@ else
     echo "  ⚠ Code signature could not be verified"
 fi
 
-# Make available system-wide
-mkdir -p /usr/local/bin 2>/dev/null || true
-ln -sf "$BIN_DIR/eigeninference-provider" /usr/local/bin/eigeninference-provider 2>/dev/null || true
-
-# Add to PATH in shell rc if needed
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    RC="$HOME/.zshrc"
-    [ -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ] && RC="$HOME/.bashrc"
-    echo -e "\n# EigenInference\nexport PATH=\"$BIN_DIR:\$PATH\"" >> "$RC"
-    export PATH="$BIN_DIR:$PATH"
+# Make available in PATH
+# Try /usr/local/bin symlink first (may need sudo on newer macOS)
+SYMLINKED=false
+if ln -sf "$BIN_DIR/eigeninference-provider" /usr/local/bin/eigeninference-provider 2>/dev/null; then
+    SYMLINKED=true
 fi
 
+# Always add to shell rc so it works even without the symlink
+RC="$HOME/.zshrc"
+[ -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ] && RC="$HOME/.bashrc"
+if ! grep -q "eigeninference" "$RC" 2>/dev/null; then
+    echo -e "\n# EigenInference\nexport PATH=\"$BIN_DIR:\$PATH\"" >> "$RC"
+fi
+export PATH="$BIN_DIR:$PATH"
+
 echo "  Binaries installed ✓"
+if [ "$SYMLINKED" = false ]; then
+    echo "  Note: run 'source ~/${RC##*/}' or open a new terminal to use eigeninference-provider"
+fi
 
 # ─── Migrate from old install (if exists) ─────────────────────
 if [ -d "$HOME/.dginf" ] && [ ! -L "$HOME/.dginf" ]; then
