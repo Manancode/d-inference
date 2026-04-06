@@ -3947,86 +3947,99 @@ fn run_model_picker(entries: &[PickerEntry], memory_gb: f64) -> Result<Vec<usize
     terminal::enable_raw_mode()?;
     execute!(stdout, cursor::Hide)?;
 
-    // Get the starting row so we can jump back on each render
-    let (_, start_row) = cursor::position()?;
+    // Track how many lines the last render wrote so we can move back up.
+    let mut last_line_count: u16 = 0;
 
-    let render =
-        |pos: usize, sel: &[bool], stdout: &mut std::io::Stdout, row: u16| -> std::io::Result<()> {
-            execute!(stdout, cursor::MoveTo(0, row))?;
+    let render = |pos: usize,
+                  sel: &[bool],
+                  stdout: &mut std::io::Stdout,
+                  prev_lines: u16|
+     -> std::io::Result<u16> {
+        // Move up to overwrite previous render, then clear everything below
+        if prev_lines > 0 {
+            write!(stdout, "\x1b[{}A", prev_lines)?;
+        }
+        write!(stdout, "\r\x1b[J")?; // move to col 0, clear to end of screen
 
-            // Clear from cursor to end of screen
-            execute!(stdout, terminal::Clear(ClearType::FromCursorDown))?;
+        let used: f64 = entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sel[*i])
+            .map(|(_, e)| e.size_gb)
+            .sum();
+        let remaining = budget - used;
+        let count = sel.iter().filter(|s| **s).count();
 
-            let used: f64 = entries
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| sel[*i])
-                .map(|(_, e)| e.size_gb)
-                .sum();
-            let remaining = budget - used;
-            let count = sel.iter().filter(|s| **s).count();
+        let mut lines: u16 = 0;
 
-            write!(
-                stdout,
-                "  Select models (RAM: {:.0} GB)  ↑↓ navigate · Space toggle · Enter confirm\r\n",
-                memory_gb
-            )?;
-            write!(
-                stdout,
-                "  \x1b[2m{} selected · {:.1} GB used · {:.1} GB remaining\x1b[0m\r\n\r\n",
-                count, used, remaining
-            )?;
+        write!(
+            stdout,
+            "  Select models (RAM: {:.0} GB)  ↑↓ navigate · Space toggle · Enter confirm\r\n",
+            memory_gb
+        )?;
+        lines += 1;
+        write!(
+            stdout,
+            "  \x1b[2m{} selected · {:.1} GB used · {:.1} GB remaining\x1b[0m\r\n\r\n",
+            count, used, remaining
+        )?;
+        lines += 2;
 
-            let mut idx = 0;
+        let mut idx = 0;
 
+        if downloaded_count > 0 {
+            write!(stdout, "  \x1b[1mReady to serve:\x1b[0m\r\n")?;
+            lines += 1;
+            for e in entries.iter().filter(|e| e.downloaded) {
+                let arrow = if idx == pos { "▸" } else { " " };
+                let check = if sel[idx] { "✓" } else { " " };
+                let highlight = if idx == pos { "\x1b[36m" } else { "" };
+                let reset = if !highlight.is_empty() { "\x1b[0m" } else { "" };
+                write!(
+                    stdout,
+                    "    {}{} [{}] {} ({:.1} GB){}\r\n",
+                    highlight, arrow, check, e.display, e.size_gb, reset
+                )?;
+                lines += 1;
+                idx += 1;
+            }
+        }
+
+        if available_count > 0 {
             if downloaded_count > 0 {
-                write!(stdout, "  \x1b[1mReady to serve:\x1b[0m\r\n")?;
-                for e in entries.iter().filter(|e| e.downloaded) {
-                    let arrow = if idx == pos { "▸" } else { " " };
-                    let check = if sel[idx] { "✓" } else { " " };
-                    let highlight = if idx == pos { "\x1b[36m" } else { "" };
-                    let reset = if !highlight.is_empty() { "\x1b[0m" } else { "" };
-                    write!(
-                        stdout,
-                        "    {}{} [{}] {} ({:.1} GB){}\r\n",
-                        highlight, arrow, check, e.display, e.size_gb, reset
-                    )?;
-                    idx += 1;
-                }
+                write!(stdout, "\r\n")?;
+                lines += 1;
             }
-
-            if available_count > 0 {
-                if downloaded_count > 0 {
-                    write!(stdout, "\r\n")?;
-                }
-                write!(stdout, "  \x1b[1mAvailable to download:\x1b[0m\r\n")?;
-                for e in entries.iter().filter(|e| !e.downloaded) {
-                    let arrow = if idx == pos { "▸" } else { " " };
-                    let check = if sel[idx] { "✓" } else { " " };
-                    let fits = !sel[idx] && e.size_gb > remaining;
-                    let highlight = if idx == pos {
-                        "\x1b[33m"
-                    } else if fits {
-                        "\x1b[2;31m"
-                    } else {
-                        "\x1b[2m"
-                    };
-                    let reset = "\x1b[0m";
-                    let warn = if fits { " ⚠ won't fit" } else { "" };
-                    write!(
-                        stdout,
-                        "    {}{} [{}] ↓ {} ({:.1} GB){}{}\r\n",
-                        highlight, arrow, check, e.display, e.size_gb, warn, reset
-                    )?;
-                    idx += 1;
-                }
+            write!(stdout, "  \x1b[1mAvailable to download:\x1b[0m\r\n")?;
+            lines += 1;
+            for e in entries.iter().filter(|e| !e.downloaded) {
+                let arrow = if idx == pos { "▸" } else { " " };
+                let check = if sel[idx] { "✓" } else { " " };
+                let fits = !sel[idx] && e.size_gb > remaining;
+                let highlight = if idx == pos {
+                    "\x1b[33m"
+                } else if fits {
+                    "\x1b[2;31m"
+                } else {
+                    "\x1b[2m"
+                };
+                let reset = "\x1b[0m";
+                let warn = if fits { " ⚠ won't fit" } else { "" };
+                write!(
+                    stdout,
+                    "    {}{} [{}] ↓ {} ({:.1} GB){}{}\r\n",
+                    highlight, arrow, check, e.display, e.size_gb, warn, reset
+                )?;
+                lines += 1;
+                idx += 1;
             }
+        }
 
-            stdout.flush()?;
-            Ok(())
-        };
+        stdout.flush()?;
+        Ok(lines)
+    };
 
-    render(cursor_pos, &selected, &mut stdout, start_row)?;
+    last_line_count = render(cursor_pos, &selected, &mut stdout, 0)?;
 
     loop {
         if let Event::Key(KeyEvent {
@@ -4077,7 +4090,7 @@ fn run_model_picker(entries: &[PickerEntry], memory_gb: f64) -> Result<Vec<usize
                 }
                 _ => {}
             }
-            render(cursor_pos, &selected, &mut stdout, start_row)?;
+            last_line_count = render(cursor_pos, &selected, &mut stdout, last_line_count)?;
         }
     }
 
