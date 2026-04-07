@@ -1695,8 +1695,9 @@ async fn cmd_serve(
         tracing::info!("Advertising image model: {image_model_id}");
     }
 
-    // Set up coordinator connection (spawned before backend loading)
-    let coordinator_handle;
+    // Set up coordinator state. The actual connection is spawned AFTER backends
+    // are loaded so we don't advertise models before we can serve them.
+    let mut coordinator_handle;
     let event_rx_opt;
     let outbound_tx_opt;
     let shutdown_tx_opt;
@@ -1704,6 +1705,13 @@ async fn cmd_serve(
     let health_inference_active_opt;
     let provider_stats_opt;
     let mut rehash_model_hash_opt: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>> = None;
+    // Deferred coordinator spawn state — held until backends are ready.
+    let mut deferred_coordinator: Option<(
+        coordinator::CoordinatorClient,
+        tokio::sync::mpsc::Sender<coordinator::CoordinatorEvent>,
+        tokio::sync::mpsc::Receiver<protocol::ProviderMessage>,
+        tokio::sync::watch::Receiver<bool>,
+    )> = None;
 
     if !local {
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(64);
@@ -1771,15 +1779,9 @@ async fn cmd_serve(
         .with_warm_models(warm_models)
         .with_current_model_hash(current_model_hash);
 
-        // Spawn coordinator connection — this connects immediately while
-        // the backend is still loading below.
-        let handle = tokio::spawn(async move {
-            if let Err(e) = client.run(event_tx, outbound_rx, shutdown_rx).await {
-                tracing::error!("Coordinator connection error: {e}");
-            }
-        });
-
-        coordinator_handle = Some(handle);
+        // Store coordinator client for deferred spawn after backends are ready.
+        deferred_coordinator = Some((client, event_tx, outbound_rx, shutdown_rx));
+        coordinator_handle = None; // set after backends are ready
         event_rx_opt = Some(event_rx);
         outbound_tx_opt = Some(outbound_tx);
         shutdown_tx_opt = Some(shutdown_tx);
@@ -1797,11 +1799,10 @@ async fn cmd_serve(
     }
 
     // =========================================================================
-    // Phase 2: Start backend processes in background.
+    // Phase 2: Start backend processes and wait for them to load.
     //
-    // The coordinator is already connected and advertising our models.
-    // Backend loading happens concurrently — the provider is visible to the
-    // network immediately, and becomes ready to serve once health checks pass.
+    // Coordinator connection is deferred until all backends are ready.
+    // This ensures we never advertise models we can't actually serve yet.
     // =========================================================================
 
     // Resolve model ID to local path on disk so the backend loads from disk
@@ -2038,7 +2039,23 @@ async fn cmd_serve(
     security::deny_debugger_attachment();
 
     // =========================================================================
-    // Phase 3: Run the main event loop.
+    // Phase 3: Connect to coordinator NOW that all backends are loaded.
+    //
+    // We deliberately delay registration until backends are ready so the
+    // coordinator doesn't route requests to us before we can serve them.
+    // =========================================================================
+    if let Some((client, event_tx, outbound_rx, shutdown_rx)) = deferred_coordinator.take() {
+        tracing::info!("All backends loaded — connecting to coordinator");
+        let handle = tokio::spawn(async move {
+            if let Err(e) = client.run(event_tx, outbound_rx, shutdown_rx).await {
+                tracing::error!("Coordinator connection error: {e}");
+            }
+        });
+        coordinator_handle = Some(handle);
+    }
+
+    // =========================================================================
+    // Phase 4: Run the main event loop.
     // =========================================================================
     if local {
         // Local-only mode: just start the HTTP server
@@ -4228,7 +4245,11 @@ async fn cmd_start(
     cmd_stop().await?;
 
     let hw = hardware::detect()?;
-    let downloaded = models::scan_models(&hw);
+    // Scan ALL downloaded models without memory filtering — the picker has its
+    // own memory budget logic, and filtering here hides models that are on disk.
+    let downloaded = models::default_hf_cache_dir()
+        .map(|d| models::scan_models_in_dir(&d, u64::MAX))
+        .unwrap_or_default();
 
     // Fetch catalog from coordinator
     let catalog = fetch_catalog(&coordinator_url).await;

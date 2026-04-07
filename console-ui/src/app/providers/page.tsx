@@ -283,7 +283,9 @@ export default function ProvidersPage() {
         const res = await fetch(`${ATTESTATION_API}/v1/providers/attestation`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        setProviders(json.providers || []);
+        // Only show hardware-verified providers to consumers
+        const all = json.providers || [];
+        setProviders(all.filter((p: Provider) => p.trust_level === "hardware"));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
