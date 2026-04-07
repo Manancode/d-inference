@@ -2018,7 +2018,7 @@ async fn cmd_serve(
         match bridge_cmd.spawn() {
             Ok(_child) => {
                 let mut ready = false;
-                for _ in 0..60 {
+                for _ in 0..180 {
                     if std::net::TcpStream::connect(format!("127.0.0.1:{image_port}")).is_ok() {
                         ready = true;
                         break;
@@ -2029,7 +2029,7 @@ async fn cmd_serve(
                     tracing::info!("Image bridge ready on port {image_port}");
                     true
                 } else {
-                    tracing::error!("Image bridge failed to start within 60s");
+                    tracing::error!("Image bridge failed to start within 180s");
                     false
                 }
             }
@@ -2084,12 +2084,21 @@ async fn cmd_serve(
         let backend_name = "vllm_mlx";
 
         // Spawn backend health monitor — detects crashes and auto-restarts.
+        // Only monitor if we have text backends; image-only providers don't
+        // run vmlm-mlx so there's nothing to health-check on the text port.
         let health_url = backend_url_str.clone();
         let health_python = python_cmd.clone();
         let health_backend = backend_name.to_string();
         let health_model = primary_model_path.clone();
         let health_port = be_port;
+        let has_text_backends = !backend_slots.is_empty();
         tokio::spawn(async move {
+            if !has_text_backends {
+                // No text backends to monitor — sleep forever.
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                }
+            }
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
             let mut consecutive_failures = 0u32;
             loop {
