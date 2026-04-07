@@ -82,6 +82,7 @@ export default function BillingPage() {
   const [buyOpen, setBuyOpen] = useState(false);
   const [buyAmount, setBuyAmount] = useState("10");
   const [actionLoading, setActionLoading] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState("");
@@ -431,19 +432,64 @@ export default function BillingPage() {
             ))}
           </div>
           <button
-            onClick={handleBuyCredits}
+            onClick={() => setConfirmOpen(true)}
             disabled={actionLoading || !buyAmount || parseFloat(buyAmount) <= 0}
             className="w-full py-3 rounded-lg bg-coral border-[3px] border-ink text-white font-bold text-sm
                        hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)]
                        disabled:opacity-50 disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-none
                        transition-all flex items-center justify-center gap-2"
           >
-            {actionLoading && <Loader2 size={14} className="animate-spin" />}
-            {actionLoading ? "Processing..." : `Buy $${buyAmount} Credits`}
+            Continue
           </button>
           <p className="mt-4 text-xs text-text-tertiary text-center">
             Paid via USDC on Solana. Transaction fees are sponsored.
           </p>
+        </div>
+      </Modal>
+
+      {/* Confirmation Modal */}
+      <Modal open={confirmOpen} onClose={() => !actionLoading && setConfirmOpen(false)}>
+        <div className="px-6 pb-6">
+          <h3 className="text-xl font-display text-ink mb-2">Confirm Purchase</h3>
+          <p className="text-sm text-text-secondary mb-4">
+            This will transfer <span className="font-bold text-text-primary">${buyAmount} USDC</span> from your wallet to buy inference credits.
+          </p>
+
+          {truncatedWallet && walletInfo?.wallet_usdc_usd && (
+            <div className="rounded-lg bg-bg-primary border-2 border-border-dim p-3 mb-4 text-xs">
+              <div className="flex justify-between text-text-tertiary">
+                <span>Wallet balance</span>
+                <span className="font-mono font-semibold text-teal">{walletInfo.wallet_usdc_usd} USDC</span>
+              </div>
+              <div className="flex justify-between text-text-tertiary mt-1">
+                <span>After purchase</span>
+                <span className="font-mono">{(parseFloat(walletInfo.wallet_usdc_usd) - parseFloat(buyAmount)).toFixed(2)} USDC</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setConfirmOpen(false)}
+              disabled={actionLoading}
+              className="flex-1 py-3 rounded-lg border-2 border-border-dim text-text-secondary text-sm font-bold hover:bg-bg-hover transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await handleBuyCredits();
+                setConfirmOpen(false);
+              }}
+              disabled={actionLoading}
+              className="flex-1 py-3 rounded-lg bg-coral border-[3px] border-ink text-white font-bold text-sm
+                         hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)]
+                         disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+            >
+              {actionLoading && <Loader2 size={14} className="animate-spin" />}
+              {actionLoading ? "Processing..." : `Confirm $${buyAmount}`}
+            </button>
+          </div>
         </div>
       </Modal>
     </div>
