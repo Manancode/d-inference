@@ -115,6 +115,16 @@ fn fallback_catalog() -> Vec<CatalogModel> {
             min_ram_gb: 48,
         },
         CatalogModel {
+            id: "mlx-community/gemma-4-26b-a4b-it-8bit".into(),
+            s3_name: "gemma-4-26b-a4b-it-8bit".into(),
+            display_name: "Gemma 4 26B".into(),
+            model_type: "text".into(),
+            size_gb: 28.0,
+            architecture: "26B MoE, 4B active".into(),
+            description: "Fast multimodal MoE".into(),
+            min_ram_gb: 36,
+        },
+        CatalogModel {
             id: "mlx-community/Qwen3.5-122B-A10B-8bit".into(),
             s3_name: "Qwen3.5-122B-A10B-8bit".into(),
             display_name: "Qwen3.5 122B".into(),

@@ -277,6 +277,62 @@ Currently manual — upload the DMG wherever you want to host it. The install.sh
 
 ---
 
+## Uploading Models to R2
+
+All models served by providers must be uploaded to the Cloudflare R2 bucket. The provider CLI downloads models from R2 during `eigeninference-provider start`.
+
+**R2 Bucket:** `d-inf-models`
+**Public URL:** `https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev/{s3_name}/{filename}`
+**S3 Endpoint:** `https://9e92221750c162ade0f2730f63f4963d.r2.cloudflarestorage.com`
+
+### Upload script (Python + boto3)
+
+```python
+import os, boto3, urllib3
+from botocore.config import Config
+urllib3.disable_warnings()
+
+s3 = boto3.client('s3',
+    endpoint_url='https://9e92221750c162ade0f2730f63f4963d.r2.cloudflarestorage.com',
+    aws_access_key_id='<R2_ACCESS_KEY_ID>',
+    aws_secret_access_key='<R2_SECRET_ACCESS_KEY>',
+    config=Config(signature_version='s3v4'),
+    region_name='auto',
+    verify=False,
+)
+
+# Upload all files from a HuggingFace snapshot to R2
+snap = os.path.expanduser('~/.cache/huggingface/hub/models--<org>--<model>/snapshots/<hash>')
+prefix = '<s3_name>'  # must match S3Name in coordinator catalog
+
+for f in sorted(os.listdir(snap)):
+    real = os.path.realpath(os.path.join(snap, f))
+    if not os.path.isfile(real):
+        continue
+    print(f'Uploading {f} ({os.path.getsize(real)/1048576:.0f} MB)...')
+    s3.upload_file(real, 'd-inf-models', f'{prefix}/{f}')
+```
+
+### Checklist for adding a new model
+
+1. Download the model locally: `huggingface-cli download <model-id>`
+2. Upload all files to R2 under the `s3_name` prefix (see script above)
+3. Verify files on R2: `curl -sI https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev/<s3_name>/<filename>`
+4. Add entry to coordinator catalog (`coordinator/cmd/coordinator/main.go`)
+5. Add pricing (`coordinator/internal/payments/pricing.go`)
+6. Add to provider fallback catalog (`provider/src/main.rs` `fallback_catalog()`)
+7. Update frontend model pages (`console-ui/src/app/models/page.tsx`, `earn/page.tsx`)
+8. Deploy coordinator, rebuild provider bundle, release
+
+### Image models (.ckpt) — special handling
+
+FLUX models need 3 files from Draw Things CDN (`static.libnnc.org`):
+- Diffusion model: `flux_2_klein_{size}_q8p.ckpt`
+- Text encoder: `qwen_3_{size}_q8p.ckpt`
+- VAE: `flux_2_vae_f16.ckpt`
+
+Download from CDN first, then upload to R2. Verify each file size matches the CDN.
+
 ## Server file layout
 
 Files served by nginx from `/var/www/html/`:

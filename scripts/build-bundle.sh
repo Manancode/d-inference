@@ -109,6 +109,9 @@ pip install --quiet 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
 echo "   Installing image bridge dependencies..."
 pip install --quiet grpcio flatbuffers Pillow
 
+echo "   Installing STT dependencies..."
+pip install --quiet mlx-audio
+
 echo "   Stripping unnecessary packages..."
 cd "$BUNDLE_DIR/python/lib/python3.12/site-packages"
 rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \

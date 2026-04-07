@@ -93,6 +93,7 @@ const CATALOG_MODELS: CatalogModel[] = [
   { id: "flux-9b", name: "FLUX.2 Klein 9B", type: "image", minRAMGB: 24, baseImagesPerHour: 300, imagePriceMicro: 2_500, referenceBandwidth: 150, demandNote: "Moderate demand — higher quality images attract more requests than 4B." },
   { id: "qwen-27b", name: "Qwen3.5 27B Claude Opus", type: "text", minRAMGB: 36, activeParamsGB: 27, modelSizeGB: 27, outputPriceMicro: 780_000, demandNote: "High demand — text/chat inference is the primary workload on the network." },
   { id: "trinity-mini", name: "Trinity Mini", type: "text", minRAMGB: 48, activeParamsGB: 3, modelSizeGB: 26, outputPriceMicro: 75_000, demandNote: "High demand — fast MoE model popular for agentic and coding tasks." },
+  { id: "gemma-4-26b", name: "Gemma 4 26B", type: "text", minRAMGB: 36, activeParamsGB: 4, modelSizeGB: 28, outputPriceMicro: 200_000, demandNote: "High demand — Google's latest MoE, strong quality at fast speed." },
   { id: "qwen-122b", name: "Qwen3.5 122B", type: "text", minRAMGB: 128, activeParamsGB: 10, modelSizeGB: 122, outputPriceMicro: 1_040_000, demandNote: "High demand — premium quality attracts users willing to pay more per token." },
   { id: "minimax-m2.5", name: "MiniMax M2.5", type: "text", minRAMGB: 256, activeParamsGB: 11, modelSizeGB: 243, outputPriceMicro: 500_000, demandNote: "High demand — SOTA coding model, attracts power users and enterprises." },
 ];

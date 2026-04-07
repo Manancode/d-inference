@@ -17,6 +17,7 @@ import {
 const competitorPricing: Record<string, { output: number; name: string; competitor: string; unit?: string }> = {
   "qwen3.5-27b-claude-opus-8bit": { output: 1_560_000, name: "Qwen3.5 27B Claude Opus", competitor: "OpenRouter" },
   "mlx-community/Trinity-Mini-8bit": { output: 150_000, name: "Trinity Mini", competitor: "OpenRouter" },
+  "mlx-community/gemma-4-26b-a4b-it-8bit": { output: 400_000, name: "Gemma 4 26B", competitor: "OpenRouter" },
   "mlx-community/Qwen3.5-122B-A10B-8bit": { output: 2_080_000, name: "Qwen3.5 122B", competitor: "OpenRouter" },
   "mlx-community/MiniMax-M2.5-8bit": { output: 1_000_000, name: "MiniMax M2.5", competitor: "OpenRouter" },
   "flux_2_klein_4b_q8p.ckpt": { output: 3_000, name: "FLUX.2 Klein 4B", competitor: "Together.ai", unit: "per image" },

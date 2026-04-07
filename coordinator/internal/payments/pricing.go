@@ -13,6 +13,7 @@ package payments
 //   ────────────────────────────────   ─────────   ──────────   ──────────
 //   Qwen3.5 27B Claude Opus (dense)    $0.100      $0.780       OpenRouter $1.56
 //   Trinity Mini (27B MoE, 3B active)  $0.023      $0.075       OpenRouter $0.15
+//   Gemma 4 26B (MoE, 4B active)       $0.065      $0.200       OpenRouter $0.40
 //   Qwen3.5 122B (MoE, 10B active)     $0.130      $1.040       OpenRouter $2.08
 //   MiniMax M2.5 (239B MoE, 11B act)   $0.060      $0.500       OpenRouter $1.00
 //   Cohere Transcribe (2B STT)         $0.001/audio-minute      AssemblyAI $0.002
@@ -38,10 +39,11 @@ type modelPrice struct {
 
 var modelPricing = map[string]modelPrice{
 	// Text generation — 50% of OpenRouter rates
-	"qwen3.5-27b-claude-opus-8bit":         {input: 100_000, output: 780_000},   // $0.10 / $0.78
-	"mlx-community/Trinity-Mini-8bit":      {input: 23_000, output: 75_000},     // $0.023 / $0.075
-	"mlx-community/Qwen3.5-122B-A10B-8bit": {input: 130_000, output: 1_040_000}, // $0.13 / $1.04
-	"mlx-community/MiniMax-M2.5-8bit":      {input: 60_000, output: 500_000},    // $0.06 / $0.50
+	"qwen3.5-27b-claude-opus-8bit":          {input: 100_000, output: 780_000},   // $0.10 / $0.78
+	"mlx-community/Trinity-Mini-8bit":       {input: 23_000, output: 75_000},     // $0.023 / $0.075 (50% of OpenRouter)
+	"mlx-community/gemma-4-26b-a4b-it-8bit": {input: 65_000, output: 200_000},    // $0.065 / $0.20 (50% of OpenRouter)
+	"mlx-community/Qwen3.5-122B-A10B-8bit":  {input: 130_000, output: 1_040_000}, // $0.13 / $1.04
+	"mlx-community/MiniMax-M2.5-8bit":       {input: 60_000, output: 500_000},    // $0.06 / $0.50
 }
 
 // transcriptionPricing stores per-audio-minute prices in micro-USD.
