@@ -586,6 +586,7 @@ func ScoreProvider(p *Provider, model string) float64 {
 	warmModels := append([]string{}, p.WarmModels...)
 	currentModel := p.CurrentModel
 	sysMetrics := p.SystemMetrics
+	repScore := p.Reputation.Score()
 	p.mu.Unlock()
 
 	// Base decode TPS — use 1.0 as minimum to avoid zero scores
@@ -594,9 +595,6 @@ func ScoreProvider(p *Provider, model string) float64 {
 	}
 
 	trustMul := TrustMultiplier(trustLevel)
-
-	// Reputation factor (0.0 to 1.0)
-	repScore := p.Reputation.Score()
 
 	// Warm model bonus: 1.5x if the model is already warm, 1.0x otherwise
 	warmBonus := 1.0
