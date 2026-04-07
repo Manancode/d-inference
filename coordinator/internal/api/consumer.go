@@ -76,23 +76,38 @@ type genericInferenceRequest struct {
 // This is the main inference endpoint. It validates the request, finds an
 // available provider for the requested model, forwards the request via
 // WebSocket, and either streams SSE chunks or assembles a complete response.
+//
+// The raw request body is passed through to the provider, preserving all
+// OpenAI-compatible fields (tools, tool_choice, response_format, top_p, etc.)
+// that would otherwise be lost if we parsed into a typed struct.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	// Decode request body.
-	var req chatCompletionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Read the raw request body so we can forward it as-is to the provider.
+	// We only parse minimally to extract model/stream/messages for routing.
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "failed to read request body"))
+		return
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
 		return
 	}
 
-	if req.Model == "" {
+	model, _ := parsed["model"].(string)
+	if model == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "model is required"))
 		return
 	}
 
-	if len(req.Messages) == 0 {
+	messages, _ := parsed["messages"].([]any)
+	if len(messages) == 0 {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "messages is required and must be non-empty"))
 		return
 	}
+
+	stream, _ := parsed["stream"].(bool)
 
 	// Pre-flight balance reservation — atomically debit the minimum charge
 	// before routing to a provider. This prevents concurrent requests from
@@ -119,30 +134,30 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reject requests for models not in the catalog.
-	if !s.registry.IsModelInCatalog(req.Model) {
+	if !s.registry.IsModelInCatalog(model) {
 		refundReservation()
 		writeJSON(w, http.StatusNotFound, errorResponse("model_not_found",
-			fmt.Sprintf("model %q is not available — see /v1/models for supported models", req.Model)))
+			fmt.Sprintf("model %q is not available — see /v1/models for supported models", model)))
 		return
 	}
 
 	// Find a hardware-trusted provider that serves the requested model.
-	provider := s.registry.FindProvider(req.Model)
+	provider := s.registry.FindProvider(model)
 	if provider == nil {
 		// No idle provider — try queueing.
 		queuedReq := &registry.QueuedRequest{
 			RequestID:  uuid.New().String(),
-			Model:      req.Model,
+			Model:      model,
 			ResponseCh: make(chan *registry.Provider, 1),
 		}
 		if err := s.registry.Queue().Enqueue(queuedReq); err != nil {
 			refundReservation()
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider available for model %q and queue is full", req.Model)))
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider available for model %q and queue is full", model)))
 			return
 		}
 
 		s.logger.Info("request queued, waiting for provider",
-			"model", req.Model,
+			"model", model,
 			"queue_request_id", queuedReq.RequestID,
 		)
 
@@ -150,23 +165,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		provider, err = s.registry.Queue().WaitForProvider(queuedReq)
 		if err != nil {
 			refundReservation()
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", req.Model)))
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", model)))
 			return
 		}
 	}
 
-	// Build the inference request to forward to the provider.
+	// Forward the raw request body to the provider, preserving all OpenAI
+	// fields (tools, tool_choice, response_format, top_p, etc.).
 	// Prompt content is never logged.
 	requestID := uuid.New().String()
-
-	plainBody := protocol.InferenceRequestBody{
-		Model:       req.Model,
-		Messages:    req.Messages,
-		Stream:      req.Stream,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-	}
-	inferenceBody, _ := json.Marshal(plainBody)
+	inferenceBody := rawBody
 
 	// E2E encryption is mandatory. Providers without a public key cannot
 	// receive inference requests — consumer prompts must never travel in plaintext.
@@ -226,7 +234,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	pr := &registry.PendingRequest{
 		RequestID:   requestID,
 		ProviderID:  provider.ID,
-		Model:       req.Model,
+		Model:       model,
 		ConsumerKey: consumerKey,
 		ChunkCh:     make(chan string, chunkBufferSize),
 		CompleteCh:  make(chan protocol.UsageInfo, 1),
@@ -258,9 +266,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("inference request dispatched",
 		"request_id", requestID,
-		"model", req.Model,
+		"model", model,
 		"provider_id", provider.ID,
-		"stream", req.Stream,
+		"stream", stream,
 	)
 
 	// Include provider's public key in response headers so consumers can
@@ -327,7 +335,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	if req.Stream {
+	if stream {
 		s.handleStreamingResponse(w, r, pr)
 	} else {
 		s.handleNonStreamingResponse(w, r, pr)
@@ -750,9 +758,12 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		case chunk, ok := <-pr.ChunkCh:
 			if !ok {
 				// Channel closed — inference complete.
-				// Include SE signature as final event before [DONE]
+				// Include SE signature as final event before [DONE].
+				// Wrap in a valid OpenAI-compatible chunk structure so
+				// strict parsers (Vercel AI SDK, etc.) don't reject it.
 				if pr.SESignature != "" {
 					sigEvent, _ := json.Marshal(map[string]any{
+						"choices":       []any{},
 						"se_signature":  pr.SESignature,
 						"response_hash": pr.ResponseHash,
 					})
@@ -817,11 +828,11 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, r *http.Reque
 		case chunk, ok := <-pr.ChunkCh:
 			if !ok {
 				// Complete — build aggregated response from all collected chunks.
-				content := extractContent(chunks)
+				msg := extractMessage(chunks)
 				// Wait for usage info from the provider's InferenceComplete message.
 				select {
 				case usage := <-pr.CompleteCh:
-					resp := buildNonStreamingResponse(pr.RequestID, pr.Model, content, usage, pr.SESignature, pr.ResponseHash)
+					resp := buildNonStreamingResponse(pr.RequestID, pr.Model, msg, usage, pr.SESignature, pr.ResponseHash)
 					writeJSON(w, http.StatusOK, resp)
 				case <-ctx.Done():
 					writeJSON(w, http.StatusGatewayTimeout, errorResponse("timeout", "timed out waiting for usage info"))
@@ -937,38 +948,110 @@ func normalizeSSEChunk(chunk string) string {
 	return "data: " + string(out)
 }
 
-// extractContent parses SSE data lines and concatenates delta content
-// to reconstruct the full assistant message from streaming chunks.
-func extractContent(chunks []string) string {
-	var sb strings.Builder
+// extractedMessage holds the reconstructed assistant message from SSE chunks,
+// including both text content and any tool calls.
+type extractedMessage struct {
+	Content   string           `json:"content"`
+	ToolCalls []map[string]any `json:"tool_calls,omitempty"`
+}
+
+// extractMessage parses SSE data lines and reconstructs the full assistant
+// message from streaming chunks, including content and tool_calls.
+func extractMessage(chunks []string) extractedMessage {
+	var contentBuilder strings.Builder
+	// Tool calls are indexed — accumulate argument fragments by index.
+	toolCallMap := map[int]map[string]any{}
+
 	for _, chunk := range chunks {
-		// Each chunk is "data: {...}\n\n"; parse the JSON.
 		line := strings.TrimPrefix(chunk, "data: ")
 		line = strings.TrimSpace(line)
 		if line == "" || line == "[DONE]" {
 			continue
 		}
 
-		var parsed struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
+		var parsed map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(line), &parsed); err != nil {
 			continue
 		}
-		for _, c := range parsed.Choices {
-			sb.WriteString(c.Delta.Content)
+
+		choicesRaw, ok := parsed["choices"]
+		if !ok {
+			continue
+		}
+		var choices []struct {
+			Delta struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					Index    int    `json:"index"`
+					ID       string `json:"id,omitempty"`
+					Type     string `json:"type,omitempty"`
+					Function struct {
+						Name      string `json:"name,omitempty"`
+						Arguments string `json:"arguments,omitempty"`
+					} `json:"function,omitempty"`
+				} `json:"tool_calls,omitempty"`
+			} `json:"delta"`
+			FinishReason *string `json:"finish_reason"`
+		}
+		if err := json.Unmarshal(choicesRaw, &choices); err != nil {
+			continue
+		}
+
+		for _, c := range choices {
+			contentBuilder.WriteString(c.Delta.Content)
+			for _, tc := range c.Delta.ToolCalls {
+				existing, ok := toolCallMap[tc.Index]
+				if !ok {
+					existing = map[string]any{
+						"index": tc.Index,
+						"function": map[string]any{
+							"arguments": "",
+						},
+					}
+					toolCallMap[tc.Index] = existing
+				}
+				if tc.ID != "" {
+					existing["id"] = tc.ID
+				}
+				if tc.Type != "" {
+					existing["type"] = tc.Type
+				}
+				fn := existing["function"].(map[string]any)
+				if tc.Function.Name != "" {
+					fn["name"] = tc.Function.Name
+				}
+				fn["arguments"] = fn["arguments"].(string) + tc.Function.Arguments
+			}
 		}
 	}
-	return sb.String()
+
+	msg := extractedMessage{Content: contentBuilder.String()}
+	if len(toolCallMap) > 0 {
+		msg.ToolCalls = make([]map[string]any, 0, len(toolCallMap))
+		for i := 0; i < len(toolCallMap); i++ {
+			if tc, ok := toolCallMap[i]; ok {
+				delete(tc, "index")
+				msg.ToolCalls = append(msg.ToolCalls, tc)
+			}
+		}
+	}
+	return msg
 }
 
 // buildNonStreamingResponse constructs a complete OpenAI-compatible chat
-// completion response from the aggregated content and usage info.
-func buildNonStreamingResponse(requestID, model, content string, usage protocol.UsageInfo, seSignature, responseHash string) map[string]any {
+// completion response from the aggregated message and usage info.
+func buildNonStreamingResponse(requestID, model string, msg extractedMessage, usage protocol.UsageInfo, seSignature, responseHash string) map[string]any {
+	message := map[string]any{
+		"role":    "assistant",
+		"content": msg.Content,
+	}
+
+	finishReason := "stop"
+	if len(msg.ToolCalls) > 0 {
+		message["tool_calls"] = msg.ToolCalls
+		finishReason = "tool_calls"
+	}
+
 	resp := map[string]any{
 		"id":      "chatcmpl-" + requestID,
 		"object":  "chat.completion",
@@ -976,12 +1059,9 @@ func buildNonStreamingResponse(requestID, model, content string, usage protocol.
 		"model":   model,
 		"choices": []map[string]any{
 			{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": content,
-				},
-				"finish_reason": "stop",
+				"index":         0,
+				"message":       message,
+				"finish_reason": finishReason,
 			},
 		},
 		"usage": map[string]any{

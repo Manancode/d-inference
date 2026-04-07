@@ -505,22 +505,53 @@ func TestNonStreamingE2E(t *testing.T) {
 	<-providerDone
 }
 
-func TestExtractContent(t *testing.T) {
+func TestExtractMessage(t *testing.T) {
 	chunks := []string{
 		"data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
 		"data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
 	}
 
-	content := extractContent(chunks)
-	if content != "Hello world" {
-		t.Errorf("content = %q, want %q", content, "Hello world")
+	msg := extractMessage(chunks)
+	if msg.Content != "Hello world" {
+		t.Errorf("content = %q, want %q", msg.Content, "Hello world")
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Errorf("tool_calls = %v, want empty", msg.ToolCalls)
 	}
 }
 
-func TestExtractContentEmpty(t *testing.T) {
-	content := extractContent(nil)
-	if content != "" {
-		t.Errorf("content = %q, want empty", content)
+func TestExtractMessageEmpty(t *testing.T) {
+	msg := extractMessage(nil)
+	if msg.Content != "" {
+		t.Errorf("content = %q, want empty", msg.Content)
+	}
+}
+
+func TestExtractMessageWithToolCalls(t *testing.T) {
+	chunks := []string{
+		`data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"lo"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"cation\":"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"SF\"}"}}]}}]}`,
+	}
+
+	msg := extractMessage(chunks)
+	if msg.Content != "" {
+		t.Errorf("content = %q, want empty", msg.Content)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool_calls length = %d, want 1", len(msg.ToolCalls))
+	}
+	tc := msg.ToolCalls[0]
+	if tc["id"] != "call_abc" {
+		t.Errorf("tool_call id = %v, want call_abc", tc["id"])
+	}
+	fn := tc["function"].(map[string]any)
+	if fn["name"] != "get_weather" {
+		t.Errorf("function name = %v, want get_weather", fn["name"])
+	}
+	if fn["arguments"] != `{"location":"SF"}` {
+		t.Errorf("function arguments = %v, want {\"location\":\"SF\"}", fn["arguments"])
 	}
 }
 
@@ -599,7 +630,7 @@ func TestNormalizeSSEChunk(t *testing.T) {
 	}
 }
 
-func TestExtractContentWithNullFields(t *testing.T) {
+func TestExtractMessageWithNullFields(t *testing.T) {
 	// Simulates real vllm-mlx chunks where the first chunk has null content
 	// and subsequent chunks have actual content.
 	chunks := []string{
@@ -608,9 +639,9 @@ func TestExtractContentWithNullFields(t *testing.T) {
 		`data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`,
 	}
 
-	content := extractContent(chunks)
-	if content != "Hello world" {
-		t.Errorf("content = %q, want %q", content, "Hello world")
+	msg := extractMessage(chunks)
+	if msg.Content != "Hello world" {
+		t.Errorf("content = %q, want %q", msg.Content, "Hello world")
 	}
 }
 

@@ -224,9 +224,9 @@ func TestIntegration_SSEChunkNormalization(t *testing.T) {
 	}
 
 	// Extract content from normalized chunks.
-	content := extractContent(normalized)
-	if content != "The answer is 42" {
-		t.Errorf("assembled content = %q, want %q", content, "The answer is 42")
+	msg := extractMessage(normalized)
+	if msg.Content != "The answer is 42" {
+		t.Errorf("assembled content = %q, want %q", msg.Content, "The answer is 42")
 	}
 }
 
