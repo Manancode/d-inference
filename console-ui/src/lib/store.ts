@@ -139,9 +139,13 @@ export const useStore = create<AppState>()(
       setSelectedModel: (model) => set({ selectedModel: model }),
       setModels: (models) => {
         const current = get().selectedModel;
+        // Default to first text model (not image/transcription)
+        const textModels = models.filter(
+          (m) => m.model_type !== "image" && m.model_type !== "stt" && m.model_type !== "transcription"
+        );
         set({
           models,
-          selectedModel: current || models[0]?.id || "",
+          selectedModel: current || textModels[0]?.id || models[0]?.id || "",
         });
       },
       setSidebarOpen: (open) => set({ sidebarOpen: open }),

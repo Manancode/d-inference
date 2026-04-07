@@ -48,9 +48,9 @@ export function ChatInput({ onSend, onStop, isStreaming }: ChatInputProps) {
     return () => document.removeEventListener("click", handler);
   }, [modelOpen]);
 
-  // Filter out STT/transcription models — chat page is for text models only
+  // Filter to text models only — image/STT models have their own pages
   const chatModels = models.filter(
-    (m) => m.model_type !== "stt" && m.model_type !== "transcription"
+    (m) => m.model_type !== "stt" && m.model_type !== "transcription" && m.model_type !== "image"
   );
 
   const selectedModelObj = chatModels.find((m) => m.id === selectedModel);
