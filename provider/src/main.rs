@@ -648,55 +648,27 @@ fn ensure_chat_template(model_path: &str) {
         return;
     }
 
-    // Pick the right template based on model architecture.
-    let model_path_lower = model_path.to_lowercase();
-    let (template, label) = if model_path_lower.contains("gemma-4")
-        || model_path_lower.contains("gemma4")
-    {
-        // Gemma 4 uses <|turn>role / <turn|> markers.
-        (
-            concat!(
-                "{% for message in messages %}",
-                "{% if message.role == 'system' %}",
-                "<|turn>system\n{{ message.content }}<turn|>\n",
-                "{% elif message.role == 'user' %}",
-                "<|turn>user\n{{ message.content }}<turn|>\n",
-                "{% elif message.role == 'assistant' %}",
-                "<|turn>model\n{{ message.content }}<turn|>\n",
-                "{% endif %}",
-                "{% endfor %}",
-                "{% if add_generation_prompt %}",
-                "<|turn>model\n",
-                "{% endif %}"
-            ),
-            "Gemma 4",
-        )
-    } else {
-        // Standard ChatML (compatible with Qwen, Llama, and most instruction-tuned models)
-        (
-            concat!(
-                "{%- if messages[0]['role'] == 'system' %}",
-                "{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}",
-                "{%- else %}",
-                "{{- '<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n' }}",
-                "{%- endif %}",
-                "{%- for message in messages %}",
-                "{%- if (message.role == 'user') or (message.role == 'system' and not loop.first) or (message.role == 'assistant') %}",
-                "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}",
-                "{%- endif %}",
-                "{%- endfor %}",
-                "{%- if add_generation_prompt %}",
-                "{{- '<|im_start|>assistant\\n' }}",
-                "{%- endif %}"
-            ),
-            "ChatML",
-        )
-    };
+    // Standard ChatML template (compatible with Qwen, Llama, and most instruction-tuned models)
+    let chatml_template = concat!(
+        "{%- if messages[0]['role'] == 'system' %}",
+        "{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}",
+        "{%- else %}",
+        "{{- '<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n' }}",
+        "{%- endif %}",
+        "{%- for message in messages %}",
+        "{%- if (message.role == 'user') or (message.role == 'system' and not loop.first) or (message.role == 'assistant') %}",
+        "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}",
+        "{%- endif %}",
+        "{%- endfor %}",
+        "{%- if add_generation_prompt %}",
+        "{{- '<|im_start|>assistant\\n' }}",
+        "{%- endif %}"
+    );
 
     if let Some(obj) = config.as_object_mut() {
         obj.insert(
             "chat_template".to_string(),
-            serde_json::Value::String(template.to_string()),
+            serde_json::Value::String(chatml_template.to_string()),
         );
     }
 
@@ -704,7 +676,7 @@ fn ensure_chat_template(model_path: &str) {
         &config_path,
         serde_json::to_string_pretty(&config).unwrap_or_default(),
     ) {
-        Ok(()) => tracing::info!("Injected {label} template into tokenizer_config.json"),
+        Ok(()) => tracing::info!("Injected default ChatML template into tokenizer_config.json"),
         Err(e) => tracing::warn!("Failed to write chat_template to tokenizer config: {e}"),
     }
 }
@@ -4691,13 +4663,6 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     let bin_dir = eigeninference_dir.join("bin");
 
     println!("  Installing...");
-
-    // Clean old Python runtime before extracting so stale packages don't linger
-    let python_dir = eigeninference_dir.join("python");
-    if python_dir.exists() {
-        let _ = std::fs::remove_dir_all(&python_dir);
-    }
-
     let status = std::process::Command::new("tar")
         .args(["xzf", tmp_path, "-C", &eigeninference_dir.to_string_lossy()])
         .status()?;
@@ -4706,18 +4671,14 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     }
 
     // Move binaries to bin dir
-    if let Err(e) = std::fs::rename(
+    let _ = std::fs::rename(
         eigeninference_dir.join("eigeninference-provider"),
         bin_dir.join("eigeninference-provider"),
-    ) {
-        tracing::warn!("Failed to move provider binary: {e}");
-    }
-    if let Err(e) = std::fs::rename(
+    );
+    let _ = std::fs::rename(
         eigeninference_dir.join("eigeninference-enclave"),
         bin_dir.join("eigeninference-enclave"),
-    ) {
-        tracing::warn!("Failed to move enclave binary: {e}");
-    }
+    );
 
     // Make executable
     #[cfg(unix)]

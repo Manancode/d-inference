@@ -77,75 +77,32 @@ jobs:
       - name: Test coordinator
         run: cd coordinator && go test -race ./...
 
-      # --- Build Python runtime ---
-
-      - name: Build Python runtime
-        run: |
-          BUNDLE=/tmp/eigeninference-bundle
-          mkdir -p "$BUNDLE"
-
-          # Create Python 3.12 venv with copied binary (not symlinked)
-          # so the venv works on machines without the same system Python path
-          python3.12 -m venv --copies "$BUNDLE/python"
-          source "$BUNDLE/python/bin/activate"
-
-          echo "Installing vllm-mlx from our fork..."
-          pip install --quiet 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
-
-          echo "Upgrading mlx-lm to latest (Gemma 4 support)..."
-          pip install --quiet --upgrade 'git+https://github.com/ml-explore/mlx-lm.git@main'
-
-          echo "Installing image bridge dependencies..."
-          pip install --quiet grpcio flatbuffers Pillow
-
-          echo "Installing STT dependencies..."
-          pip install --quiet mlx-audio
-
-          echo "Stripping unnecessary packages..."
-          cd "$BUNDLE/python/lib/python3.12/site-packages"
-          rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \
-                 sympy* networkx* mcp* miniaudio* pydub* datasets*
-          find "$BUNDLE/python" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
-
-          deactivate
-
-          # Verify key packages
-          for pkg in mlx mlx_lm vllm_mlx huggingface_hub; do
-            if [ -d "$BUNDLE/python/lib/python3.12/site-packages/$pkg" ] || \
-               [ -d "$BUNDLE/python/lib/python3.12/site-packages/${pkg/-/_}" ]; then
-              echo "  ✓ $pkg"
-            else
-              echo "  ✗ $pkg MISSING" && exit 1
-            fi
-          done
-          echo "Python runtime: $(du -sh "$BUNDLE/python" | cut -f1)"
-
       # --- Sign & Bundle ---
 
       - name: Sign binaries and create bundle
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          BUNDLE=/tmp/eigeninference-bundle
+          mkdir -p /tmp/eigeninference-bundle
 
-          cp provider/target/release/eigeninference-provider "$BUNDLE/"
-          cp enclave/.build/release/eigeninference-enclave "$BUNDLE/"
+          cp provider/target/release/eigeninference-provider /tmp/eigeninference-bundle/
+          cp enclave/.build/release/eigeninference-enclave /tmp/eigeninference-bundle/
 
           # Code sign with Developer ID (hardened runtime + entitlements)
           codesign --force --sign "$DEVELOPER_ID" \
             --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
-            "$BUNDLE/eigeninference-provider"
+            /tmp/eigeninference-bundle/eigeninference-provider
 
           codesign --force --sign "$DEVELOPER_ID" \
             --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
-            "$BUNDLE/eigeninference-enclave"
+            /tmp/eigeninference-bundle/eigeninference-enclave
 
           # Verify signatures
-          codesign --verify --verbose "$BUNDLE/eigeninference-provider"
-          codesign --verify --verbose "$BUNDLE/eigeninference-enclave"
+          codesign --verify --verbose /tmp/eigeninference-bundle/eigeninference-provider
+          codesign --verify --verbose /tmp/eigeninference-bundle/eigeninference-enclave
 
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
           echo "Bundle created: $(du -h /tmp/eigeninference-bundle-macos-arm64.tar.gz | cut -f1)"
@@ -158,12 +115,8 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: "SLDQ2GJ6TL"
         run: |
-          BUNDLE=/tmp/eigeninference-bundle
-
-          # Only zip the signed binaries for notarization (not the Python runtime)
-          mkdir -p /tmp/eigeninference-notarize
-          cp "$BUNDLE/eigeninference-provider" "$BUNDLE/eigeninference-enclave" /tmp/eigeninference-notarize/
-          ditto -c -k --keepParent /tmp/eigeninference-notarize /tmp/eigeninference-notarize.zip
+          # Create a zip for notarization (notarytool needs zip/dmg/pkg)
+          ditto -c -k --keepParent /tmp/eigeninference-bundle /tmp/eigeninference-notarize.zip
 
           xcrun notarytool submit /tmp/eigeninference-notarize.zip \
             --apple-id "$APPLE_ID" \
@@ -172,10 +125,10 @@ jobs:
             --wait --timeout 10m
 
           # Staple the individual binaries
-          xcrun stapler staple "$BUNDLE/eigeninference-provider" || true
-          xcrun stapler staple "$BUNDLE/eigeninference-enclave" || true
+          xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-provider || true
+          xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-enclave || true
 
-          # Recreate tarball with stapled binaries + Python runtime
+          # Recreate tarball with stapled binaries
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
 
       # --- Compute hashes (AFTER signing — the signed binary is what providers run) ---

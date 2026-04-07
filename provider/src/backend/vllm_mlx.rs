@@ -72,23 +72,26 @@ impl VllmMlxBackend {
             args.push("--continuous-batching".to_string());
         }
 
-        // Enable tool call parsing so vllm-mlx converts tool call output
+        // Enable tool call parsing so vllm-mlx converts <tool_call> output
         // into structured tool_calls fields in the OpenAI response format.
-        let model_lower = self.model.to_lowercase();
-        let is_gemma = model_lower.contains("gemma-4") || model_lower.contains("gemma4");
-
+        // "auto" parser auto-detects the model's tool call format.
         args.push("--enable-auto-tool-choice".to_string());
         args.push("--tool-call-parser".to_string());
-        args.push(if is_gemma { "gemma4" } else { "auto" }.to_string());
+        args.push("auto".to_string());
 
-        // Extract thinking/reasoning into reasoning_content field.
-        let reasoning_parser = if is_gemma {
-            "gemma4"
-        } else if model_lower.contains("deepseek") || model_lower.contains("trinity") {
-            "deepseek_r1"
-        } else {
-            "qwen3"
-        };
+        // Extract <think>...</think> into reasoning_content field instead of
+        // leaking thinking tags into the response content.
+        //
+        // Default: qwen3 parser (safe for all models — if no </think> found,
+        // it's a no-op passthrough). DeepSeek needs its own parser because it
+        // supports implicit reasoning mode where <think> is omitted.
+        let model_lower = self.model.to_lowercase();
+        let reasoning_parser =
+            if model_lower.contains("deepseek") || model_lower.contains("trinity") {
+                "deepseek_r1"
+            } else {
+                "qwen3" // safe default: no-op if model doesn't output <think> tags
+            };
         args.push("--reasoning-parser".to_string());
         args.push(reasoning_parser.to_string());
 
@@ -255,20 +258,6 @@ mod tests {
         assert!(args.contains(&"--reasoning-parser".to_string()));
         assert!(args.contains(&"deepseek_r1".to_string()));
         assert!(!args.contains(&"qwen3".to_string()));
-    }
-
-    #[test]
-    fn test_build_args_gemma4_model() {
-        let backend =
-            VllmMlxBackend::new("mlx-community/gemma-4-26b-a4b-it-8bit".into(), 8100, false);
-        let args = backend.build_args();
-        // Gemma 4 uses dedicated gemma4 parsers
-        assert!(args.contains(&"--enable-auto-tool-choice".to_string()));
-        assert!(args.contains(&"--tool-call-parser".to_string()));
-        assert!(args.contains(&"gemma4".to_string()));
-        assert!(args.contains(&"--reasoning-parser".to_string()));
-        // "gemma4" appears twice (tool parser + reasoning parser)
-        assert_eq!(args.iter().filter(|a| *a == "gemma4").count(), 2);
     }
 
     #[test]
