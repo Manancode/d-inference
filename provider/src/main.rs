@@ -4459,6 +4459,14 @@ async fn cmd_start(
     // Merge CLI --image-model with picker selection
     let final_image_model = picked_image.or(image_model);
 
+    // Resolve image model path: CLI flag overrides, otherwise resolve from model ID.
+    // gRPCServerCLI needs the directory containing the .ckpt files.
+    let final_image_model_path = image_model_path.or_else(|| {
+        final_image_model
+            .as_ref()
+            .and_then(|id| models::resolve_local_path(id).map(|p| p.to_string_lossy().to_string()))
+    });
+
     if selected_models.is_empty() && final_image_model.is_none() {
         anyhow::bail!("No models selected");
     }
@@ -4472,7 +4480,7 @@ async fn cmd_start(
         &coordinator_url,
         &selected_models,
         final_image_model.as_deref(),
-        image_model_path.as_deref(),
+        final_image_model_path.as_deref(),
         picked_stt.as_deref(),
     )?;
 
