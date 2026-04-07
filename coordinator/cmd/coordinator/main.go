@@ -117,14 +117,62 @@ func main() {
 		logger.Info("release key configured")
 	}
 
-	// Sync known-good provider binary hashes from active releases in the store.
-	// Falls back to EIGENINFERENCE_KNOWN_BINARY_HASHES env var if no releases exist yet.
+	// Sync known-good provider hashes from active releases in the store.
+	// Falls back to env vars if no releases exist yet.
 	srv.SyncBinaryHashes()
+	srv.SyncRuntimeManifest()
 	if hashList := os.Getenv("EIGENINFERENCE_KNOWN_BINARY_HASHES"); hashList != "" {
 		// Env var hashes are additive — merge with any from releases.
 		hashes := strings.Split(hashList, ",")
 		srv.AddKnownBinaryHashes(hashes)
 		logger.Info("additional binary hashes from env var", "count", len(hashes))
+	}
+
+	// Load runtime manifest from environment variables.
+	// When configured, providers whose runtime hashes don't match are excluded from
+	// routing (but not disconnected) and receive feedback about mismatches.
+	{
+		pythonHashes := os.Getenv("EIGENINFERENCE_KNOWN_PYTHON_HASHES")
+		runtimeHashes := os.Getenv("EIGENINFERENCE_KNOWN_RUNTIME_HASHES")
+		templateHashes := os.Getenv("EIGENINFERENCE_KNOWN_TEMPLATE_HASHES") // format: name=hash,name=hash
+
+		if pythonHashes != "" || runtimeHashes != "" || templateHashes != "" {
+			manifest := &api.RuntimeManifest{
+				PythonHashes:   make(map[string]bool),
+				RuntimeHashes:  make(map[string]bool),
+				TemplateHashes: make(map[string]string),
+			}
+			if pythonHashes != "" {
+				for _, h := range strings.Split(pythonHashes, ",") {
+					h = strings.TrimSpace(h)
+					if h != "" {
+						manifest.PythonHashes[h] = true
+					}
+				}
+			}
+			if runtimeHashes != "" {
+				for _, h := range strings.Split(runtimeHashes, ",") {
+					h = strings.TrimSpace(h)
+					if h != "" {
+						manifest.RuntimeHashes[h] = true
+					}
+				}
+			}
+			if templateHashes != "" {
+				for _, pair := range strings.Split(templateHashes, ",") {
+					parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+					if len(parts) == 2 {
+						manifest.TemplateHashes[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			srv.SetRuntimeManifest(manifest)
+			logger.Info("runtime manifest configured",
+				"python_hashes", len(manifest.PythonHashes),
+				"runtime_hashes", len(manifest.RuntimeHashes),
+				"template_hashes", len(manifest.TemplateHashes),
+			)
+		}
 	}
 
 	// Configure billing service.

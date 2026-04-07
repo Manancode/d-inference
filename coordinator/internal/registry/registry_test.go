@@ -644,10 +644,11 @@ func TestScoringWarmModelPreferred(t *testing.T) {
 
 func TestScoreProviderFunction(t *testing.T) {
 	p := &Provider{
-		DecodeTPS:  100.0,
-		TrustLevel: TrustHardware,
-		Status:     StatusOnline,
-		Reputation: NewReputation(),
+		DecodeTPS:       100.0,
+		TrustLevel:      TrustHardware,
+		Status:          StatusOnline,
+		RuntimeVerified: true,
+		Reputation:      NewReputation(),
 	}
 
 	score := ScoreProvider(p, "test-model")
@@ -789,10 +790,11 @@ func TestSetProviderIdleDrainsQueue(t *testing.T) {
 
 func TestScoringWithHighMemoryPressure(t *testing.T) {
 	healthy := &Provider{
-		DecodeTPS:  100.0,
-		TrustLevel: TrustHardware,
-		Status:     StatusOnline,
-		Reputation: NewReputation(),
+		DecodeTPS:       100.0,
+		TrustLevel:      TrustHardware,
+		Status:          StatusOnline,
+		RuntimeVerified: true,
+		Reputation:      NewReputation(),
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.1,
 			CPUUsage:       0.1,
@@ -800,10 +802,11 @@ func TestScoringWithHighMemoryPressure(t *testing.T) {
 		},
 	}
 	pressured := &Provider{
-		DecodeTPS:  100.0,
-		TrustLevel: TrustHardware,
-		Status:     StatusOnline,
-		Reputation: NewReputation(),
+		DecodeTPS:       100.0,
+		TrustLevel:      TrustHardware,
+		Status:          StatusOnline,
+		RuntimeVerified: true,
+		Reputation:      NewReputation(),
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.9,
 			CPUUsage:       0.1,
@@ -821,10 +824,11 @@ func TestScoringWithHighMemoryPressure(t *testing.T) {
 
 func TestScoringWithThermalThrottling(t *testing.T) {
 	p := &Provider{
-		DecodeTPS:  100.0,
-		TrustLevel: TrustHardware,
-		Status:     StatusOnline,
-		Reputation: NewReputation(),
+		DecodeTPS:       100.0,
+		TrustLevel:      TrustHardware,
+		Status:          StatusOnline,
+		RuntimeVerified: true,
+		Reputation:      NewReputation(),
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.1,
 			CPUUsage:       0.1,
@@ -1291,10 +1295,11 @@ func TestThermalCriticalBlocksRouting(t *testing.T) {
 
 	// Verify ScoreProvider returns 0 for critical thermal state.
 	p := &Provider{
-		DecodeTPS:  100.0,
-		TrustLevel: TrustHardware,
-		Status:     StatusOnline,
-		Reputation: NewReputation(),
+		DecodeTPS:       100.0,
+		TrustLevel:      TrustHardware,
+		Status:          StatusOnline,
+		RuntimeVerified: true,
+		Reputation:      NewReputation(),
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.1,
 			CPUUsage:       0.1,

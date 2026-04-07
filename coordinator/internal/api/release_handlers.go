@@ -47,8 +47,9 @@ func (s *Server) handleRegisterRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-update known binary hashes from all active releases.
+	// Auto-update known binary hashes and runtime manifest from all active releases.
 	s.SyncBinaryHashes()
+	s.SyncRuntimeManifest()
 
 	s.logger.Info("release registered",
 		"version", release.Version,
@@ -122,8 +123,9 @@ func (s *Server) handleAdminDeleteRelease(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Re-sync known binary hashes after deactivation.
+	// Re-sync known hashes after deactivation.
 	s.SyncBinaryHashes()
+	s.SyncRuntimeManifest()
 
 	s.logger.Info("admin: release deactivated", "version", req.Version, "platform", req.Platform)
 	writeJSON(w, http.StatusOK, map[string]any{

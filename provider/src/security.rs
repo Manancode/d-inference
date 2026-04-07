@@ -361,6 +361,102 @@ pub fn hash_files_sorted(paths: &[std::path::PathBuf]) -> Option<String> {
     Some(format!("{:x}", final_hasher.finalize()))
 }
 
+/// Hashes of the Python runtime, vllm-mlx package, and templates.
+///
+/// Reported to the coordinator during registration and attestation
+/// so it can verify the provider is running expected runtime code.
+#[derive(Debug, Clone)]
+pub struct RuntimeHashes {
+    /// SHA-256 hash of the Python binary itself.
+    pub python_hash: Option<String>,
+    /// SHA-256 hash of all .py files in the vllm_mlx package directory,
+    /// combined in sorted order (same algorithm as `hash_files_sorted`).
+    pub runtime_hash: Option<String>,
+    /// Per-file SHA-256 hashes of Jinja templates in ~/.eigeninference/templates/.
+    pub template_hashes: std::collections::HashMap<String, String>,
+}
+
+/// Recursively collect all files matching an extension under a directory.
+///
+/// Simple recursive walk using `std::fs::read_dir` — no external crate needed.
+/// The vllm_mlx directory is shallow so this is efficient.
+fn collect_files_recursive(
+    dir: &std::path::Path,
+    extension: &str,
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, extension, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some(extension) {
+            out.push(path);
+        }
+    }
+}
+
+/// Compute hashes of the Python runtime, vllm-mlx package, and templates.
+///
+/// These hashes allow the coordinator to verify that the provider is running
+/// the expected (blessed) runtime code — not a modified version that could
+/// leak prompts or produce tampered output.
+///
+/// - `python_hash`: SHA-256 of the Python interpreter binary
+/// - `runtime_hash`: Combined SHA-256 of all .py files in vllm_mlx (sorted)
+/// - `template_hashes`: Per-file SHA-256 of each .jinja template
+pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
+    // Hash the Python binary itself
+    let python_hash = hash_file(std::path::Path::new(python_cmd));
+
+    // Hash all .py files in the vllm_mlx package directory
+    // Located at ~/.eigeninference/python/lib/python3.12/site-packages/vllm_mlx/
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
+    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
+    let runtime_hash = if vllm_mlx_dir.exists() {
+        let mut py_files = Vec::new();
+        collect_files_recursive(&vllm_mlx_dir, "py", &mut py_files);
+        py_files.sort();
+        if py_files.is_empty() {
+            None
+        } else {
+            hash_files_sorted(&py_files)
+        }
+    } else {
+        None
+    };
+
+    // Hash templates in ~/.eigeninference/templates/
+    let templates_dir = eigeninference_dir.join("templates");
+    let mut template_hashes = std::collections::HashMap::new();
+    if templates_dir.exists() {
+        for entry in std::fs::read_dir(&templates_dir).ok().into_iter().flatten() {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("jinja") {
+                    if let Some(hash) = hash_file(&path) {
+                        let name = path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        template_hashes.insert(name, hash);
+                    }
+                }
+            }
+        }
+    }
+
+    RuntimeHashes {
+        python_hash,
+        runtime_hash,
+        template_hashes,
+    }
+}
+
 /// Verify the integrity of the backend binary by checking its hash.
 ///
 /// Returns Ok(hash) if the binary exists and can be hashed.
@@ -513,6 +609,82 @@ mod tests {
     fn test_verify_security_posture() {
         // Just verify it doesn't panic
         let _ = verify_security_posture();
+    }
+
+    #[test]
+    fn test_collect_files_recursive() {
+        let tmp = std::env::temp_dir().join("eigeninference_test_collect");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        std::fs::write(tmp.join("a.py"), "# a").unwrap();
+        std::fs::write(tmp.join("b.txt"), "not python").unwrap();
+        std::fs::write(tmp.join("sub/c.py"), "# c").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(&tmp, "py", &mut files);
+        files.sort();
+
+        assert_eq!(files.len(), 2, "should find 2 .py files");
+        assert!(files[0].ends_with("a.py"));
+        assert!(files[1].ends_with("c.py"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_collect_files_recursive_nonexistent_dir() {
+        let mut files = Vec::new();
+        collect_files_recursive(std::path::Path::new("/nonexistent/path"), "py", &mut files);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_compute_runtime_hashes_nonexistent_python() {
+        // With a non-existent Python binary, python_hash should be None
+        let hashes = compute_runtime_hashes("/nonexistent/python3");
+        assert!(hashes.python_hash.is_none());
+        // runtime_hash and template_hashes depend on ~/.eigeninference presence,
+        // but should never panic.
+    }
+
+    #[test]
+    fn test_compute_runtime_hashes_with_temp_structure() {
+        let tmp = std::env::temp_dir().join("eigeninference_test_runtime");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // Create a mock directory structure
+        let vllm_dir = tmp.join("python/lib/python3.12/site-packages/vllm_mlx");
+        std::fs::create_dir_all(&vllm_dir).unwrap();
+        std::fs::write(vllm_dir.join("__init__.py"), "# init").unwrap();
+        std::fs::write(vllm_dir.join("server.py"), "# server").unwrap();
+
+        let templates_dir = tmp.join("templates");
+        std::fs::create_dir_all(&templates_dir).unwrap();
+        std::fs::write(
+            templates_dir.join("chatml.jinja"),
+            "{% for m in messages %}",
+        )
+        .unwrap();
+        std::fs::write(templates_dir.join("llama.jinja"), "{{ bos_token }}").unwrap();
+
+        // Create a mock python binary
+        let python_bin = tmp.join("python/bin/python3.12");
+        std::fs::create_dir_all(python_bin.parent().unwrap()).unwrap();
+        std::fs::write(&python_bin, "#!/usr/bin/env python3\n").unwrap();
+
+        // Temporarily override HOME — compute_runtime_hashes uses dirs::home_dir()
+        // so we test with the real function but just verify it doesn't panic.
+        // For a true unit test we'd need to inject the base dir, but this
+        // exercises the code paths without crashing.
+        let hashes = compute_runtime_hashes(python_bin.to_str().unwrap());
+        assert!(
+            hashes.python_hash.is_some(),
+            "should hash the mock python binary"
+        );
+        // runtime_hash and template_hashes depend on the real ~/.eigeninference
+        // directory, not our tmp dir, so we can't assert specific values here.
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 

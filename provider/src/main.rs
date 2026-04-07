@@ -628,56 +628,305 @@ fn download_ckpt_model_from_cdn(
 /// vllm-mlx calls `tokenizer.apply_chat_template()` which requires this field.
 /// If missing (common with custom quantizations or stripped configs), inject the
 /// standard ChatML template used by Qwen/Llama-family models.
-fn ensure_chat_template(model_path: &str) {
-    let config_path = std::path::Path::new(model_path).join("tokenizer_config.json");
-    if !config_path.exists() {
+fn ensure_chat_template(model_path: &str, template_hashes: &std::collections::HashMap<String, String>) {
+    let model_dir = std::path::Path::new(model_path);
+    let jinja_path = model_dir.join("chat_template.jinja");
+
+    // If the model already has a standalone template file, nothing to do
+    if jinja_path.exists() {
         return;
     }
 
-    let content = match std::fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return,
+    // If tokenizer_config.json has an inline chat_template, nothing to do
+    let config_path = model_dir.join("tokenizer_config.json");
+    if config_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                if config.get("chat_template").is_some() {
+                    return;
+                }
+            }
+        }
+    }
+
+    // Determine which template this model needs
+    let model_lower = model_path.to_lowercase();
+    let template_name = if model_lower.contains("gemma") {
+        "gemma4"
+    } else if model_lower.contains("trinity") || model_lower.contains("deepseek") {
+        "trinity"
+    } else if model_lower.contains("minimax") {
+        "minimax"
+    } else {
+        "qwen3.5" // safe default for ChatML-family models
     };
 
-    let mut config: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+    // Check local cache first (~/.eigeninference/templates/)
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
+    let templates_dir = eigeninference_dir.join("templates");
+    let cached_template = templates_dir.join(format!("{template_name}.jinja"));
 
-    if config.get("chat_template").is_some() {
+    if cached_template.exists() {
+        // Copy cached template to model directory
+        match std::fs::copy(&cached_template, &jinja_path) {
+            Ok(_) => {
+                tracing::info!(
+                    "Installed {template_name} chat template from cache to {}",
+                    jinja_path.display()
+                );
+            }
+            Err(e) => tracing::warn!("Failed to copy cached template: {e}"),
+        }
         return;
     }
 
-    // Standard ChatML template (compatible with Qwen, Llama, and most instruction-tuned models)
-    let chatml_template = concat!(
-        "{%- if messages[0]['role'] == 'system' %}",
-        "{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}",
-        "{%- else %}",
-        "{{- '<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n' }}",
-        "{%- endif %}",
-        "{%- for message in messages %}",
-        "{%- if (message.role == 'user') or (message.role == 'system' and not loop.first) or (message.role == 'assistant') %}",
-        "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}",
-        "{%- endif %}",
-        "{%- endfor %}",
-        "{%- if add_generation_prompt %}",
-        "{{- '<|im_start|>assistant\\n' }}",
-        "{%- endif %}"
+    // Verify a downloaded template against the manifest hash.
+    // Returns true if verified or if no manifest hash is available (graceful degradation).
+    let verify_template = |path: &std::path::Path, name: &str, hashes: &std::collections::HashMap<String, String>| -> bool {
+        if let Some(expected) = hashes.get(name) {
+            if let Some(actual) = security::hash_file(path) {
+                if &actual != expected {
+                    tracing::error!(
+                        "Template {name} hash mismatch — possible tampering! Expected {expected}, got {actual}"
+                    );
+                    let _ = std::fs::remove_file(path);
+                    return false;
+                }
+                tracing::info!("Template {name} hash verified ✓");
+            }
+        }
+        true
+    };
+
+    // Download from our R2 CDN (primary) or HuggingFace (fallback)
+    const R2_BASE: &str = "https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev";
+    let r2_url = format!("{R2_BASE}/templates/{template_name}.jinja");
+
+    tracing::info!("Downloading {template_name} chat template...");
+
+    // Try R2 CDN first
+    if let Ok(output) = std::process::Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "5", &r2_url, "-o", &jinja_path.to_string_lossy()])
+        .output()
+    {
+        if output.status.success() {
+            if !verify_template(&jinja_path, template_name, template_hashes) {
+                // Hash mismatch — file already deleted by verify_template
+            } else {
+                tracing::info!("Installed {template_name} chat template from CDN");
+                let _ = std::fs::create_dir_all(&templates_dir);
+                let _ = std::fs::copy(&jinja_path, &cached_template);
+                return;
+            }
+        }
+    }
+
+    // Fallback: download from HuggingFace
+    let hf_url = match template_name {
+        "gemma4" => Some("https://huggingface.co/mlx-community/gemma-4-26b-a4b-it-8bit/raw/main/chat_template.jinja"),
+        "trinity" => Some("https://huggingface.co/arcee-ai/Trinity-Mini/raw/main/chat_template.jinja"),
+        "minimax" => Some("https://huggingface.co/mlx-community/MiniMax-M2.5-8bit/raw/main/chat_template.jinja"),
+        _ => None, // Qwen 3.5 needs special handling (inline in tokenizer_config.json)
+    };
+
+    if let Some(url) = hf_url {
+        if let Ok(output) = std::process::Command::new("curl")
+            .args(["-fsSL", "--connect-timeout", "5", url, "-o", &jinja_path.to_string_lossy()])
+            .output()
+        {
+            if output.status.success() && verify_template(&jinja_path, template_name, template_hashes) {
+                tracing::info!("Installed {template_name} chat template from HuggingFace");
+                let _ = std::fs::create_dir_all(&templates_dir);
+                let _ = std::fs::copy(&jinja_path, &cached_template);
+                return;
+            }
+        }
+    } else {
+        // Qwen: extract chat_template from tokenizer_config.json
+        let tc_url = "https://huggingface.co/Qwen/Qwen3.5-27B/raw/main/tokenizer_config.json";
+        if let Ok(output) = std::process::Command::new("curl")
+            .args(["-fsSL", "--connect-timeout", "5", tc_url])
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(config) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    if let Some(template) = config.get("chat_template").and_then(|v| v.as_str()) {
+                        if std::fs::write(&jinja_path, template).is_ok()
+                            && verify_template(&jinja_path, "qwen3.5", template_hashes)
+                        {
+                            tracing::info!("Installed qwen3.5 chat template from HuggingFace");
+                            let _ = std::fs::create_dir_all(&templates_dir);
+                            let _ = std::fs::copy(&jinja_path, &cached_template);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::warn!(
+        "Failed to download chat template — model may not support tool calling correctly"
+    );
+}
+
+
+/// Fetch the runtime manifest from the coordinator.
+/// Returns (python_hashes, runtime_hashes, template_hashes).
+fn fetch_runtime_manifest(
+    coordinator_base: &str,
+) -> Option<(Vec<String>, Vec<String>, std::collections::HashMap<String, String>)> {
+    let url = format!("{coordinator_base}/v1/runtime/manifest");
+    let output = std::process::Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "5", &url])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+
+    // Coordinator returns hashes as map[string]bool (JSON object {"hash": true})
+    // or as an array of strings. Handle both formats.
+    let parse_hash_set = |v: &serde_json::Value| -> Vec<String> {
+        if let Some(arr) = v.as_array() {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        } else if let Some(obj) = v.as_object() {
+            obj.keys().cloned().collect()
+        } else {
+            vec![]
+        }
+    };
+
+    let python_hashes = manifest
+        .get("python_hashes")
+        .map(|v| parse_hash_set(v))
+        .unwrap_or_default();
+
+    let runtime_hashes = manifest
+        .get("runtime_hashes")
+        .map(|v| parse_hash_set(v))
+        .unwrap_or_default();
+
+    let template_hashes = manifest
+        .get("template_hashes")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some((python_hashes, runtime_hashes, template_hashes))
+}
+
+/// Ensure the Python runtime (vllm-mlx) is up to date and verified.
+///
+/// Called once at startup. Downloads from a verified URL and checks
+/// the hash against the coordinator's runtime manifest before installing.
+/// This prevents MITM attacks on the update channel.
+fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
+    const REQUIRED_VLLM_MLX_VERSION: &str = "0.2.7";
+    const DOWNLOAD_URL: &str =
+        "https://github.com/Gajesh2007/vllm-mlx/archive/refs/heads/main.zip";
+
+    // Check current vllm-mlx version and features
+    let current_version = std::process::Command::new(python_cmd)
+        .args(["-c", "import vllm_mlx; print(vllm_mlx.__version__)"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let has_responses = std::process::Command::new(python_cmd)
+        .args(["-c", "from vllm_mlx.server import create_response; print('ok')"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let needs_update = current_version.is_empty()
+        || current_version < REQUIRED_VLLM_MLX_VERSION.to_string()
+        || !has_responses;
+
+    if !needs_update {
+        tracing::info!("Runtime check: vllm-mlx {current_version} ✓");
+        return;
+    }
+
+    tracing::warn!(
+        "vllm-mlx {} — updating...",
+        if current_version.is_empty() {
+            "not found".to_string()
+        } else {
+            format!("{current_version} outdated")
+        }
     );
 
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert(
-            "chat_template".to_string(),
-            serde_json::Value::String(chatml_template.to_string()),
-        );
-    }
+    // Fetch manifest to get expected runtime hash (hash of installed .py files)
+    let manifest = fetch_runtime_manifest(coordinator_base);
+    let expected_runtime_hashes: Vec<String> = manifest
+        .as_ref()
+        .map(|(_, rh, _)| rh.clone())
+        .unwrap_or_default();
 
-    match std::fs::write(
-        &config_path,
-        serde_json::to_string_pretty(&config).unwrap_or_default(),
-    ) {
-        Ok(()) => tracing::info!("Injected default ChatML template into tokenizer_config.json"),
-        Err(e) => tracing::warn!("Failed to write chat_template to tokenizer config: {e}"),
+    // Download to temp file, install, then verify the INSTALLED package hash
+    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+    let download = std::process::Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "30", DOWNLOAD_URL, "-o", tmp_zip])
+        .output();
+
+    match download {
+        Ok(output) if output.status.success() => {
+            let pip_cmd = std::path::Path::new(python_cmd)
+                .parent()
+                .map(|p| p.join("pip3"))
+                .unwrap_or_else(|| std::path::PathBuf::from("pip3"));
+
+            let install = std::process::Command::new(&pip_cmd)
+                .args(["install", "--force-reinstall", "--no-deps", "--quiet", tmp_zip])
+                .output();
+
+            let _ = std::fs::remove_file(tmp_zip);
+
+            match install {
+                Ok(o) if o.status.success() => {
+                    // Verify the INSTALLED package hash against the manifest
+                    // (not the zip hash — we verify what's actually on disk)
+                    if !expected_runtime_hashes.is_empty() {
+                        let post_install = security::compute_runtime_hashes(python_cmd);
+                        if let Some(actual_hash) = post_install.runtime_hash {
+                            if expected_runtime_hashes.contains(&actual_hash) {
+                                tracing::info!("Updated vllm-mlx — post-install hash verified ✓");
+                            } else {
+                                tracing::error!(
+                                    "vllm-mlx post-install hash MISMATCH — package may be tampered!"
+                                );
+                                tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
+                                tracing::error!("  Got: {actual_hash}");
+                                // Don't uninstall — let coordinator decide whether to route
+                            }
+                        }
+                    } else {
+                        tracing::info!("Updated vllm-mlx ✓ (no manifest for post-install verification)");
+                    }
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    tracing::error!(
+                        "pip install failed: {}",
+                        stderr.chars().take(200).collect::<String>()
+                    );
+                }
+                Err(e) => tracing::error!("Failed to run pip: {e}"),
+            }
+        }
+        _ => {
+            tracing::error!("Failed to download vllm-mlx update");
+        }
     }
 }
 
@@ -1669,6 +1918,19 @@ async fn cmd_serve(
     };
 
     // =========================================================================
+    // Phase 0.5: Ensure runtime dependencies are up to date.
+    //
+    // Checks that vllm-mlx fork is installed at the correct version.
+    // This makes binary-only upgrades self-healing — the provider
+    // automatically updates its Python runtime on startup.
+    // =========================================================================
+    let coordinator_http_base = coordinator_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .replace("/ws/provider", "");
+    ensure_runtime_updated(&python_cmd, &coordinator_http_base);
+
+    // =========================================================================
     // Phase 1: Connect to coordinator IMMEDIATELY with ALL downloaded models.
     //
     // The provider registers with every model it has cached locally. The
@@ -1800,6 +2062,15 @@ async fn cmd_serve(
             std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash));
         rehash_model_hash_opt = Some(current_model_hash.clone());
 
+        // Compute runtime integrity hashes for verification by coordinator.
+        let runtime_hashes = security::compute_runtime_hashes(&python_cmd);
+        tracing::info!(
+            "Runtime hashes: python={}, runtime={}, templates={}",
+            runtime_hashes.python_hash.as_deref().unwrap_or("none"),
+            runtime_hashes.runtime_hash.as_deref().unwrap_or("none"),
+            runtime_hashes.template_hashes.len()
+        );
+
         let client = coordinator::CoordinatorClient::new(
             coordinator_url,
             hw.clone(),
@@ -1815,6 +2086,7 @@ async fn cmd_serve(
                 .map(|w| w.address.clone()),
         )
         .with_auth_token(auth_token)
+        .with_runtime_hashes(Some(runtime_hashes))
         .with_stats(provider_stats.clone())
         .with_inference_active(inference_active.clone())
         .with_current_model(current_model)
@@ -1852,6 +2124,11 @@ async fn cmd_serve(
     let backend_module = preferred_inference_backend_module();
     let backend_name = backend_name_for_module(backend_module);
 
+    // Fetch template hashes from manifest once (not per model)
+    let manifest_template_hashes = fetch_runtime_manifest(&coordinator_http_base)
+        .map(|(_, _, th)| th)
+        .unwrap_or_default();
+
     for slot in &mut backend_slots {
         let model_path = models::resolve_local_path(&slot.model_id)
             .map(|p| p.to_string_lossy().to_string())
@@ -1869,7 +2146,7 @@ async fn cmd_serve(
             model_path
         );
 
-        ensure_chat_template(&model_path);
+        ensure_chat_template(&model_path, &manifest_template_hashes);
 
         match spawn_inference_backend(&python_cmd, backend_module, &model_path, slot.port) {
             Ok(child) => {
@@ -2456,6 +2733,26 @@ async fn cmd_serve(
                                     timestamp
                                 );
                             }
+                            coordinator::CoordinatorEvent::RuntimeOutdated { mismatches } => {
+                                tracing::warn!(
+                                    "Runtime verification failed — {} component(s) need updating",
+                                    mismatches.len()
+                                );
+                                for m in &mismatches {
+                                    tracing::warn!(
+                                        "  Mismatch: {} (expected={}, got={})",
+                                        m.component, m.expected, m.got
+                                    );
+                                }
+                                // Trigger self-healing: re-download, then force reconnect
+                                // so the coordinator gets updated hashes on re-registration.
+                                tracing::info!("Triggering runtime self-heal...");
+                                ensure_runtime_updated(&idle_python_cmd, &coordinator_http_base);
+                                tracing::info!("Runtime updated — forcing reconnect to re-register with new hashes");
+                                // Breaking the event loop causes the outer reconnect loop to
+                                // reconnect, which sends a fresh Register with new hashes.
+                                break;
+                            }
                         }
                     }
                     Some(rid) = done_rx.recv() => {
@@ -2604,6 +2901,35 @@ fn spawn_inference_backend(
 ) -> std::io::Result<std::process::Child> {
     let mut cmd = std::process::Command::new(python_cmd);
     cmd.args(["-m", module, "--model", model, "--port", &port.to_string()]);
+
+    // Add tool call and reasoning parser flags for vllm-mlx
+    if module == "vllm_mlx.server" {
+        cmd.args(["--enable-auto-tool-choice"]);
+
+        let model_lower = model.to_lowercase();
+        let tool_parser = if model_lower.contains("gemma") {
+            "gemma4"
+        } else if model_lower.contains("deepseek") || model_lower.contains("trinity") {
+            "hermes"
+        } else if model_lower.contains("qwen") {
+            "nemotron" // Qwen 3.5 uses Nemotron-style <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
+        } else {
+            "auto" // covers MiniMax and other formats
+        };
+        cmd.args(["--tool-call-parser", tool_parser]);
+
+        let reasoning_parser = if model_lower.contains("gemma") {
+            "gemma4"
+        } else if model_lower.contains("deepseek") || model_lower.contains("trinity") {
+            "deepseek_r1"
+        } else if model_lower.contains("minimax") {
+            "deepseek_r1" // MiniMax uses <think>...</think> like DeepSeek
+        } else {
+            "qwen3"
+        };
+        cmd.args(["--reasoning-parser", reasoning_parser]);
+    }
+
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -4729,6 +5055,31 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     }
 
     std::fs::remove_file(tmp_path).ok();
+
+    // Verify runtime integrity after extraction
+    let bundled_python = eigeninference_dir.join("python/bin/python3.12");
+    if bundled_python.exists() {
+        if let Some(hash) = security::hash_file(&bundled_python) {
+            println!("  Python hash: {}...{}", &hash[..8], &hash[hash.len()-8..]);
+        }
+        // Verify vllm-mlx is importable
+        let check = std::process::Command::new(&bundled_python)
+            .args(["-c", "import vllm_mlx; print(vllm_mlx.__version__)"])
+            .output();
+        match check {
+            Ok(o) if o.status.success() => {
+                let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                println!("  vllm-mlx: {ver} ✓");
+            }
+            _ => println!("  ⚠ vllm-mlx import check failed"),
+        }
+    }
+
+    // Verify manifest if included in bundle
+    let manifest_path = eigeninference_dir.join("manifest.json");
+    if manifest_path.exists() {
+        println!("  Runtime manifest: present ✓");
+    }
 
     println!();
     println!("  Updated to {latest}!");

@@ -216,6 +216,75 @@ else
 fi
 echo ""
 
+# ─── 8.5. Compute runtime integrity manifest ─────────────────
+echo "8.5. Computing runtime integrity hashes..."
+
+# Use the provider binary itself for hash computation (ensures parity with runtime)
+PYTHON_HASH=$(shasum -a 256 "$BUNDLE_DIR/python/bin/python3.12" | cut -d' ' -f1)
+echo "   Python hash: ${PYTHON_HASH:0:16}..."
+
+# Hash all .py files in vllm_mlx package (sorted, using same algorithm as Rust hash_files_sorted)
+# Each file is hashed independently, then file hashes are combined in sorted order
+VLLM_MLX_DIR="$BUNDLE_DIR/python/lib/python3.12/site-packages/vllm_mlx"
+if [ -d "$VLLM_MLX_DIR" ]; then
+    # Must match Rust hash_files_sorted(): hash each file to raw 32 bytes,
+    # concatenate in sorted filename order, SHA-256 the concatenation.
+    # Python reproduces the Rust algorithm exactly.
+    RUNTIME_HASH=$("$BUNDLE_DIR/python/bin/python3.12" -c "
+import hashlib, os, sys
+d = sys.argv[1]
+files = sorted(
+    os.path.join(r, f)
+    for r, _, fs in os.walk(d)
+    for f in fs
+    if f.endswith('.py')
+)
+final = hashlib.sha256()
+for path in files:
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        while True:
+            chunk = fh.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    final.update(h.digest())  # raw 32 bytes, not hex
+print(final.hexdigest())
+" "$VLLM_MLX_DIR")
+    echo "   Runtime hash (vllm-mlx): ${RUNTIME_HASH:0:16}..."
+else
+    RUNTIME_HASH=""
+    echo "   ⚠ vllm_mlx not found — runtime hash unavailable"
+fi
+
+# Hash templates from R2 CDN
+TEMPLATE_HASHES_JSON="{"
+R2_PUBLIC="https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev"
+FIRST_TEMPLATE=true
+for template in qwen3.5 trinity gemma4 minimax; do
+    HASH=$(curl -fsSL "$R2_PUBLIC/templates/${template}.jinja" 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+    if [ -n "$HASH" ] && [ "$HASH" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+        [ "$FIRST_TEMPLATE" = false ] && TEMPLATE_HASHES_JSON+=","
+        TEMPLATE_HASHES_JSON+="\"${template}\":\"${HASH}\""
+        FIRST_TEMPLATE=false
+        echo "   Template ${template}: ${HASH:0:16}..."
+    fi
+done
+TEMPLATE_HASHES_JSON+="}"
+
+# Write manifest.json into the bundle
+BINARY_HASH_PRE=$(shasum -a 256 "$BUNDLE_DIR/eigeninference-provider" | cut -d' ' -f1)
+cat > "$BUNDLE_DIR/manifest.json" << MANIFEST
+{
+    "python_hash": "$PYTHON_HASH",
+    "runtime_hash": "$RUNTIME_HASH",
+    "binary_hash": "$BINARY_HASH_PRE",
+    "template_hashes": $TEMPLATE_HASHES_JSON
+}
+MANIFEST
+echo "   ✓ manifest.json written"
+echo ""
+
 # ─── 9. Create tarball ────────────────────────────────────────
 echo "9. Creating tarball..."
 rm -f "$TARBALL"
@@ -311,6 +380,32 @@ if [ "$UPLOAD" = true ]; then
         sudo chmod 644 /var/www/html/install.sh
     '
     echo "   ✓ install.sh uploaded"
+
+    # Upload runtime manifest to R2
+    if [ -f "$BUNDLE_DIR/manifest.json" ]; then
+        echo "   Uploading runtime manifest to R2..."
+        python3 -c "
+import boto3, os
+s3 = boto3.client('s3',
+    endpoint_url='https://9e92221750c162ade0f2730f63f4963d.r2.cloudflarestorage.com',
+    aws_access_key_id=os.environ['R2_ACCESS_KEY'],
+    aws_secret_access_key=os.environ['R2_SECRET_KEY'],
+    region_name='auto',
+)
+s3.upload_file('$BUNDLE_DIR/manifest.json', 'd-inf-models', 'runtime/manifest.json',
+    ExtraArgs={'ContentType': 'application/json'})
+print('   ✓ manifest.json uploaded to R2')
+" 2>/dev/null || echo "   ⚠ R2 upload failed (missing credentials?) — manifest not uploaded"
+
+        # Register runtime hashes with coordinator
+        echo "   Registering runtime hashes with coordinator..."
+        COORDINATOR="https://inference-test.openinnovation.dev"
+        curl -fsSL -X POST "$COORDINATOR/v1/runtime/manifest" \
+            -H "Content-Type: application/json" \
+            -d @"$BUNDLE_DIR/manifest.json" 2>/dev/null \
+            && echo "   ✓ Runtime manifest registered with coordinator" \
+            || echo "   ⚠ Could not register manifest (coordinator may not support it yet)"
+    fi
     echo ""
 fi
 

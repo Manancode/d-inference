@@ -143,6 +143,70 @@ jobs:
           echo "Binary hash (signed): $BINARY_HASH"
           echo "Bundle hash: $BUNDLE_HASH"
 
+      # --- Compute runtime integrity hashes ---
+      # Build a temp Python venv with our fork to compute reference hashes.
+      # The venv is NOT shipped — providers self-heal at startup.
+      # We only need the hashes for the coordinator's manifest.
+
+      - name: Compute runtime integrity manifest
+        id: runtime
+        run: |
+          echo "Creating temporary Python venv for hash computation..."
+          python3 -m venv /tmp/runtime-hash-venv
+          source /tmp/runtime-hash-venv/bin/activate
+
+          pip install --quiet 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
+
+          # NOTE: Python binary hash is NOT computed here because the CI runner's
+          # Python binary differs from providers' bundled Python. Each provider
+          # computes its own python_hash from its local binary. Only runtime_hash
+          # (vllm-mlx package) and template_hashes are verified centrally.
+          PYTHON_HASH=""
+
+          # Compute vllm-mlx package hash (must match Rust hash_files_sorted algorithm)
+          VLLM_MLX_DIR=$(python3 -c "import vllm_mlx, os; print(os.path.dirname(vllm_mlx.__file__))")
+          RUNTIME_HASH=$(python3 -c "
+          import hashlib, os, sys
+          d = sys.argv[1]
+          files = sorted(
+              os.path.join(r, f)
+              for r, _, fs in os.walk(d)
+              for f in fs
+              if f.endswith('.py')
+          )
+          final = hashlib.sha256()
+          for path in files:
+              h = hashlib.sha256()
+              with open(path, 'rb') as fh:
+                  while True:
+                      chunk = fh.read(65536)
+                      if not chunk:
+                          break
+                      h.update(chunk)
+              final.update(h.digest())
+          print(final.hexdigest())
+          " "$VLLM_MLX_DIR")
+          echo "Runtime hash (vllm-mlx): $RUNTIME_HASH"
+
+          # Compute template hashes from R2 CDN
+          R2_CDN="https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev"
+          TEMPLATE_HASHES=""
+          for name in qwen3.5 trinity gemma4 minimax; do
+            HASH=$(curl -fsSL "$R2_CDN/templates/${name}.jinja" 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+            if [ -n "$HASH" ] && [ "$HASH" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+              [ -n "$TEMPLATE_HASHES" ] && TEMPLATE_HASHES+=","
+              TEMPLATE_HASHES+="${name}=${HASH}"
+              echo "Template $name: ${HASH:0:16}..."
+            fi
+          done
+
+          deactivate
+          rm -rf /tmp/runtime-hash-venv
+
+          echo "python_hash=$PYTHON_HASH" >> "$GITHUB_OUTPUT"
+          echo "runtime_hash=$RUNTIME_HASH" >> "$GITHUB_OUTPUT"
+          echo "template_hashes=$TEMPLATE_HASHES" >> "$GITHUB_OUTPUT"
+
       # --- Upload to R2 ---
 
       - name: Install AWS CLI
@@ -186,6 +250,9 @@ jobs:
               'platform': 'macos-arm64',
               'binary_hash': '${{ steps.hash.outputs.binary_hash }}',
               'bundle_hash': '${{ steps.hash.outputs.bundle_hash }}',
+              'python_hash': '${{ steps.runtime.outputs.python_hash }}',
+              'runtime_hash': '${{ steps.runtime.outputs.runtime_hash }}',
+              'template_hashes': '${{ steps.runtime.outputs.template_hashes }}',
               'url': '${BUNDLE_URL}',
               'changelog': '''${TAG_MSG}'''.strip()
           }
@@ -218,6 +285,7 @@ jobs:
 
             **Binary hash (signed):** `${{ steps.hash.outputs.binary_hash }}`
             **Bundle hash:** `${{ steps.hash.outputs.bundle_hash }}`
+            **Runtime hash (vllm-mlx):** `${{ steps.runtime.outputs.runtime_hash }}`
             **Signed by:** Developer ID Application: Eigen Labs, Inc. (SLDQ2GJ6TL)
             **Notarized:** Yes
 

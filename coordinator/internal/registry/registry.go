@@ -112,6 +112,11 @@ type Provider struct {
 	// Reputation tracking
 	Reputation Reputation
 
+	// Runtime integrity verification
+	RuntimeVerified bool   `json:"runtime_verified"` // true if runtime hashes match the known-good manifest
+	PythonHash      string `json:"python_hash,omitempty"`
+	RuntimeHash     string `json:"runtime_hash,omitempty"`
+
 	// Challenge-response verification state
 	LastChallengeVerified time.Time // last successful challenge verification
 	FailedChallenges      int       // consecutive failed challenges
@@ -325,20 +330,21 @@ func (r *Registry) Register(id string, conn *websocket.Conn, msg *protocol.Regis
 	}
 
 	p := &Provider{
-		ID:            id,
-		Hardware:      msg.Hardware,
-		Models:        models,
-		Backend:       msg.Backend,
-		PublicKey:     pubKey,
-		WalletAddress: msg.WalletAddress,
-		PrefillTPS:    msg.PrefillTPS,
-		DecodeTPS:     msg.DecodeTPS,
-		TrustLevel:    TrustNone,
-		Status:        StatusOnline,
-		Conn:          conn,
-		LastHeartbeat: time.Now(),
-		Reputation:    NewReputation(),
-		pendingReqs:   make(map[string]*PendingRequest),
+		ID:              id,
+		Hardware:        msg.Hardware,
+		Models:          models,
+		Backend:         msg.Backend,
+		PublicKey:       pubKey,
+		WalletAddress:   msg.WalletAddress,
+		PrefillTPS:      msg.PrefillTPS,
+		DecodeTPS:       msg.DecodeTPS,
+		TrustLevel:      TrustNone,
+		RuntimeVerified: true, // default to verified; API layer sets false when manifest check fails
+		Status:          StatusOnline,
+		Conn:            conn,
+		LastHeartbeat:   time.Now(),
+		Reputation:      NewReputation(),
+		pendingReqs:     make(map[string]*PendingRequest),
 	}
 
 	r.mu.Lock()
@@ -570,6 +576,15 @@ const MaxConcurrentRequests = 4
 // Higher scores indicate better routing candidates.
 // Score = (1 - load) * decode_tps * trust_multiplier * reputation * warm_bonus
 func ScoreProvider(p *Provider, model string) float64 {
+	// Providers that have not passed runtime integrity verification score 0
+	// and should never be selected for routing.
+	p.mu.Lock()
+	runtimeVerified := p.RuntimeVerified
+	p.mu.Unlock()
+	if !runtimeVerified {
+		return 0
+	}
+
 	// Load: gradient from 0.0 (idle) to 1.0 (at max concurrency).
 	// Providers with fewer in-flight requests score higher.
 	pending := float64(p.PendingCount())
@@ -672,6 +687,7 @@ func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel) *Pro
 		status := p.Status
 		trust := p.TrustLevel
 		lastChallenge := p.LastChallengeVerified
+		runtimeVerified := p.RuntimeVerified
 		p.mu.Unlock()
 
 		// Skip offline/untrusted providers
@@ -679,6 +695,10 @@ func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel) *Pro
 			continue
 		}
 		if trustRank(trust) < trustRank(effectiveMin) {
+			continue
+		}
+		// Skip providers whose runtime integrity has not been verified.
+		if !runtimeVerified {
 			continue
 		}
 		// Skip providers that haven't passed a recent challenge.

@@ -171,6 +171,48 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 				}
 			}
 
+			// Verify runtime integrity against the known-good manifest.
+			if s.knownRuntimeManifest != nil {
+				runtimeOK, mismatches := s.verifyRuntimeHashes(
+					regMsg.PythonHash, regMsg.RuntimeHash, regMsg.TemplateHashes)
+				provider.Mu().Lock()
+				provider.RuntimeVerified = runtimeOK
+				provider.PythonHash = regMsg.PythonHash
+				provider.RuntimeHash = regMsg.RuntimeHash
+				provider.Mu().Unlock()
+
+				// Send runtime status feedback to provider so it can self-heal.
+				statusMsg := protocol.RuntimeStatusMessage{
+					Type:       protocol.TypeRuntimeStatus,
+					Verified:   runtimeOK,
+					Mismatches: mismatches,
+				}
+				statusData, err := json.Marshal(statusMsg)
+				if err == nil {
+					writeCtx, writeCancel := context.WithTimeout(loopCtx, 5*time.Second)
+					_ = conn.Write(writeCtx, websocket.MessageText, statusData)
+					writeCancel()
+				}
+
+				if runtimeOK {
+					s.logger.Info("provider runtime integrity verified",
+						"provider_id", providerID,
+						"python_hash", regMsg.PythonHash,
+						"runtime_hash", regMsg.RuntimeHash,
+					)
+				} else {
+					s.logger.Warn("provider runtime integrity mismatch — excluded from routing",
+						"provider_id", providerID,
+						"mismatches", len(mismatches),
+					)
+				}
+			} else {
+				// No manifest configured — all providers pass by default.
+				provider.Mu().Lock()
+				provider.RuntimeVerified = true
+				provider.Mu().Unlock()
+			}
+
 			// If ACME client cert was verified, upgrade to hardware trust.
 			// ACME device-attest-01 proves the provider's SE key is Apple-attested.
 			if acmeResult != nil && acmeResult.Valid {
@@ -452,6 +494,44 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 				s.registry.MarkUntrusted(providerID)
 				s.handleChallengeFailure(providerID, "active model weight hash mismatch")
 				return
+			}
+		}
+	}
+
+	// Verify runtime integrity hashes from challenge response.
+	if s.knownRuntimeManifest != nil {
+		runtimeOK, mismatches := s.verifyRuntimeHashes(
+			resp.PythonHash, resp.RuntimeHash, resp.TemplateHashes)
+		provider.Mu().Lock()
+		provider.RuntimeVerified = runtimeOK
+		if resp.PythonHash != "" {
+			provider.PythonHash = resp.PythonHash
+		}
+		if resp.RuntimeHash != "" {
+			provider.RuntimeHash = resp.RuntimeHash
+		}
+		provider.Mu().Unlock()
+
+		if !runtimeOK {
+			s.logger.Warn("provider runtime integrity mismatch in challenge response — excluding from routing",
+				"provider_id", providerID,
+				"mismatches", len(mismatches),
+			)
+			// Send status feedback but do NOT fail the challenge or mark untrusted.
+			// The provider remains connected but is excluded from routing until
+			// it reports matching hashes.
+			if provider.Conn != nil {
+				statusMsg := protocol.RuntimeStatusMessage{
+					Type:       protocol.TypeRuntimeStatus,
+					Verified:   false,
+					Mismatches: mismatches,
+				}
+				statusData, err := json.Marshal(statusMsg)
+				if err == nil {
+					writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = provider.Conn.Write(writeCtx, websocket.MessageText, statusData)
+					writeCancel()
+				}
 			}
 		}
 	}

@@ -632,8 +632,9 @@ func TestStress_ThermalThrottlingAffectsScoring(t *testing.T) {
 			ChipName: "Apple M4 Max",
 			MemoryGB: 128,
 		},
-		Models:    []protocol.ModelInfo{{ID: model, ModelType: "chat"}},
-		DecodeTPS: 100.0,
+		Models:          []protocol.ModelInfo{{ID: model, ModelType: "chat"}},
+		DecodeTPS:       100.0,
+		RuntimeVerified: true,
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.3,
 			CPUUsage:       0.2,
@@ -648,8 +649,9 @@ func TestStress_ThermalThrottlingAffectsScoring(t *testing.T) {
 			ChipName: "Apple M4 Max",
 			MemoryGB: 128,
 		},
-		Models:    []protocol.ModelInfo{{ID: model, ModelType: "chat"}},
-		DecodeTPS: 100.0,
+		Models:          []protocol.ModelInfo{{ID: model, ModelType: "chat"}},
+		DecodeTPS:       100.0,
+		RuntimeVerified: true,
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.3,
 			CPUUsage:       0.2,
@@ -672,10 +674,11 @@ func TestStress_ThermalThrottlingAffectsScoring(t *testing.T) {
 
 	// Critical thermal should score near zero
 	p3 := &registry.Provider{
-		ID:        "critical-provider",
-		Hardware:  p1.Hardware,
-		Models:    p1.Models,
-		DecodeTPS: 100.0,
+		ID:              "critical-provider",
+		Hardware:        p1.Hardware,
+		Models:          p1.Models,
+		DecodeTPS:       100.0,
+		RuntimeVerified: true,
 		SystemMetrics: protocol.SystemMetrics{
 			ThermalState: "critical",
 		},
@@ -693,9 +696,10 @@ func TestStress_MemoryPressureAffectsScoring(t *testing.T) {
 	model := "memory-model"
 
 	low := &registry.Provider{
-		ID:        "low-mem",
-		Models:    []protocol.ModelInfo{{ID: model}},
-		DecodeTPS: 100.0,
+		ID:              "low-mem",
+		Models:          []protocol.ModelInfo{{ID: model}},
+		DecodeTPS:       100.0,
+		RuntimeVerified: true,
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.1,
 			ThermalState:   "nominal",
@@ -704,9 +708,10 @@ func TestStress_MemoryPressureAffectsScoring(t *testing.T) {
 	low.Reputation = registry.NewReputation()
 
 	high := &registry.Provider{
-		ID:        "high-mem",
-		Models:    []protocol.ModelInfo{{ID: model}},
-		DecodeTPS: 100.0,
+		ID:              "high-mem",
+		Models:          []protocol.ModelInfo{{ID: model}},
+		DecodeTPS:       100.0,
+		RuntimeVerified: true,
 		SystemMetrics: protocol.SystemMetrics{
 			MemoryPressure: 0.9,
 			ThermalState:   "nominal",

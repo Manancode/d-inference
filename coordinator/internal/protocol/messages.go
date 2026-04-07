@@ -43,6 +43,7 @@ const (
 	TypeAttestationChallenge   = "attestation_challenge"
 	TypeTranscriptionRequest   = "transcription_request"
 	TypeImageGenerationRequest = "image_generation_request"
+	TypeRuntimeStatus          = "runtime_status"
 )
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,11 @@ type RegisterMessage struct {
 	PrefillTPS    float64         `json:"prefill_tps,omitempty"`    // benchmark: prefill tokens per second
 	DecodeTPS     float64         `json:"decode_tps,omitempty"`     // benchmark: decode tokens per second
 	AuthToken     string          `json:"auth_token,omitempty"`     // device-linked provider token (from eigeninference-provider login)
+
+	// Runtime integrity hashes — used for runtime verification against known-good manifests.
+	PythonHash     string            `json:"python_hash,omitempty"`     // SHA-256 of Python runtime
+	RuntimeHash    string            `json:"runtime_hash,omitempty"`    // SHA-256 of inference runtime (vllm-mlx)
+	TemplateHashes map[string]string `json:"template_hashes,omitempty"` // template_name -> SHA-256 hash
 }
 
 // HeartbeatMessage is sent periodically by connected providers.
@@ -221,6 +227,32 @@ type AttestationResponseMessage struct {
 	SecureBootEnabled *bool  `json:"secure_boot_enabled,omitempty"` // fresh Secure Boot status
 	BinaryHash        string `json:"binary_hash,omitempty"`         // fresh SHA-256 of provider binary
 	ActiveModelHash   string `json:"active_model_hash,omitempty"`   // SHA-256 weight fingerprint of loaded model
+
+	// Runtime integrity hashes — fresh values reported at challenge time.
+	PythonHash     string            `json:"python_hash,omitempty"`     // SHA-256 of Python runtime
+	RuntimeHash    string            `json:"runtime_hash,omitempty"`    // SHA-256 of inference runtime (vllm-mlx)
+	TemplateHashes map[string]string `json:"template_hashes,omitempty"` // template_name -> SHA-256 hash
+}
+
+// ---------------------------------------------------------------------------
+// Runtime verification messages
+// ---------------------------------------------------------------------------
+
+// RuntimeStatusMessage is sent by the coordinator to inform a provider about
+// the result of its runtime integrity verification. If mismatches are found,
+// the provider can self-heal (e.g. re-download corrupted files).
+type RuntimeStatusMessage struct {
+	Type       string            `json:"type"`
+	Verified   bool              `json:"verified"`
+	Mismatches []RuntimeMismatch `json:"mismatches,omitempty"`
+}
+
+// RuntimeMismatch describes a single component whose hash did not match
+// the coordinator's known-good manifest.
+type RuntimeMismatch struct {
+	Component string `json:"component"`
+	Expected  string `json:"expected"`
+	Got       string `json:"got"`
 }
 
 // ---------------------------------------------------------------------------

@@ -49,6 +49,15 @@ pub enum ProviderMessage {
         /// When present, the coordinator links this provider to the token's account.
         #[serde(skip_serializing_if = "Option::is_none")]
         auth_token: Option<String>,
+        /// SHA-256 hash of the Python interpreter binary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        python_hash: Option<String>,
+        /// Combined SHA-256 hash of all .py files in the vllm_mlx package (sorted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_hash: Option<String>,
+        /// Per-file SHA-256 hashes of Jinja templates.
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        template_hashes: std::collections::HashMap<String, String>,
     },
     Heartbeat {
         status: ProviderStatus,
@@ -128,6 +137,15 @@ pub enum ProviderMessage {
         /// SHA-256 weight fingerprint of the currently loaded model (cached at load time).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         active_model_hash: Option<String>,
+        /// SHA-256 hash of the Python interpreter binary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        python_hash: Option<String>,
+        /// Combined SHA-256 hash of all .py files in the vllm_mlx package (sorted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_hash: Option<String>,
+        /// Per-file SHA-256 hashes of Jinja templates.
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        template_hashes: std::collections::HashMap<String, String>,
     },
 }
 
@@ -172,6 +190,14 @@ pub enum CoordinatorMessage {
         nonce: String,
         timestamp: String,
     },
+    /// Runtime integrity verification result from the coordinator.
+    /// Sent after registration or attestation response when the coordinator
+    /// has checked the provider's runtime hashes against known-good values.
+    RuntimeStatus {
+        verified: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mismatches: Vec<RuntimeMismatch>,
+    },
 }
 
 /// Body of a transcription request from the coordinator.
@@ -195,6 +221,17 @@ pub struct EncryptedPayload {
     pub ephemeral_public_key: String,
     /// Nonce + encrypted data (base64)
     pub ciphertext: String,
+}
+
+/// A single runtime component whose hash doesn't match the coordinator's known-good value.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuntimeMismatch {
+    /// Component name (e.g. "python", "vllm_mlx", "template:chatml").
+    pub component: String,
+    /// The hash the coordinator expected.
+    pub expected: String,
+    /// The hash the provider reported.
+    pub got: String,
 }
 
 /// PartialEq via serialized JSON — needed because Box<RawValue> (in Register's
@@ -332,6 +369,9 @@ mod tests {
             prefill_tps: None,
             decode_tps: None,
             auth_token: None,
+            python_hash: None,
+            runtime_hash: None,
+            template_hashes: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -343,6 +383,10 @@ mod tests {
         // benchmark fields should be omitted when None
         assert!(!json.contains("prefill_tps"));
         assert!(!json.contains("decode_tps"));
+        // runtime hash fields should be omitted when empty
+        assert!(!json.contains("python_hash"));
+        assert!(!json.contains("runtime_hash"));
+        assert!(!json.contains("template_hashes"));
         let deserialized: ProviderMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
     }
@@ -367,6 +411,9 @@ mod tests {
             prefill_tps: None,
             decode_tps: None,
             auth_token: None,
+            python_hash: None,
+            runtime_hash: None,
+            template_hashes: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -399,6 +446,9 @@ mod tests {
             prefill_tps: Some(500.0),
             decode_tps: Some(100.0),
             auth_token: None,
+            python_hash: None,
+            runtime_hash: None,
+            template_hashes: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -599,6 +649,9 @@ mod tests {
             secure_boot_enabled: Some(true),
             binary_hash: None,
             active_model_hash: None,
+            python_hash: None,
+            runtime_hash: None,
+            template_hashes: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -957,6 +1010,9 @@ mod tests {
                 prefill_tps: None,
                 decode_tps: None,
                 auth_token: None,
+                python_hash: None,
+                runtime_hash: None,
+                template_hashes: std::collections::HashMap::new(),
             },
             // Heartbeat (idle)
             ProviderMessage::Heartbeat {
@@ -1017,6 +1073,9 @@ mod tests {
                 secure_boot_enabled: Some(true),
                 binary_hash: None,
                 active_model_hash: None,
+                python_hash: None,
+                runtime_hash: None,
+                template_hashes: std::collections::HashMap::new(),
             },
         ];
 
@@ -1060,6 +1119,18 @@ mod tests {
             CoordinatorMessage::AttestationChallenge {
                 nonce: "bm9uY2U=".to_string(),
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
+            },
+            CoordinatorMessage::RuntimeStatus {
+                verified: true,
+                mismatches: vec![],
+            },
+            CoordinatorMessage::RuntimeStatus {
+                verified: false,
+                mismatches: vec![RuntimeMismatch {
+                    component: "python".to_string(),
+                    expected: "abc123".to_string(),
+                    got: "def456".to_string(),
+                }],
             },
         ];
 
@@ -1112,5 +1183,124 @@ mod tests {
         assert!(json.contains("\"response_hash\""));
         let deserialized: ProviderMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_runtime_status_verified_roundtrip() {
+        let msg = CoordinatorMessage::RuntimeStatus {
+            verified: true,
+            mismatches: vec![],
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"runtime_status\""));
+        assert!(json.contains("\"verified\":true"));
+        // Empty mismatches should be omitted
+        assert!(!json.contains("mismatches"));
+        let deserialized: CoordinatorMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_runtime_status_with_mismatches_roundtrip() {
+        let msg = CoordinatorMessage::RuntimeStatus {
+            verified: false,
+            mismatches: vec![
+                RuntimeMismatch {
+                    component: "python".to_string(),
+                    expected: "abc123".to_string(),
+                    got: "def456".to_string(),
+                },
+                RuntimeMismatch {
+                    component: "template:chatml".to_string(),
+                    expected: "111".to_string(),
+                    got: "222".to_string(),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"verified\":false"));
+        assert!(json.contains("\"mismatches\""));
+        assert!(json.contains("\"component\":\"python\""));
+        let deserialized: CoordinatorMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_runtime_status_backward_compatible_deserialization() {
+        // A coordinator that doesn't send mismatches field should still parse
+        let raw = r#"{"type":"runtime_status","verified":true}"#;
+        let msg: CoordinatorMessage = serde_json::from_str(raw).unwrap();
+        match msg {
+            CoordinatorMessage::RuntimeStatus {
+                verified,
+                mismatches,
+            } => {
+                assert!(verified);
+                assert!(mismatches.is_empty());
+            }
+            _ => panic!("expected RuntimeStatus"),
+        }
+    }
+
+    #[test]
+    fn test_register_with_runtime_hashes_roundtrip() {
+        let mut template_hashes = std::collections::HashMap::new();
+        template_hashes.insert("chatml".to_string(), "abc123".to_string());
+        template_hashes.insert("llama".to_string(), "def456".to_string());
+
+        let msg = ProviderMessage::Register {
+            hardware: sample_hardware(),
+            models: vec![],
+            backend: "vllm_mlx".to_string(),
+            public_key: None,
+            wallet_address: None,
+            attestation: None,
+            prefill_tps: None,
+            decode_tps: None,
+            auth_token: None,
+            python_hash: Some("pythonhash123".to_string()),
+            runtime_hash: Some("runtimehash456".to_string()),
+            template_hashes,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"python_hash\":\"pythonhash123\""));
+        assert!(json.contains("\"runtime_hash\":\"runtimehash456\""));
+        assert!(json.contains("\"template_hashes\""));
+        assert!(json.contains("\"chatml\""));
+        let deserialized: ProviderMessage = serde_json::from_str(&json).unwrap();
+        // Compare fields individually (HashMap order is non-deterministic)
+        match deserialized {
+            ProviderMessage::Register { python_hash, runtime_hash, template_hashes, .. } => {
+                assert_eq!(python_hash, Some("pythonhash123".to_string()));
+                assert_eq!(runtime_hash, Some("runtimehash456".to_string()));
+                assert_eq!(template_hashes.get("chatml"), Some(&"abc123".to_string()));
+                assert_eq!(template_hashes.get("llama"), Some(&"def456".to_string()));
+                assert_eq!(template_hashes.len(), 2);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_register_backward_compatible_without_runtime_hashes() {
+        // An old-format Register message without runtime hash fields should still parse
+        let raw = r#"{"type":"register","hardware":{"machine_model":"Mac16,1","chip_name":"Apple M4 Max","chip_family":"M4","chip_tier":"Max","memory_gb":128,"memory_available_gb":124,"cpu_cores":{"total":16,"performance":12,"efficiency":4},"gpu_cores":40,"memory_bandwidth_gbs":546},"models":[],"backend":"vllm_mlx"}"#;
+        let msg: ProviderMessage = serde_json::from_str(raw).unwrap();
+        match msg {
+            ProviderMessage::Register {
+                python_hash,
+                runtime_hash,
+                template_hashes,
+                ..
+            } => {
+                assert!(python_hash.is_none());
+                assert!(runtime_hash.is_none());
+                assert!(template_hashes.is_empty());
+            }
+            _ => panic!("expected Register"),
+        }
     }
 }

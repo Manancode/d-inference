@@ -28,6 +28,7 @@ use crate::protocol::{
     CoordinatorMessage, ImageGenerationRequestBody, ProviderMessage, ProviderStats, ProviderStatus,
     TranscriptionRequestBody,
 };
+use crate::security::RuntimeHashes;
 
 /// Thread-safe counters for provider statistics, shared between the main
 /// event loop (which increments them) and the heartbeat sender (which reads them).
@@ -70,6 +71,11 @@ pub enum CoordinatorEvent {
         nonce: String,
         timestamp: String,
     },
+    /// Coordinator reports that runtime hashes don't match known-good values.
+    /// The main loop should trigger a runtime re-download and re-register.
+    RuntimeOutdated {
+        mismatches: Vec<crate::protocol::RuntimeMismatch>,
+    },
 }
 
 /// Coordinator WebSocket client.
@@ -93,6 +99,8 @@ pub struct CoordinatorClient {
     warm_models: Arc<std::sync::Mutex<Vec<String>>>,
     /// SHA-256 weight fingerprint of the currently loaded model (cached at load time).
     current_model_hash: Arc<std::sync::Mutex<Option<String>>>,
+    /// Runtime integrity hashes (Python binary, vllm_mlx package, templates).
+    runtime_hashes: Option<RuntimeHashes>,
 }
 
 impl CoordinatorClient {
@@ -119,6 +127,7 @@ impl CoordinatorClient {
             current_model: Arc::new(std::sync::Mutex::new(None)),
             warm_models: Arc::new(std::sync::Mutex::new(Vec::new())),
             current_model_hash: Arc::new(std::sync::Mutex::new(None)),
+            runtime_hashes: None,
         }
     }
 
@@ -170,6 +179,12 @@ impl CoordinatorClient {
     /// Set the shared current-model weight hash (cached at model load time).
     pub fn with_current_model_hash(mut self, hash: Arc<std::sync::Mutex<Option<String>>>) -> Self {
         self.current_model_hash = hash;
+        self
+    }
+
+    /// Set runtime integrity hashes (Python, vllm_mlx, templates) for registration.
+    pub fn with_runtime_hashes(mut self, hashes: Option<RuntimeHashes>) -> Self {
+        self.runtime_hashes = hashes;
         self
     }
 
@@ -237,6 +252,16 @@ impl CoordinatorClient {
         let (mut write, mut read) = ws_stream.split();
 
         // Send registration message
+        let (python_hash, runtime_hash, template_hashes) = if let Some(ref rh) = self.runtime_hashes
+        {
+            (
+                rh.python_hash.clone(),
+                rh.runtime_hash.clone(),
+                rh.template_hashes.clone(),
+            )
+        } else {
+            (None, None, std::collections::HashMap::new())
+        };
         let register = ProviderMessage::Register {
             hardware: self.hardware.clone(),
             models: self.models.clone(),
@@ -247,6 +272,9 @@ impl CoordinatorClient {
             prefill_tps: None,
             decode_tps: None,
             auth_token: self.auth_token.clone(),
+            python_hash,
+            runtime_hash,
+            template_hashes,
         };
         let register_json = serde_json::to_string(&register)?;
         write.send(Message::Text(register_json.into())).await?;
@@ -427,6 +455,7 @@ impl CoordinatorClient {
                                         &timestamp,
                                         self.public_key.as_deref(),
                                         model_hash.as_deref(),
+                                        self.runtime_hashes.as_ref(),
                                     );
                                     let json = serde_json::to_string(&response)
                                         .unwrap_or_default();
@@ -434,6 +463,27 @@ impl CoordinatorClient {
                                         tracing::warn!("Failed to send attestation response: {e}");
                                     } else {
                                         tracing::info!("Sent attestation response");
+                                    }
+                                }
+                                Ok(CoordinatorMessage::RuntimeStatus { verified, mismatches }) => {
+                                    if verified {
+                                        tracing::info!("Runtime integrity verified by coordinator");
+                                    } else {
+                                        tracing::warn!(
+                                            "Runtime integrity check FAILED — {} mismatch(es)",
+                                            mismatches.len()
+                                        );
+                                        for m in &mismatches {
+                                            tracing::warn!(
+                                                "  {}: expected={}, got={}",
+                                                m.component, m.expected, m.got
+                                            );
+                                        }
+                                        let _ = event_tx
+                                            .send(CoordinatorEvent::RuntimeOutdated {
+                                                mismatches,
+                                            })
+                                            .await;
                                     }
                                 }
                                 Err(e) => {
@@ -527,6 +577,7 @@ pub fn handle_attestation_challenge(
     timestamp: &str,
     public_key: Option<&str>,
     current_model_hash: Option<&str>,
+    runtime_hashes: Option<&RuntimeHashes>,
 ) -> ProviderMessage {
     use base64::Engine;
     let data = format!("{}{}", nonce, timestamp);
@@ -561,6 +612,16 @@ pub fn handle_attestation_challenge(
         );
     }
 
+    let (python_hash, rt_hash, template_hashes) = if let Some(rh) = runtime_hashes {
+        (
+            rh.python_hash.clone(),
+            rh.runtime_hash.clone(),
+            rh.template_hashes.clone(),
+        )
+    } else {
+        (None, None, std::collections::HashMap::new())
+    };
+
     ProviderMessage::AttestationResponse {
         nonce: nonce.to_string(),
         signature,
@@ -571,6 +632,9 @@ pub fn handle_attestation_challenge(
         secure_boot_enabled: Some(true), // Apple Silicon always has Secure Boot in Full Security mode
         binary_hash,
         active_model_hash: current_model_hash.map(|s| s.to_string()),
+        python_hash,
+        runtime_hash: rt_hash,
+        template_hashes,
     }
 }
 
@@ -619,6 +683,9 @@ pub fn build_register_message_with_wallet(
         prefill_tps: None,
         decode_tps: None,
         auth_token: None,
+        python_hash: None,
+        runtime_hash: None,
+        template_hashes: std::collections::HashMap::new(),
     }
 }
 
@@ -683,7 +750,7 @@ mod tests {
         let timestamp = "2025-01-15T10:30:00Z";
         let public_key = Some("cHVia2V5");
 
-        let response = handle_attestation_challenge(nonce, timestamp, public_key, None);
+        let response = handle_attestation_challenge(nonce, timestamp, public_key, None, None);
 
         match response {
             ProviderMessage::AttestationResponse {
@@ -704,7 +771,8 @@ mod tests {
 
     #[test]
     fn test_handle_attestation_challenge_without_public_key() {
-        let response = handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", None, None);
+        let response =
+            handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", None, None, None);
 
         match response {
             ProviderMessage::AttestationResponse {
@@ -725,10 +793,20 @@ mod tests {
 
     #[test]
     fn test_handle_attestation_challenge_deterministic() {
-        let resp1 =
-            handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", Some("key"), None);
-        let resp2 =
-            handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", Some("key"), None);
+        let resp1 = handle_attestation_challenge(
+            "bm9uY2U=",
+            "2025-01-15T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
+        let resp2 = handle_attestation_challenge(
+            "bm9uY2U=",
+            "2025-01-15T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
 
         // Same inputs should produce same output (deterministic).
         assert_eq!(resp1, resp2);
@@ -736,10 +814,20 @@ mod tests {
 
     #[test]
     fn test_handle_attestation_challenge_different_nonces() {
-        let resp1 =
-            handle_attestation_challenge("bm9uY2Ux", "2025-01-15T00:00:00Z", Some("key"), None);
-        let resp2 =
-            handle_attestation_challenge("bm9uY2Uy", "2025-01-15T00:00:00Z", Some("key"), None);
+        let resp1 = handle_attestation_challenge(
+            "bm9uY2Ux",
+            "2025-01-15T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
+        let resp2 = handle_attestation_challenge(
+            "bm9uY2Uy",
+            "2025-01-15T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
 
         // Different nonces should produce different signatures.
         match (&resp1, &resp2) {
@@ -758,8 +846,13 @@ mod tests {
 
     #[test]
     fn test_handle_attestation_challenge_serialization() {
-        let response =
-            handle_attestation_challenge("dGVzdA==", "2025-06-01T00:00:00Z", Some("a2V5"), None);
+        let response = handle_attestation_challenge(
+            "dGVzdA==",
+            "2025-06-01T00:00:00Z",
+            Some("a2V5"),
+            None,
+            None,
+        );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"type\":\"attestation_response\""));
         assert!(json.contains("\"nonce\":\"dGVzdA==\""));
@@ -908,6 +1001,7 @@ mod tests {
             "2026-01-01T00:00:00Z",
             Some("cHVibGljLWtleQ=="),
             None,
+            None,
         );
 
         match response {
@@ -921,6 +1015,9 @@ mod tests {
                 secure_boot_enabled,
                 binary_hash: _,
                 active_model_hash: _,
+                python_hash: _,
+                runtime_hash: _,
+                template_hashes: _,
             } => {
                 // Nonce echoed back exactly
                 assert_eq!(nonce, "dGVzdG5vbmNl");
@@ -949,7 +1046,7 @@ mod tests {
         // The public key in the response should match what was passed in.
         let pk = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=";
         let response =
-            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", Some(pk), None);
+            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", Some(pk), None, None);
 
         match response {
             ProviderMessage::AttestationResponse { public_key, .. } => {
@@ -962,7 +1059,8 @@ mod tests {
     #[test]
     fn test_attestation_response_none_public_key_becomes_empty() {
         // When no public key is configured, the response should use empty string.
-        let response = handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", None, None);
+        let response =
+            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", None, None, None);
 
         match response {
             ProviderMessage::AttestationResponse { public_key, .. } => {
@@ -974,10 +1072,20 @@ mod tests {
 
     #[test]
     fn test_attestation_response_different_timestamps_different_signatures() {
-        let resp1 =
-            handle_attestation_challenge("bm9uY2U=", "2026-01-01T00:00:00Z", Some("key"), None);
-        let resp2 =
-            handle_attestation_challenge("bm9uY2U=", "2026-06-01T00:00:00Z", Some("key"), None);
+        let resp1 = handle_attestation_challenge(
+            "bm9uY2U=",
+            "2026-01-01T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
+        let resp2 = handle_attestation_challenge(
+            "bm9uY2U=",
+            "2026-06-01T00:00:00Z",
+            Some("key"),
+            None,
+            None,
+        );
 
         match (&resp1, &resp2) {
             (
@@ -998,7 +1106,7 @@ mod tests {
         // The response must serialize with snake_case field names and the
         // "attestation_response" type tag that the Go coordinator expects.
         let response =
-            handle_attestation_challenge("YWJj", "2026-03-15T10:00:00Z", Some("cGs="), None);
+            handle_attestation_challenge("YWJj", "2026-03-15T10:00:00Z", Some("cGs="), None, None);
 
         let json = serde_json::to_string(&response).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

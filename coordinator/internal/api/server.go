@@ -31,6 +31,7 @@ import (
 	"github.com/eigeninference/coordinator/internal/billing"
 	"github.com/eigeninference/coordinator/internal/mdm"
 	"github.com/eigeninference/coordinator/internal/payments"
+	"github.com/eigeninference/coordinator/internal/protocol"
 	"github.com/eigeninference/coordinator/internal/registry"
 	"github.com/eigeninference/coordinator/internal/store"
 )
@@ -78,6 +79,11 @@ type Server struct {
 	// When non-empty, providers whose binary hash doesn't match are rejected.
 	// Auto-populated from active releases via SyncBinaryHashes().
 	knownBinaryHashes map[string]bool
+
+	// knownRuntimeManifest holds accepted runtime component hashes.
+	// When set, providers whose runtime hashes don't match are marked as
+	// unverified and excluded from routing (but not disconnected).
+	knownRuntimeManifest *RuntimeManifest
 
 	// releaseKey is a scoped credential for the GitHub Action to register releases.
 	// It can only POST /v1/releases — no admin access.
@@ -207,6 +213,132 @@ func (s *Server) SyncBinaryHashes() {
 	s.logger.Info("binary hashes synced from releases", "known_hashes", len(hashes))
 }
 
+// SyncRuntimeManifest builds the runtime manifest from active releases.
+// Called after a release is registered to auto-update the expected hashes.
+func (s *Server) SyncRuntimeManifest() {
+	releases := s.store.ListReleases()
+	manifest := &RuntimeManifest{
+		PythonHashes:   make(map[string]bool),
+		RuntimeHashes:  make(map[string]bool),
+		TemplateHashes: make(map[string]string),
+	}
+
+	hasAny := false
+	for _, r := range releases {
+		if !r.Active {
+			continue
+		}
+		if r.PythonHash != "" {
+			manifest.PythonHashes[r.PythonHash] = true
+			hasAny = true
+		}
+		if r.RuntimeHash != "" {
+			manifest.RuntimeHashes[r.RuntimeHash] = true
+			hasAny = true
+		}
+		if r.TemplateHashes != "" {
+			// Parse "name=hash,name=hash" format
+			for _, pair := range strings.Split(r.TemplateHashes, ",") {
+				parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+				if len(parts) == 2 {
+					manifest.TemplateHashes[parts[0]] = parts[1]
+					hasAny = true
+				}
+			}
+		}
+	}
+
+	if hasAny {
+		s.knownRuntimeManifest = manifest
+		s.logger.Info("runtime manifest synced from releases",
+			"python_hashes", len(manifest.PythonHashes),
+			"runtime_hashes", len(manifest.RuntimeHashes),
+			"template_hashes", len(manifest.TemplateHashes),
+		)
+	}
+}
+
+// RuntimeManifest holds the set of accepted hashes for provider runtime components.
+// When configured, the coordinator verifies provider-reported hashes against
+// this manifest at registration and during periodic attestation challenges.
+type RuntimeManifest struct {
+	PythonHashes   map[string]bool   `json:"python_hashes"`   // set of accepted Python runtime hashes
+	RuntimeHashes  map[string]bool   `json:"runtime_hashes"`  // set of accepted inference runtime hashes
+	TemplateHashes map[string]string `json:"template_hashes"` // template_name -> expected hash
+}
+
+// SetRuntimeManifest configures the known-good runtime manifest for provider
+// verification. Pass nil to disable runtime verification (all providers pass).
+func (s *Server) SetRuntimeManifest(m *RuntimeManifest) {
+	s.knownRuntimeManifest = m
+}
+
+// verifyRuntimeHashes checks provider-reported runtime hashes against the
+// known-good manifest. Returns (true, nil) if all hashes match or no manifest
+// is configured. Returns (false, mismatches) if any component fails verification.
+func (s *Server) verifyRuntimeHashes(pythonHash, runtimeHash string, templateHashes map[string]string) (bool, []protocol.RuntimeMismatch) {
+	if s.knownRuntimeManifest == nil {
+		return true, nil // no manifest configured, pass by default
+	}
+
+	var mismatches []protocol.RuntimeMismatch
+
+	// Check Python runtime hash.
+	if pythonHash != "" && len(s.knownRuntimeManifest.PythonHashes) > 0 {
+		if !s.knownRuntimeManifest.PythonHashes[pythonHash] {
+			mismatches = append(mismatches, protocol.RuntimeMismatch{
+				Component: "python",
+				Expected:  "one of known-good hashes",
+				Got:       pythonHash,
+			})
+		}
+	}
+
+	// Check inference runtime hash.
+	if runtimeHash != "" && len(s.knownRuntimeManifest.RuntimeHashes) > 0 {
+		if !s.knownRuntimeManifest.RuntimeHashes[runtimeHash] {
+			mismatches = append(mismatches, protocol.RuntimeMismatch{
+				Component: "runtime",
+				Expected:  "one of known-good hashes",
+				Got:       runtimeHash,
+			})
+		}
+	}
+
+	// Check template hashes.
+	if len(templateHashes) > 0 && len(s.knownRuntimeManifest.TemplateHashes) > 0 {
+		for name, got := range templateHashes {
+			expected, ok := s.knownRuntimeManifest.TemplateHashes[name]
+			if ok && got != expected {
+				mismatches = append(mismatches, protocol.RuntimeMismatch{
+					Component: "template:" + name,
+					Expected:  expected,
+					Got:       got,
+				})
+			}
+		}
+	}
+
+	return len(mismatches) == 0, mismatches
+}
+
+// handleRuntimeManifest returns the current runtime manifest as JSON.
+// No auth required — hashes are not secrets.
+func (s *Server) handleRuntimeManifest(w http.ResponseWriter, r *http.Request) {
+	if s.knownRuntimeManifest == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"configured": false,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured":      true,
+		"python_hashes":   s.knownRuntimeManifest.PythonHashes,
+		"runtime_hashes":  s.knownRuntimeManifest.RuntimeHashes,
+		"template_hashes": s.knownRuntimeManifest.TemplateHashes,
+	})
+}
+
 // HandleMDMWebhook processes a MicroMDM webhook callback.
 // Mount this on the webhook URL configured in MicroMDM.
 func (s *Server) HandleMDMWebhook(w http.ResponseWriter, r *http.Request) {
@@ -313,6 +445,9 @@ func (s *Server) routes() {
 
 	// Public model catalog — providers and install script fetch this
 	s.mux.HandleFunc("GET /v1/models/catalog", s.handleModelCatalog)
+
+	// Runtime manifest — providers and users can inspect accepted runtime hashes.
+	s.mux.HandleFunc("GET /v1/runtime/manifest", s.handleRuntimeManifest)
 
 	// Payment methods info
 	s.mux.HandleFunc("GET /v1/billing/methods", s.handleBillingMethods) // no auth needed

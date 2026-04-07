@@ -989,11 +989,13 @@ func (s *PostgresStore) SetRelease(release *Release) error {
 	defer cancel()
 
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO releases (version, platform, binary_hash, bundle_hash, url, changelog, active, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+		`INSERT INTO releases (version, platform, binary_hash, bundle_hash, python_hash, runtime_hash, template_hashes, url, changelog, active, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, NOW())
 		 ON CONFLICT (version, platform) DO UPDATE SET
-		   binary_hash = $3, bundle_hash = $4, url = $5, changelog = $6, active = TRUE`,
-		release.Version, release.Platform, release.BinaryHash, release.BundleHash, release.URL, release.Changelog,
+		   binary_hash = $3, bundle_hash = $4, python_hash = $5, runtime_hash = $6, template_hashes = $7, url = $8, changelog = $9, active = TRUE`,
+		release.Version, release.Platform, release.BinaryHash, release.BundleHash,
+		release.PythonHash, release.RuntimeHash, release.TemplateHashes,
+		release.URL, release.Changelog,
 	)
 	if err != nil {
 		return fmt.Errorf("store: set release: %w", err)
@@ -1006,7 +1008,9 @@ func (s *PostgresStore) ListReleases() []Release {
 	defer cancel()
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT version, platform, binary_hash, bundle_hash, url, changelog, active, created_at
+		`SELECT version, platform, binary_hash, bundle_hash,
+		        COALESCE(python_hash, ''), COALESCE(runtime_hash, ''), COALESCE(template_hashes, ''),
+		        url, changelog, active, created_at
 		 FROM releases ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -1018,6 +1022,7 @@ func (s *PostgresStore) ListReleases() []Release {
 	for rows.Next() {
 		var r Release
 		if err := rows.Scan(&r.Version, &r.Platform, &r.BinaryHash, &r.BundleHash,
+			&r.PythonHash, &r.RuntimeHash, &r.TemplateHashes,
 			&r.URL, &r.Changelog, &r.Active, &r.CreatedAt); err != nil {
 			continue
 		}
@@ -1032,10 +1037,13 @@ func (s *PostgresStore) GetLatestRelease(platform string) *Release {
 
 	var r Release
 	err := s.pool.QueryRow(ctx,
-		`SELECT version, platform, binary_hash, bundle_hash, url, changelog, active, created_at
+		`SELECT version, platform, binary_hash, bundle_hash,
+		        COALESCE(python_hash, ''), COALESCE(runtime_hash, ''), COALESCE(template_hashes, ''),
+		        url, changelog, active, created_at
 		 FROM releases WHERE platform = $1 AND active = TRUE
 		 ORDER BY created_at DESC LIMIT 1`, platform,
 	).Scan(&r.Version, &r.Platform, &r.BinaryHash, &r.BundleHash,
+		&r.PythonHash, &r.RuntimeHash, &r.TemplateHashes,
 		&r.URL, &r.Changelog, &r.Active, &r.CreatedAt)
 	if err != nil {
 		return nil

@@ -43,6 +43,7 @@ build/
 *.local.toml
 .env
 .env.*
+coordinator/.env
 
 # Keys and certificates (never commit)
 *.pem
