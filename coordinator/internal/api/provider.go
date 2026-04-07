@@ -591,6 +591,11 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 			// Provider is linked to an account — credit the account directly.
 			_ = s.store.Credit(p.AccountID, providerPayout, store.LedgerPayout, msg.RequestID)
 
+			// Also credit the wallet-based ledger so /v1/provider/earnings works.
+			if p.WalletAddress != "" {
+				s.ledger.CreditProvider(p.WalletAddress, providerPayout, pr.Model, msg.RequestID)
+			}
+
 			// Record per-node earning for granular provider analytics.
 			_ = s.store.RecordProviderEarning(&store.ProviderEarning{
 				AccountID:        p.AccountID,
