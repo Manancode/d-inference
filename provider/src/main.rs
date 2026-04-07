@@ -79,8 +79,8 @@ fn fallback_catalog() -> Vec<CatalogModel> {
             s3_name: "flux-klein-4b-q8".into(),
             display_name: "FLUX.2 Klein 4B".into(),
             model_type: "image".into(),
-            size_gb: 8.1,
-            architecture: "4B diffusion".into(),
+            size_gb: 8.2, // 3.8 GB model + 4.2 GB text encoder + 0.2 GB VAE
+            architecture: "4B diffusion + Qwen 4B encoder".into(),
             description: "Fast image gen".into(),
             min_ram_gb: 16,
         },
@@ -89,10 +89,10 @@ fn fallback_catalog() -> Vec<CatalogModel> {
             s3_name: "flux-klein-9b-q8".into(),
             display_name: "FLUX.2 Klein 9B".into(),
             model_type: "image".into(),
-            size_gb: 8.8,
-            architecture: "9B diffusion".into(),
+            size_gb: 17.4, // 8.8 GB model + 8.4 GB text encoder + 0.2 GB VAE
+            architecture: "9B diffusion + Qwen 8B encoder".into(),
             description: "Higher quality image gen".into(),
-            min_ram_gb: 16,
+            min_ram_gb: 24,
         },
         CatalogModel {
             id: "qwen3.5-27b-claude-opus-8bit".into(),
@@ -477,44 +477,138 @@ fn download_model_from_cdn(s3_name: &str, cache_dir: &std::path::Path, display_n
     all_ok
 }
 
-/// Download image model .ckpt files from R2.
-/// Image models have .ckpt weight files instead of safetensors.
+/// Download a complete image model pipeline from CDN.
+///
+/// FLUX models require 3 files: diffusion model + text encoder + VAE.
+/// Also writes models.json and configs.json metadata for gRPCServerCLI.
+/// All files are stored in the same R2 directory as the main model.
 fn download_ckpt_model_from_cdn(
     base_url: &str,
     cache_dir: &std::path::Path,
     display_name: &str,
 ) -> bool {
-    // List known .ckpt files for FLUX models
-    let ckpt_files: &[&str] = if base_url.contains("9b") {
-        &["flux_2_klein_9b_q8p.ckpt"]
-    } else if base_url.contains("4b") {
-        &["flux_2_klein_4b_q8p.ckpt", "flux_2_vae_f16.ckpt"]
+    // Define the full pipeline for each known image model
+    struct ImagePipeline {
+        model_file: &'static str,
+        text_encoder: &'static str,
+        vae: &'static str,
+        version: &'static str,
+        name: &'static str,
+    }
+
+    let pipeline = if cache_dir.to_string_lossy().contains("flux_2_klein_9b_q8p") {
+        Some(ImagePipeline {
+            model_file: "flux_2_klein_9b_q8p.ckpt",
+            text_encoder: "qwen_3_8b_q8p.ckpt",
+            vae: "flux_2_vae_f16.ckpt",
+            version: "flux2_9b",
+            name: "FLUX.2 [klein] 9B",
+        })
+    } else if cache_dir.to_string_lossy().contains("flux_2_klein_4b_q8p") {
+        Some(ImagePipeline {
+            model_file: "flux_2_klein_4b_q8p.ckpt",
+            text_encoder: "qwen_3_4b_q8p.ckpt",
+            vae: "flux_2_vae_f16.ckpt",
+            version: "flux2_4b",
+            name: "FLUX.2 [klein] 4B",
+        })
     } else {
-        &[]
+        None
     };
 
-    if ckpt_files.is_empty() {
-        println!("  ⚠ Unknown image model format for {}", display_name);
+    let Some(pipeline) = pipeline else {
+        println!("  ⚠ Unknown image model");
         return false;
-    }
+    };
 
-    println!(
-        "  Downloading {} ({} files)...",
-        display_name,
-        ckpt_files.len()
-    );
+    let files = [
+        (pipeline.vae, "VAE"),
+        (pipeline.model_file, "Diffusion model"),
+        (pipeline.text_encoder, "Text encoder"),
+    ];
 
-    let mut all_ok = true;
-    for (i, f) in ckpt_files.iter().enumerate() {
-        let label = format!("{} [{}/{}]", display_name, i + 1, ckpt_files.len());
-        let url = format!("{}/{}", base_url, f);
-        if !download_file_with_progress(&url, &cache_dir.join(f), &label) {
-            println!("  ⚠ Failed to download {}", f);
-            all_ok = false;
-            break;
+    let total = files.len();
+    println!("  Downloading {} ({} files)...", display_name, total);
+
+    for (i, (file, desc)) in files.iter().enumerate() {
+        let dest = cache_dir.join(file);
+        if dest.exists() {
+            // Check if already complete via HEAD
+            let expected = std::process::Command::new("curl")
+                .args(["-fsSI", &format!("{}/{}", base_url, file)])
+                .output()
+                .ok()
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .find(|l| l.to_lowercase().starts_with("content-length:"))
+                        .and_then(|l| l.split(':').nth(1)?.trim().parse::<u64>().ok())
+                });
+            if let Some(expected) = expected {
+                if let Ok(meta) = std::fs::metadata(&dest) {
+                    if meta.len() >= expected {
+                        println!("  [{}/{}] {} — already downloaded ✓", i + 1, total, desc);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let label = format!("{} [{}/{}] {}", display_name, i + 1, total, desc);
+        let url = format!("{}/{}", base_url, file);
+        if !download_file_with_progress(&url, &dest, &label) {
+            println!("  ⚠ Failed to download {}", file);
+            return false;
         }
     }
-    all_ok
+
+    // Write models.json metadata for gRPCServerCLI
+    let models_json = format!(
+        r#"[{{
+  "name": "{}",
+  "version": "{}",
+  "autoencoder": "{}",
+  "prefix": "",
+  "modifier": "kontext",
+  "default_scale": 16,
+  "hires_fix_scale": 32,
+  "file": "{}",
+  "upcast_attention": false,
+  "text_encoder": "{}",
+  "high_precision_autoencoder": false,
+  "objective": {{"u": {{"condition_scale": 1000}}}},
+  "padded_text_encoding_length": 512
+}}]"#,
+        pipeline.name, pipeline.version, pipeline.vae, pipeline.model_file, pipeline.text_encoder
+    );
+    let _ = std::fs::write(cache_dir.join("models.json"), &models_json);
+
+    // Write configs.json with default generation parameters
+    let configs_json = format!(
+        r#"[{{
+  "name": "{}",
+  "version": "{}",
+  "configuration": {{
+    "model": "{}",
+    "width": 1024,
+    "height": 1024,
+    "steps": 4,
+    "guidanceScale": 1.0,
+    "strength": 1.0,
+    "sampler": 16,
+    "batchSize": 1,
+    "batchCount": 1,
+    "shift": 3.0,
+    "speedUpWithGuidanceEmbed": true,
+    "seedMode": 2
+  }}
+}}]"#,
+        pipeline.name, pipeline.version, pipeline.model_file
+    );
+    let _ = std::fs::write(cache_dir.join("configs.json"), &configs_json);
+
+    println!("  ✓ {} pipeline complete", display_name);
+    true
 }
 
 /// Ensure a model's tokenizer_config.json contains a chat_template.
