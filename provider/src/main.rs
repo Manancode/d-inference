@@ -4237,142 +4237,165 @@ async fn cmd_start(
         downloaded.iter().map(|m| m.id.clone()).collect();
 
     // Interactive model selection if no --model specified
-    let (selected_models, picked_image): (Vec<String>, Option<String>) =
-        if let Some(m) = model_override {
-            (vec![m], None)
-        } else {
-            // Build picker items from catalog: all models that fit in RAM.
-            struct PickerItem {
-                id: String,
-                display: String,
-                size_gb: f64,
-                downloaded: bool,
-                s3_name: String,
-                model_type: String,
-            }
+    let (selected_models, picked_image): (Vec<String>, Option<String>) = if let Some(m) =
+        model_override
+    {
+        (vec![m], None)
+    } else {
+        // Build picker items from catalog: all models that fit in RAM.
+        struct PickerItem {
+            id: String,
+            display: String,
+            size_gb: f64,
+            downloaded: bool,
+            s3_name: String,
+            model_type: String,
+        }
 
-            // Fetch expected file sizes from CDN via HEAD requests to detect partial downloads.
-            let cdn_base = "https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev";
-            let cdn_sizes: std::collections::HashMap<String, u64> = {
-                let client = reqwest::Client::new();
-                let mut sizes = std::collections::HashMap::new();
-                for c in &catalog {
-                    if let Some(on_disk) = downloaded.iter().find(|m| m.id == c.id) {
-                        // Only HEAD-check models we have locally (to verify completeness)
-                        let url = if c.id.ends_with(".ckpt") {
-                            format!("{}/{}/{}", cdn_base, c.s3_name, c.id)
-                        } else {
-                            format!("{}/{}/model.safetensors", cdn_base, c.s3_name)
-                        };
-                        if let Ok(resp) = client
-                            .head(&url)
-                            .timeout(std::time::Duration::from_secs(5))
-                            .send()
-                            .await
-                        {
-                            if let Some(len) = resp.content_length() {
-                                sizes.insert(c.id.clone(), len);
-                            }
+        // Fetch expected file sizes from CDN via HEAD requests to detect partial downloads.
+        let cdn_base = "https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev";
+        let cdn_sizes: std::collections::HashMap<String, u64> = {
+            let client = reqwest::Client::new();
+            let mut sizes = std::collections::HashMap::new();
+            for c in &catalog {
+                if let Some(on_disk) = downloaded.iter().find(|m| m.id == c.id) {
+                    // Only HEAD-check models we have locally (to verify completeness)
+                    let url = if c.id.ends_with(".ckpt") {
+                        format!("{}/{}/{}", cdn_base, c.s3_name, c.id)
+                    } else {
+                        format!("{}/{}/model.safetensors", cdn_base, c.s3_name)
+                    };
+                    if let Ok(resp) = client
+                        .head(&url)
+                        .timeout(std::time::Duration::from_secs(5))
+                        .send()
+                        .await
+                    {
+                        if let Some(len) = resp.content_length() {
+                            sizes.insert(c.id.clone(), len);
                         }
                     }
                 }
-                sizes
-            };
-
-            let mut items: Vec<PickerItem> = catalog
-                .iter()
-                .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
-                .map(|c| {
-                    // Check if model is downloaded AND matches expected CDN size.
-                    let on_disk = downloaded.iter().find(|m| m.id == c.id);
-                    let is_downloaded = on_disk.is_some_and(|m| {
-                        if let Some(&expected) = cdn_sizes.get(&c.id) {
-                            // Compare raw file size against CDN Content-Length
-                            m.size_bytes >= expected
-                        } else {
-                            // No CDN size available — trust if file is non-trivial
-                            m.size_bytes > 500_000_000
-                        }
-                    });
-                    let size = if is_downloaded {
-                        on_disk.map(|m| m.estimated_memory_gb).unwrap_or(c.size_gb)
-                    } else {
-                        c.size_gb
-                    };
-                    // Show model type tag for non-text models
-                    let display = if c.model_type != "text" {
-                        format!("{} [{}]", c.display_name, c.model_type)
-                    } else {
-                        c.display_name.clone()
-                    };
-                    PickerItem {
-                        id: c.id.clone(),
-                        display,
-                        size_gb: size,
-                        downloaded: is_downloaded,
-                        s3_name: c.s3_name.clone(),
-                        model_type: c.model_type.clone(),
-                    }
-                })
-                .collect();
-
-            // Sort: downloaded first, then by size descending
-            items.sort_by(|a, b| {
-                b.downloaded.cmp(&a.downloaded).then(
-                    b.size_gb
-                        .partial_cmp(&a.size_gb)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
-            });
-
-            if items.is_empty() {
-                anyhow::bail!("No supported models fit in {} GB RAM", hw.memory_gb);
             }
-
-            // Convert to PickerEntry for the interactive picker
-            let entries: Vec<PickerEntry> = items
-                .iter()
-                .map(|i| PickerEntry {
-                    display: i.display.clone(),
-                    size_gb: i.size_gb,
-                    downloaded: i.downloaded,
-                })
-                .collect();
-
-            let selected_indices = run_model_picker(&entries, hw.memory_gb as f64)?;
-
-            // Download any selected models that aren't local yet
-            for &idx in &selected_indices {
-                let item = &items[idx];
-                if !item.downloaded {
-                    println!();
-                    println!("  Downloading {}...", item.display);
-                    let cache_dir = dirs::home_dir()
-                        .unwrap_or_default()
-                        .join(".cache/huggingface/hub")
-                        .join(format!("models--{}", item.id.replace('/', "--")))
-                        .join("snapshots/main");
-                    std::fs::create_dir_all(&cache_dir)?;
-                    if !download_model_from_cdn(&item.s3_name, &cache_dir, &item.display) {
-                        anyhow::bail!("Failed to download {}", item.display);
-                    }
-                    println!("  ✓ Downloaded {}", item.display);
-                }
-            }
-
-            // Split selected models by type: text → --model, image → --image-model
-            let mut text_models = Vec::new();
-            let mut picked_image_model: Option<String> = None;
-            for &idx in &selected_indices {
-                let item = &items[idx];
-                if item.model_type == "image" {
-                    picked_image_model = Some(item.id.clone());
-                } else {
-                    text_models.push(item.id.clone());
-                }
-            }
-            (text_models, picked_image_model)
+            sizes
         };
+
+        let mut items: Vec<PickerItem> = catalog
+            .iter()
+            .filter(|c| (c.min_ram_gb as f64) <= hw.memory_gb as f64)
+            .map(|c| {
+                // Check if model is downloaded AND complete.
+                // For image models (.ckpt), also verify companion files exist
+                // (text encoder + VAE) since the pipeline needs all 3.
+                let on_disk = downloaded.iter().find(|m| m.id == c.id);
+                let is_downloaded = on_disk.is_some_and(|m| {
+                    let main_ok = if let Some(&expected) = cdn_sizes.get(&c.id) {
+                        m.size_bytes >= expected
+                    } else {
+                        m.size_bytes > 500_000_000
+                    };
+                    if !main_ok {
+                        return false;
+                    }
+                    // For image models, check companion files exist
+                    if c.model_type == "image" {
+                        let model_dir = models::resolve_local_path(&c.id);
+                        if let Some(dir) = model_dir.as_ref().and_then(|p| p.parent()) {
+                            let has_vae = dir.join("flux_2_vae_f16.ckpt").exists();
+                            let has_encoder = std::fs::read_dir(dir)
+                                .map(|entries| {
+                                    entries.flatten().any(|e| {
+                                        let name = e.file_name().to_string_lossy().to_string();
+                                        name.starts_with("qwen_3_") && name.ends_with("_q8p.ckpt")
+                                    })
+                                })
+                                .unwrap_or(false);
+                            let has_metadata = dir.join("models.json").exists();
+                            return has_vae && has_encoder && has_metadata;
+                        }
+                        return false;
+                    }
+                    true
+                });
+                let size = if is_downloaded {
+                    on_disk.map(|m| m.estimated_memory_gb).unwrap_or(c.size_gb)
+                } else {
+                    c.size_gb
+                };
+                // Show model type tag for non-text models
+                let display = if c.model_type != "text" {
+                    format!("{} [{}]", c.display_name, c.model_type)
+                } else {
+                    c.display_name.clone()
+                };
+                PickerItem {
+                    id: c.id.clone(),
+                    display,
+                    size_gb: size,
+                    downloaded: is_downloaded,
+                    s3_name: c.s3_name.clone(),
+                    model_type: c.model_type.clone(),
+                }
+            })
+            .collect();
+
+        // Sort: downloaded first, then by size descending
+        items.sort_by(|a, b| {
+            b.downloaded.cmp(&a.downloaded).then(
+                b.size_gb
+                    .partial_cmp(&a.size_gb)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+
+        if items.is_empty() {
+            anyhow::bail!("No supported models fit in {} GB RAM", hw.memory_gb);
+        }
+
+        // Convert to PickerEntry for the interactive picker
+        let entries: Vec<PickerEntry> = items
+            .iter()
+            .map(|i| PickerEntry {
+                display: i.display.clone(),
+                size_gb: i.size_gb,
+                downloaded: i.downloaded,
+            })
+            .collect();
+
+        let selected_indices = run_model_picker(&entries, hw.memory_gb as f64)?;
+
+        // Download any selected models that aren't local yet
+        for &idx in &selected_indices {
+            let item = &items[idx];
+            if !item.downloaded {
+                println!();
+                println!("  Downloading {}...", item.display);
+                let cache_dir = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".cache/huggingface/hub")
+                    .join(format!("models--{}", item.id.replace('/', "--")))
+                    .join("snapshots/main");
+                std::fs::create_dir_all(&cache_dir)?;
+                if !download_model_from_cdn(&item.s3_name, &cache_dir, &item.display) {
+                    anyhow::bail!("Failed to download {}", item.display);
+                }
+                println!("  ✓ Downloaded {}", item.display);
+            }
+        }
+
+        // Split selected models by type: text → --model, image → --image-model
+        let mut text_models = Vec::new();
+        let mut picked_image_model: Option<String> = None;
+        for &idx in &selected_indices {
+            let item = &items[idx];
+            if item.model_type == "image" {
+                picked_image_model = Some(item.id.clone());
+            } else {
+                text_models.push(item.id.clone());
+            }
+        }
+        (text_models, picked_image_model)
+    };
 
     // Merge CLI --image-model with picker selection
     let final_image_model = picked_image.or(image_model);
