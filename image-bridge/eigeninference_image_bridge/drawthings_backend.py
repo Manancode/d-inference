@@ -242,6 +242,7 @@ class DrawThingsBackend(ImageBackend):
             self._grpc_server_binary,
             self._model_path,
             "--no-response-compression",
+            "--no-tls",
             "--port", str(self._grpc_port),
         ]
         logger.info(f"Starting gRPCServerCLI: {' '.join(cmd)}")
