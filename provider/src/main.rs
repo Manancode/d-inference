@@ -1853,7 +1853,7 @@ async fn cmd_serve(
         let mut ready = false;
         for i in 0..150 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if backend::check_health(&slot.backend_url).await {
+            if backend::check_model_loaded(&slot.backend_url).await {
                 tracing::info!(
                     "{} ready after {}s on port {}",
                     slot.model_id,
