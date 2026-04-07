@@ -323,11 +323,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/referral/stats", s.requireAuth(s.handleReferralStats))
 	s.mux.HandleFunc("GET /v1/referral/info", s.requireAuth(s.handleReferralInfo))
 
-	// Model catalog (admin)
-	s.mux.HandleFunc("POST /v1/admin/models", s.requireAuth(s.handleAdminUpsertModel))
-	s.mux.HandleFunc("GET /v1/admin/models", s.requireAuth(s.handleAdminListCatalog))
-	s.mux.HandleFunc("DELETE /v1/admin/models", s.requireAuth(s.handleAdminRemoveModel))
-
 	// Invite codes (admin)
 	s.mux.HandleFunc("POST /v1/admin/invite-codes", s.requireAuth(s.handleAdminCreateInviteCode))
 	s.mux.HandleFunc("GET /v1/admin/invite-codes", s.requireAuth(s.handleAdminListInviteCodes))
