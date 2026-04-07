@@ -143,9 +143,18 @@ export const useStore = create<AppState>()(
         const textModels = models.filter(
           (m) => m.model_type !== "image" && m.model_type !== "stt" && m.model_type !== "transcription"
         );
+        // Prefer Gemma 4, then Qwen 27B, then first available
+        const preferred = ["gemma-4", "qwen3.5-27b"];
+        const defaultModel =
+          preferred
+            .map((pref) => textModels.find((m) => m.id.toLowerCase().includes(pref)))
+            .find(Boolean)?.id ||
+          textModels[0]?.id ||
+          models[0]?.id ||
+          "";
         set({
           models,
-          selectedModel: current || textModels[0]?.id || models[0]?.id || "",
+          selectedModel: current || defaultModel,
         });
       },
       setSidebarOpen: (open) => set({ sidebarOpen: open }),

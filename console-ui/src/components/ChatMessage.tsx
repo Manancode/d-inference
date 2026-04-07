@@ -316,15 +316,18 @@ export function ChatMessage({ message, onRetry }: { message: Message; onRetry?: 
               />
             )}
 
-            {message.error && onRetry && (
+            {onRetry && (
               <button
                 onClick={onRetry}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg
-                           bg-coral/10 border-2 border-coral/30 text-coral text-xs font-semibold
-                           hover:bg-coral/20 hover:border-coral/50 transition-all"
+                className={`mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg
+                           text-xs font-semibold transition-all ${
+                             message.error
+                               ? "bg-coral/10 border-2 border-coral/30 text-coral hover:bg-coral/20 hover:border-coral/50"
+                               : "bg-bg-secondary border-2 border-ink/10 text-text-secondary hover:bg-bg-tertiary hover:border-ink/20"
+                           }`}
               >
                 <RotateCcw size={12} />
-                Retry
+                {message.error ? "Retry" : "Regenerate"}
               </button>
             )}
           </div>

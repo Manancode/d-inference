@@ -360,13 +360,23 @@ export default function ChatPage() {
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="space-y-1">
-            {activeChat.messages.map((msg) => (
-              <ChatMessage
-                key={msg.id}
-                message={msg}
-                onRetry={msg.error ? () => handleRetry(msg.id) : undefined}
-              />
-            ))}
+            {activeChat.messages.map((msg, idx) => {
+              const isLastAssistant =
+                msg.role === "assistant" &&
+                !msg.streaming &&
+                idx === activeChat.messages.length - 1;
+              return (
+                <ChatMessage
+                  key={msg.id}
+                  message={msg}
+                  onRetry={
+                    (msg.error || isLastAssistant) && !isStreaming
+                      ? () => handleRetry(msg.id)
+                      : undefined
+                  }
+                />
+              );
+            })}
           </div>
           <div className="h-4" />
         </div>
