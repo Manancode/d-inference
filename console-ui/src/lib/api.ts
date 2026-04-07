@@ -356,12 +356,15 @@ export async function streamChat(
   let firstTokenTime = 0;
   let tokenCount = 0;
 
-  // Qwen think-block state machine
-  // Qwen outputs "Thinking Process:\n...\n</think>" or "<think>...</think>" in content
+  // Think-block state machine
+  // Supports multiple formats:
+  //   Qwen/DeepSeek: "<think>...</think>" or "Thinking Process:\n...</think>"
+  //   Gemma 4:       "<|channel>thought\n...<channel|>"
   let inThinkBlock = false;
+  let thinkCloseTag = "</think>"; // updated per-format when block detected
   let contentAccum = "";
   let thinkDetectionDone = false;
-  let thinkCloseBuffer = ""; // buffers tokens to detect </think> split across chunks
+  let thinkCloseBuffer = ""; // buffers tokens to detect close tag split across chunks
 
   function emitMetrics() {
     if (!firstTokenTime) return;
@@ -371,52 +374,74 @@ export async function streamChat(
     callbacks.onMetrics({ tps, ttft, tokenCount });
   }
 
+  /** Flush any buffered content that the think-detector accumulated. */
+  function flushContentAccum() {
+    if (!thinkDetectionDone && contentAccum) {
+      thinkDetectionDone = true;
+      callbacks.onToken(contentAccum);
+      contentAccum = "";
+    }
+  }
+
   function handleContentToken(text: string) {
-    // On first content tokens, detect if this is a Qwen think block
-    // Qwen formats: "<think>..." or "Thinking Process:\n..."
+    // On first content tokens, detect if this is a think block
     if (!thinkDetectionDone) {
       contentAccum += text;
-      // Wait for enough chars to decide (need ~18 for "Thinking Process:")
+      // Wait for enough chars to decide (need ~18 for "Thinking Process:" / "<|channel>thought")
       if (contentAccum.length < 18 && !contentAccum.includes("\n\n")) return;
 
       thinkDetectionDone = true;
       const trimmed = contentAccum.trimStart();
+
+      // Qwen/DeepSeek: <think>...
       if (trimmed.startsWith("<think>")) {
         inThinkBlock = true;
+        thinkCloseTag = "</think>";
         const afterTag = contentAccum.replace(/^\s*<think>\s*/, "");
         if (afterTag) callbacks.onThinking(afterTag);
         return;
       }
+      // Qwen legacy: Thinking Process:...
       if (trimmed.startsWith("Thinking Process:") || trimmed.startsWith("Thinking Process\n")) {
         inThinkBlock = true;
-        // Strip the "Thinking Process:" prefix and send rest as thinking
+        thinkCloseTag = "</think>";
         const afterTag = trimmed.replace(/^Thinking Process:?\s*/, "");
         if (afterTag) callbacks.onThinking(afterTag);
         return;
       }
+      // Gemma 4: <|channel>thought\n...<channel|>
+      if (trimmed.startsWith("<|channel>thought")) {
+        inThinkBlock = true;
+        thinkCloseTag = "<channel|>";
+        const afterTag = trimmed.replace(/^<\|channel>thought\s*/, "");
+        if (afterTag) callbacks.onThinking(afterTag);
+        return;
+      }
+
       // Not a think block — flush accumulated content as normal tokens
       callbacks.onToken(contentAccum);
       return;
     }
 
     if (inThinkBlock) {
-      // Buffer to handle </think> split across token boundaries
+      // Buffer to handle close tag split across token boundaries
       thinkCloseBuffer += text;
-      const closeIdx = thinkCloseBuffer.indexOf("</think>");
+      const closeIdx = thinkCloseBuffer.indexOf(thinkCloseTag);
       if (closeIdx !== -1) {
         const before = thinkCloseBuffer.slice(0, closeIdx);
         if (before) callbacks.onThinking(before);
-        const after = thinkCloseBuffer.slice(closeIdx + 8);
+        const after = thinkCloseBuffer.slice(closeIdx + thinkCloseTag.length);
         inThinkBlock = false;
         thinkCloseBuffer = "";
         if (after.replace(/^\n+/, "")) callbacks.onToken(after.replace(/^\n+/, ""));
         return;
       }
-      // Flush confirmed non-close content (keep last 7 chars as potential partial </think>)
-      if (thinkCloseBuffer.length > 8) {
-        const safe = thinkCloseBuffer.slice(0, -8);
+      // Flush confirmed non-close content (keep last N chars as potential partial close tag)
+      const tagLen = thinkCloseTag.length;
+      if (thinkCloseBuffer.length > tagLen) {
+        const safe = thinkCloseBuffer.slice(0, -tagLen);
         callbacks.onThinking(safe);
-        thinkCloseBuffer = thinkCloseBuffer.slice(-8);
+        thinkCloseBuffer = thinkCloseBuffer.slice(-tagLen);
       }
       return;
     }
@@ -438,6 +463,7 @@ export async function streamChat(
 
       const payload = trimmed.slice(6);
       if (payload === "[DONE]") {
+        flushContentAccum();
         emitMetrics();
         const elapsed = firstTokenTime ? (performance.now() - firstTokenTime) / 1000 : 0;
         callbacks.onDone(trustMeta, {
@@ -471,6 +497,7 @@ export async function streamChat(
   }
 
   // Stream ended without [DONE]
+  flushContentAccum();
   emitMetrics();
   const elapsed = firstTokenTime ? (performance.now() - firstTokenTime) / 1000 : 0;
   callbacks.onDone(trustMeta, {

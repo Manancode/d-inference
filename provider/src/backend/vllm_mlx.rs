@@ -72,28 +72,31 @@ impl VllmMlxBackend {
             args.push("--continuous-batching".to_string());
         }
 
-        // Enable tool call parsing so vllm-mlx converts <tool_call> output
-        // into structured tool_calls fields in the OpenAI response format.
-        // "auto" parser auto-detects the model's tool call format.
-        args.push("--enable-auto-tool-choice".to_string());
-        args.push("--tool-call-parser".to_string());
-        args.push("auto".to_string());
-
-        // Extract <think>...</think> into reasoning_content field instead of
-        // leaking thinking tags into the response content.
-        //
-        // Default: qwen3 parser (safe for all models — if no </think> found,
-        // it's a no-op passthrough). DeepSeek needs its own parser because it
-        // supports implicit reasoning mode where <think> is omitted.
+        // Gemma 4 uses unique tool-call and reasoning formats that have no
+        // parser in vllm-mlx yet. Skip both flags — the frontend handles
+        // Gemma's <|channel>thought markers directly.
         let model_lower = self.model.to_lowercase();
-        let reasoning_parser =
-            if model_lower.contains("deepseek") || model_lower.contains("trinity") {
-                "deepseek_r1"
-            } else {
-                "qwen3" // safe default: no-op if model doesn't output <think> tags
-            };
-        args.push("--reasoning-parser".to_string());
-        args.push(reasoning_parser.to_string());
+        let is_gemma = model_lower.contains("gemma-4") || model_lower.contains("gemma4");
+
+        if !is_gemma {
+            // Enable tool call parsing so vllm-mlx converts <tool_call> output
+            // into structured tool_calls fields in the OpenAI response format.
+            args.push("--enable-auto-tool-choice".to_string());
+            args.push("--tool-call-parser".to_string());
+            args.push("auto".to_string());
+
+            // Extract <think>...</think> into reasoning_content field.
+            // DeepSeek/Trinity need deepseek_r1; others use qwen3 (no-op if
+            // the model doesn't output <think> tags).
+            let reasoning_parser =
+                if model_lower.contains("deepseek") || model_lower.contains("trinity") {
+                    "deepseek_r1"
+                } else {
+                    "qwen3"
+                };
+            args.push("--reasoning-parser".to_string());
+            args.push(reasoning_parser.to_string());
+        }
 
         args
     }
@@ -258,6 +261,17 @@ mod tests {
         assert!(args.contains(&"--reasoning-parser".to_string()));
         assert!(args.contains(&"deepseek_r1".to_string()));
         assert!(!args.contains(&"qwen3".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_gemma4_model() {
+        let backend =
+            VllmMlxBackend::new("mlx-community/gemma-4-26b-a4b-it-8bit".into(), 8100, false);
+        let args = backend.build_args();
+        // Gemma 4 skips tool-call and reasoning parsers (no vllm-mlx support)
+        assert!(!args.contains(&"--enable-auto-tool-choice".to_string()));
+        assert!(!args.contains(&"--tool-call-parser".to_string()));
+        assert!(!args.contains(&"--reasoning-parser".to_string()));
     }
 
     #[test]

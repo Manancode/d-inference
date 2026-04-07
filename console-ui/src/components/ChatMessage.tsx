@@ -213,6 +213,17 @@ function parseThinkFromContent(content: string, existingThinking?: string): { th
     }
   }
 
+  // Gemma 4: <|channel>thought\n...<channel|>
+  if (trimmed.startsWith("<|channel>thought")) {
+    const closeIdx = trimmed.indexOf("<channel|>");
+    if (closeIdx !== -1) {
+      const thinkStart = trimmed.indexOf("\n") + 1;
+      const thinking = trimmed.slice(thinkStart, closeIdx).trim();
+      const rest = trimmed.slice(closeIdx + 10).replace(/^\n+/, "");
+      return { thinking, content: rest };
+    }
+  }
+
   return { thinking: "", content };
 }
 
