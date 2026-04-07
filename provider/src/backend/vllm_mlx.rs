@@ -86,11 +86,12 @@ impl VllmMlxBackend {
         // it's a no-op passthrough). DeepSeek needs its own parser because it
         // supports implicit reasoning mode where <think> is omitted.
         let model_lower = self.model.to_lowercase();
-        let reasoning_parser = if model_lower.contains("deepseek") {
-            "deepseek_r1"
-        } else {
-            "qwen3" // safe default: no-op if model doesn't output <think> tags
-        };
+        let reasoning_parser =
+            if model_lower.contains("deepseek") || model_lower.contains("trinity") {
+                "deepseek_r1"
+            } else {
+                "qwen3" // safe default: no-op if model doesn't output <think> tags
+            };
         args.push("--reasoning-parser".to_string());
         args.push(reasoning_parser.to_string());
 
@@ -244,6 +245,15 @@ mod tests {
     #[test]
     fn test_build_args_deepseek_model() {
         let backend = VllmMlxBackend::new("mlx-community/DeepSeek-R1-7B".into(), 8100, false);
+        let args = backend.build_args();
+        assert!(args.contains(&"--reasoning-parser".to_string()));
+        assert!(args.contains(&"deepseek_r1".to_string()));
+        assert!(!args.contains(&"qwen3".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_trinity_model() {
+        let backend = VllmMlxBackend::new("mlx-community/Trinity-Mini-8bit".into(), 8100, false);
         let args = backend.build_args();
         assert!(args.contains(&"--reasoning-parser".to_string()));
         assert!(args.contains(&"deepseek_r1".to_string()));
