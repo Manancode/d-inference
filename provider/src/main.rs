@@ -4691,6 +4691,13 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     let bin_dir = eigeninference_dir.join("bin");
 
     println!("  Installing...");
+
+    // Clean old Python runtime before extracting so stale packages don't linger
+    let python_dir = eigeninference_dir.join("python");
+    if python_dir.exists() {
+        let _ = std::fs::remove_dir_all(&python_dir);
+    }
+
     let status = std::process::Command::new("tar")
         .args(["xzf", tmp_path, "-C", &eigeninference_dir.to_string_lossy()])
         .status()?;
@@ -4699,14 +4706,18 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     }
 
     // Move binaries to bin dir
-    let _ = std::fs::rename(
+    if let Err(e) = std::fs::rename(
         eigeninference_dir.join("eigeninference-provider"),
         bin_dir.join("eigeninference-provider"),
-    );
-    let _ = std::fs::rename(
+    ) {
+        tracing::warn!("Failed to move provider binary: {e}");
+    }
+    if let Err(e) = std::fs::rename(
         eigeninference_dir.join("eigeninference-enclave"),
         bin_dir.join("eigeninference-enclave"),
-    );
+    ) {
+        tracing::warn!("Failed to move enclave binary: {e}");
+    }
 
     // Make executable
     #[cfg(unix)]

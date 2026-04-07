@@ -84,8 +84,9 @@ jobs:
           BUNDLE=/tmp/eigeninference-bundle
           mkdir -p "$BUNDLE"
 
-          # Create Python 3.12 venv with inference deps
-          python3.12 -m venv "$BUNDLE/python"
+          # Create Python 3.12 venv with copied binary (not symlinked)
+          # so the venv works on machines without the same system Python path
+          python3.12 -m venv --copies "$BUNDLE/python"
           source "$BUNDLE/python/bin/activate"
 
           echo "Installing vllm-mlx from our fork..."

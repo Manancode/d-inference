@@ -88,8 +88,14 @@ fi
 echo ""
 echo "  Hash verified ✓"
 
-echo "  Installing binaries..."
-tar xzf /tmp/eigeninference-bundle.tar.gz -C "$BIN_DIR"
+echo "  Installing..."
+# Clean old Python runtime before extracting so stale packages don't linger
+[ -d "$INSTALL_DIR/python" ] && rm -rf "$INSTALL_DIR/python"
+tar xzf /tmp/eigeninference-bundle.tar.gz -C "$INSTALL_DIR"
+# Move binaries to bin dir
+for bin in eigeninference-provider eigeninference-enclave gRPCServerCLI; do
+    [ -f "$INSTALL_DIR/$bin" ] && mv "$INSTALL_DIR/$bin" "$BIN_DIR/$bin"
+done
 chmod +x "$BIN_DIR/eigeninference-provider" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" 2>/dev/null || true
 # Move image bridge to the expected location
 if [ -d "$BIN_DIR/image-bridge" ]; then
@@ -149,8 +155,8 @@ fi
 echo ""
 echo "→ [3/7] Verifying inference runtime..."
 
-# Check for Python runtime
-if [ -f "$PYTHON_BIN" ] && "$PYTHON_BIN" -c "import vllm_mlx" 2>/dev/null; then
+# Check for Python runtime (PYTHONHOME needed for relocated venvs)
+if [ -f "$PYTHON_BIN" ] && PYTHONHOME="$INSTALL_DIR/python" "$PYTHON_BIN" -c "import vllm_mlx" 2>/dev/null; then
     echo "  Python runtime ✓"
 else
     echo "  Downloading Python runtime (~105 MB)..."
