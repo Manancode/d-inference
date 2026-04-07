@@ -157,8 +157,12 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: "SLDQ2GJ6TL"
         run: |
-          # Create a zip for notarization (notarytool needs zip/dmg/pkg)
-          ditto -c -k --keepParent /tmp/eigeninference-bundle /tmp/eigeninference-notarize.zip
+          BUNDLE=/tmp/eigeninference-bundle
+
+          # Only zip the signed binaries for notarization (not the Python runtime)
+          mkdir -p /tmp/eigeninference-notarize
+          cp "$BUNDLE/eigeninference-provider" "$BUNDLE/eigeninference-enclave" /tmp/eigeninference-notarize/
+          ditto -c -k --keepParent /tmp/eigeninference-notarize /tmp/eigeninference-notarize.zip
 
           xcrun notarytool submit /tmp/eigeninference-notarize.zip \
             --apple-id "$APPLE_ID" \
@@ -167,10 +171,10 @@ jobs:
             --wait --timeout 10m
 
           # Staple the individual binaries
-          xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-provider || true
-          xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-enclave || true
+          xcrun stapler staple "$BUNDLE/eigeninference-provider" || true
+          xcrun stapler staple "$BUNDLE/eigeninference-enclave" || true
 
-          # Recreate tarball with stapled binaries
+          # Recreate tarball with stapled binaries + Python runtime
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
 
       # --- Compute hashes (AFTER signing — the signed binary is what providers run) ---
