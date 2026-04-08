@@ -3056,11 +3056,15 @@ async fn cmd_serve(
                             }
 
                             // Kill only THIS slot's process by PID (not all backends).
+                            // Guard: PID must be > 0. PID 0 would kill all processes in
+                            // the group, negative PIDs kill process groups.
                             #[cfg(unix)]
                             if let Some(slot_pid) = pid {
-                                let _ = unsafe { libc::kill(*slot_pid as i32, libc::SIGTERM) };
-                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                let _ = unsafe { libc::kill(*slot_pid as i32, libc::SIGKILL) };
+                                if *slot_pid > 0 {
+                                    let _ = unsafe { libc::kill(*slot_pid as i32, libc::SIGTERM) };
+                                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                    let _ = unsafe { libc::kill(*slot_pid as i32, libc::SIGKILL) };
+                                }
                             }
 
                             // Restart only this slot's model on its port.
