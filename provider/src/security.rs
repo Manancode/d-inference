@@ -416,11 +416,20 @@ pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
     // .json, everything. This covers source code, compiled extensions (mlx GPU
     // backend, tokenizers), config files, and all dependencies. Any modification
     // to any file in any package is detected.
+    //
+    // Excludes __pycache__/*.pyc files — these are generated at runtime when
+    // Python imports modules and would cause hash mismatches between CI (clean
+    // extraction) and providers (modules imported at least once).
     let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
     let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
     let runtime_hash = if site_packages_dir.exists() {
         let mut py_files = Vec::new();
         collect_files_recursive(&site_packages_dir, "*", &mut py_files);
+        // Exclude .pyc bytecode cache files — generated at runtime, not shipped by CI
+        py_files.retain(|p| {
+            let s = p.to_string_lossy();
+            !s.contains("__pycache__") && !s.ends_with(".pyc")
+        });
         py_files.sort();
         if py_files.is_empty() {
             None
