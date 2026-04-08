@@ -112,11 +112,13 @@ pip install --quiet grpcio flatbuffers Pillow
 echo "   Installing STT dependencies..."
 pip install --quiet mlx-audio
 
-echo "   Stripping unnecessary packages..."
+echo "   Stripping unnecessary packages (keeping pip)..."
 cd "$BUNDLE_DIR/python/lib/python3.12/site-packages"
 rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \
        sympy* networkx* mcp* miniaudio* pydub* datasets*
 find "$BUNDLE_DIR/python" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+# Remove EXTERNALLY-MANAGED so pip works without --break-system-packages
+rm -f "$BUNDLE_DIR/python/lib/python3.12/EXTERNALLY-MANAGED"
 
 deactivate
 

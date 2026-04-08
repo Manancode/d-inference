@@ -1026,14 +1026,12 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
 
     match download {
         Ok(output) if output.status.success() => {
-            let pip_cmd = std::path::Path::new(python_cmd)
-                .parent()
-                .map(|p| p.join("pip3"))
-                .unwrap_or_else(|| std::path::PathBuf::from("pip3"));
-
-            let install = std::process::Command::new(&pip_cmd)
+            let install = std::process::Command::new(python_cmd)
                 .args([
+                    "-m",
+                    "pip",
                     "install",
+                    "--break-system-packages",
                     "--force-reinstall",
                     "--no-deps",
                     "--quiet",

@@ -166,11 +166,13 @@ jobs:
           pip install --quiet 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
           pip install --quiet mlx-lm
 
-          # Strip unnecessary packages to keep it small
+          # Strip unnecessary packages to keep it small (keep pip — providers need it)
           cd /tmp/eigeninference-python/lib/python*/site-packages
           rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \
                  sympy* networkx* mcp* miniaudio* pydub* datasets*
           find /tmp/eigeninference-python -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+          # Remove EXTERNALLY-MANAGED marker so pip works without --break-system-packages
+          rm -f /tmp/eigeninference-python/lib/python*/EXTERNALLY-MANAGED
           cd -
 
           deactivate
