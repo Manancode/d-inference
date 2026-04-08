@@ -85,6 +85,11 @@ type Server struct {
 	// unverified and excluded from routing (but not disconnected).
 	knownRuntimeManifest *RuntimeManifest
 
+	// minProviderVersion is the minimum provider version accepted for routing.
+	// Providers below this version are excluded and told to update.
+	// Set from EIGENINFERENCE_MIN_PROVIDER_VERSION env var or derived from latest release.
+	minProviderVersion string
+
 	// releaseKey is a scoped credential for the GitHub Action to register releases.
 	// It can only POST /v1/releases — no admin access.
 	releaseKey string
@@ -246,6 +251,19 @@ func (s *Server) SyncRuntimeManifest() {
 				}
 			}
 		}
+	}
+
+	// Set minimum provider version to the latest active release version.
+	// This forces older providers to update before they can serve traffic.
+	latestVersion := ""
+	for _, r := range releases {
+		if r.Active && r.Version > latestVersion {
+			latestVersion = r.Version
+		}
+	}
+	if latestVersion != "" {
+		s.minProviderVersion = latestVersion
+		s.logger.Info("minimum provider version set from latest release", "min_version", latestVersion)
 	}
 
 	if hasAny {

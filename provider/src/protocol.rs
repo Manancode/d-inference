@@ -29,6 +29,10 @@ pub enum ProviderMessage {
         hardware: HardwareInfo,
         models: Vec<ModelInfo>,
         backend: String,
+        /// Provider binary version (e.g. "0.2.31"). Used by coordinator for
+        /// minimum version enforcement — providers below the cutoff are excluded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         public_key: Option<String>,
         /// Ethereum-format hex wallet address for Tempo blockchain payouts (pathUSD).
@@ -363,6 +367,7 @@ mod tests {
                 weight_hash: None,
             }],
             backend: "vllm_mlx".to_string(),
+            version: None,
             public_key: None,
             wallet_address: None,
             attestation: None,
@@ -405,6 +410,7 @@ mod tests {
                 weight_hash: None,
             }],
             backend: "vllm_mlx".to_string(),
+            version: None,
             public_key: None,
             wallet_address: Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
             attestation: None,
@@ -440,6 +446,7 @@ mod tests {
                 weight_hash: None,
             }],
             backend: "vllm_mlx".to_string(),
+            version: None,
             public_key: Some("c29tZWtleQ==".to_string()),
             wallet_address: None,
             attestation: Some(attestation_raw),
@@ -1004,6 +1011,7 @@ mod tests {
                 hardware: sample_hardware(),
                 models: vec![],
                 backend: "vllm_mlx".to_string(),
+                version: None,
                 public_key: None,
                 wallet_address: None,
                 attestation: None,
@@ -1254,6 +1262,7 @@ mod tests {
             hardware: sample_hardware(),
             models: vec![],
             backend: "vllm_mlx".to_string(),
+            version: None,
             public_key: None,
             wallet_address: None,
             attestation: None,

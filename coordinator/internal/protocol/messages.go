@@ -89,6 +89,7 @@ type RegisterMessage struct {
 	Hardware      Hardware        `json:"hardware"`
 	Models        []ModelInfo     `json:"models"`
 	Backend       string          `json:"backend"`
+	Version       string          `json:"version,omitempty"`        // provider binary version (e.g. "0.2.31")
 	PublicKey     string          `json:"public_key,omitempty"`     // base64-encoded X25519 public key for E2E encryption
 	WalletAddress string          `json:"wallet_address,omitempty"` // Ethereum-format hex address for Tempo payouts
 	Attestation   json.RawMessage `json:"attestation,omitempty"`    // signed Secure Enclave attestation blob
