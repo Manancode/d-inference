@@ -1037,6 +1037,15 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
         return;
     }
 
+    // Remove old vllm_mlx directory before installing. pip --force-reinstall
+    // doesn't remove files that aren't in the new package (e.g. platform.py
+    // from an older version), which causes hash mismatches.
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
+    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
+    if vllm_mlx_dir.exists() {
+        let _ = std::fs::remove_dir_all(&vllm_mlx_dir);
+    }
+
     // pip install into the existing Python environment.
     let install = std::process::Command::new(python_cmd)
         .args([
