@@ -992,32 +992,95 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
         }
     }
 
-    // Hash mismatch or vllm-mlx not installed. Download the exact
-    // vllm-mlx source zip from R2 that CI used for this release, then
-    // pip-install it. Same source → same .py files → same hash.
-    tracing::warn!("Runtime hash mismatch — updating vllm-mlx from release artifact...");
+    // Hash mismatch. Download the exact site-packages tarball from R2
+    // that CI built for this release. This replaces the ENTIRE Python
+    // package directory — vllm-mlx, mlx-lm, mlx, and all dependencies.
+    // Same packages → same .py files → same hash.
+    tracing::warn!("Runtime hash mismatch — downloading canonical site-packages from R2...");
 
     let release_version = fetch_latest_release_version(coordinator_base);
-    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
+    let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
+    let tmp_tarball = "/tmp/eigeninference-site-packages.tar.gz";
 
-    // Try R2 first (exact CI artifact), fall back to GitHub.
+    // Try R2 site-packages tarball first, fall back to vllm-mlx source zip.
     let mut downloaded = false;
     if !release_version.is_empty() {
-        let r2_url = format!("{R2_CDN}/releases/v{release_version}/vllm-mlx-source.zip");
-        tracing::info!("Downloading vllm-mlx from R2 (release v{release_version})...");
+        let r2_url =
+            format!("{R2_CDN}/releases/v{release_version}/eigeninference-site-packages.tar.gz");
+        tracing::info!("Downloading site-packages from R2 (release v{release_version})...");
         downloaded = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "30",
+                &r2_url,
+                "-o",
+                tmp_tarball,
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
+
+    if downloaded {
+        // Replace entire site-packages with the CI-built canonical version.
+        tracing::info!("Replacing site-packages with canonical CI build...");
+        if site_packages_dir.exists() {
+            let _ = std::fs::remove_dir_all(&site_packages_dir);
+        }
+        let _ = std::fs::create_dir_all(&site_packages_dir);
+        let extract = std::process::Command::new("tar")
+            .args([
+                "xzf",
+                tmp_tarball,
+                "-C",
+                &site_packages_dir.to_string_lossy(),
+            ])
+            .output();
+        let _ = std::fs::remove_file(tmp_tarball);
+
+        match extract {
+            Ok(o) if o.status.success() => {
+                let post_install = security::compute_runtime_hashes(python_cmd);
+                if let Some(actual_hash) = post_install.runtime_hash {
+                    if expected_runtime_hashes.is_empty()
+                        || expected_runtime_hashes.contains(&actual_hash)
+                    {
+                        tracing::info!("Runtime updated — all packages verified ✓");
+                    } else {
+                        tracing::error!("Post-install hash MISMATCH!");
+                        tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
+                        tracing::error!("  Got: {actual_hash}");
+                    }
+                } else {
+                    tracing::info!("Runtime updated ✓");
+                }
+                return;
+            }
+            _ => {
+                tracing::error!("Failed to extract site-packages tarball");
+            }
+        }
+    } else {
+        let _ = std::fs::remove_file(tmp_tarball);
+    }
+
+    // Fallback: pip install just vllm-mlx source zip (older releases
+    // may not have the site-packages tarball on R2).
+    tracing::info!("Falling back to vllm-mlx source zip...");
+    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+    let mut zip_downloaded = false;
+    if !release_version.is_empty() {
+        let r2_url = format!("{R2_CDN}/releases/v{release_version}/vllm-mlx-source.zip");
+        zip_downloaded = std::process::Command::new("curl")
             .args(["-fsSL", "--connect-timeout", "10", &r2_url, "-o", tmp_zip])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
-        if !downloaded {
-            tracing::warn!("R2 download failed, falling back to GitHub...");
-            let _ = std::fs::remove_file(tmp_zip);
-        }
     }
-
-    if !downloaded {
-        downloaded = std::process::Command::new("curl")
+    if !zip_downloaded {
+        zip_downloaded = std::process::Command::new("curl")
             .args([
                 "-fsSL",
                 "--connect-timeout",
@@ -1030,23 +1093,18 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
             .map(|o| o.status.success())
             .unwrap_or(false);
     }
-
-    if !downloaded {
+    if !zip_downloaded {
         let _ = std::fs::remove_file(tmp_zip);
-        tracing::error!("Failed to download vllm-mlx from both R2 and GitHub");
+        tracing::error!("Failed to download runtime from R2 and GitHub");
         return;
     }
 
-    // Remove old vllm_mlx directory before installing. pip --force-reinstall
-    // doesn't remove files that aren't in the new package (e.g. platform.py
-    // from an older version), which causes hash mismatches.
-    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
-    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
+    // Remove old vllm_mlx before installing to prevent leftover file mismatches.
+    let vllm_mlx_dir = site_packages_dir.join("vllm_mlx");
     if vllm_mlx_dir.exists() {
         let _ = std::fs::remove_dir_all(&vllm_mlx_dir);
     }
 
-    // pip install into the existing Python environment.
     let install = std::process::Command::new(python_cmd)
         .args([
             "-m",
@@ -1054,7 +1112,6 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
             "install",
             "--break-system-packages",
             "--force-reinstall",
-            "--no-deps",
             "--quiet",
             tmp_zip,
         ])
@@ -1069,9 +1126,9 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
                 if expected_runtime_hashes.is_empty()
                     || expected_runtime_hashes.contains(&actual_hash)
                 {
-                    tracing::info!("Updated vllm-mlx — hash verified ✓");
+                    tracing::info!("Updated vllm-mlx + deps — hash verified ✓");
                 } else {
-                    tracing::error!("vllm-mlx post-install hash MISMATCH!");
+                    tracing::error!("Post-install hash MISMATCH!");
                     tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
                     tracing::error!("  Got: {actual_hash}");
                 }
@@ -2257,6 +2314,14 @@ async fn cmd_serve(
     let inference_active_opt;
     let health_inference_active_opt;
     let provider_stats_opt;
+    let backend_capacity_opt: Option<
+        std::sync::Arc<std::sync::Mutex<Option<protocol::BackendCapacity>>>,
+    >;
+    // Backend state: tri-state to distinguish running, idle-shutdown, and crashed.
+    const BACKEND_RUNNING: u8 = 0;
+    const BACKEND_IDLE_SHUTDOWN: u8 = 1;
+    const BACKEND_CRASHED: u8 = 2;
+    let backend_running_flag_opt: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>;
     let mut rehash_model_hash_opt: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>> = None;
     // Deferred coordinator spawn state — held until backends are ready.
     let mut deferred_coordinator: Option<(
@@ -2311,6 +2376,18 @@ async fn cmd_serve(
             std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash));
         rehash_model_hash_opt = Some(current_model_hash.clone());
 
+        // Shared backend capacity data (updated by polling task, read by heartbeats).
+        let backend_capacity: std::sync::Arc<std::sync::Mutex<Option<protocol::BackendCapacity>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        backend_capacity_opt = Some(backend_capacity.clone());
+
+        // Shared tri-state flag tracking backend lifecycle.
+        // Written by the event loop (idle shutdown → IDLE_SHUTDOWN, crash → CRASHED,
+        // reload → RUNNING), read by the capacity polling task to report accurate state.
+        let backend_running_flag =
+            std::sync::Arc::new(std::sync::atomic::AtomicU8::new(BACKEND_RUNNING));
+        backend_running_flag_opt = Some(backend_running_flag);
+
         // Compute runtime integrity hashes for verification by coordinator.
         let runtime_hashes = security::compute_runtime_hashes(&python_cmd);
         tracing::info!(
@@ -2340,7 +2417,8 @@ async fn cmd_serve(
         .with_inference_active(inference_active.clone())
         .with_current_model(current_model)
         .with_warm_models(warm_models)
-        .with_current_model_hash(current_model_hash);
+        .with_current_model_hash(current_model_hash)
+        .with_backend_capacity(backend_capacity);
 
         // Store coordinator client for deferred spawn after backends are ready.
         deferred_coordinator = Some((client, event_tx, outbound_rx, shutdown_rx));
@@ -2359,6 +2437,8 @@ async fn cmd_serve(
         inference_active_opt = None;
         health_inference_active_opt = None;
         provider_stats_opt = None;
+        backend_capacity_opt = None;
+        backend_running_flag_opt = None;
     }
 
     // =========================================================================
@@ -2641,6 +2721,85 @@ async fn cmd_serve(
 
         let backend_name = "vllm_mlx";
 
+        // Spawn backend capacity polling task — periodically polls each
+        // vllm-mlx backend's /v1/status endpoint to collect live capacity data
+        // (running requests, token counts, GPU memory). This data is included
+        // in heartbeats so the coordinator can make informed routing decisions.
+        if let Some(cap_arc) = backend_capacity_opt {
+            let poll_urls: Vec<(String, String)> = backend_slots
+                .iter()
+                .map(|s| (s.model_id.clone(), s.backend_url.clone()))
+                .collect();
+            let total_mem_gb = hw.memory_gb as f64;
+            let poll_backend_running = backend_running_flag_opt
+                .as_ref()
+                .expect("backend_running_flag must be set in non-local mode")
+                .clone();
+            tokio::spawn(async move {
+                let mut poll_interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    poll_interval.tick().await;
+                    let mut slots = Vec::new();
+                    let mut gpu_active = 0.0_f64;
+                    let mut gpu_peak = 0.0_f64;
+                    let mut gpu_cache = 0.0_f64;
+                    for (model_id, url) in &poll_urls {
+                        match hardware::poll_backend_status(url).await {
+                            Some(status) => {
+                                // Use GPU memory from any slot (Metal memory is shared)
+                                // Take the max across slots to avoid double-counting.
+                                if status.gpu_memory_active_gb > gpu_active {
+                                    gpu_active = status.gpu_memory_active_gb;
+                                }
+                                if status.gpu_memory_peak_gb > gpu_peak {
+                                    gpu_peak = status.gpu_memory_peak_gb;
+                                }
+                                if status.gpu_memory_cache_gb > gpu_cache {
+                                    gpu_cache = status.gpu_memory_cache_gb;
+                                }
+                                slots.push(protocol::BackendSlotCapacity {
+                                    model: model_id.clone(),
+                                    state: "running".to_string(),
+                                    num_running: status.num_running,
+                                    num_waiting: status.num_waiting,
+                                    active_tokens: status.active_tokens,
+                                    max_tokens_potential: status.max_tokens_potential,
+                                });
+                            }
+                            None => {
+                                // Backend unreachable — use the tri-state flag
+                                // to distinguish intentional idle-shutdown from crash.
+                                let flag_val =
+                                    poll_backend_running.load(std::sync::atomic::Ordering::Relaxed);
+                                let state = match flag_val {
+                                    BACKEND_IDLE_SHUTDOWN => "idle_shutdown",
+                                    // BACKEND_RUNNING (should be up but isn't) or BACKEND_CRASHED
+                                    _ => "crashed",
+                                };
+                                slots.push(protocol::BackendSlotCapacity {
+                                    model: model_id.clone(),
+                                    state: state.to_string(),
+                                    num_running: 0,
+                                    num_waiting: 0,
+                                    active_tokens: 0,
+                                    max_tokens_potential: 0,
+                                });
+                            }
+                        }
+                    }
+                    let capacity = protocol::BackendCapacity {
+                        slots,
+                        gpu_memory_active_gb: gpu_active,
+                        gpu_memory_peak_gb: gpu_peak,
+                        gpu_memory_cache_gb: gpu_cache,
+                        total_memory_gb: total_mem_gb,
+                    };
+                    *cap_arc.lock().unwrap() = Some(capacity);
+                }
+            });
+        }
+
         // Spawn backend health monitor — detects crashes and auto-restarts.
         // Only monitor if we have text backends; image-only providers don't
         // run vmlm-mlx so there's nothing to health-check on the text port.
@@ -2650,6 +2809,10 @@ async fn cmd_serve(
         let health_model = primary_model_path.clone();
         let health_port = be_port;
         let has_text_backends = !backend_slots.is_empty();
+        let health_backend_running = backend_running_flag_opt
+            .as_ref()
+            .expect("backend_running_flag must be set in non-local mode")
+            .clone();
         tokio::spawn(async move {
             if !has_text_backends {
                 // No text backends to monitor — sleep forever.
@@ -2708,6 +2871,8 @@ async fn cmd_serve(
                             Ok(()) => {
                                 tracing::info!("Backend auto-restarted successfully");
                                 consecutive_failures = 0;
+                                health_backend_running
+                                    .store(BACKEND_RUNNING, std::sync::atomic::Ordering::Relaxed);
                             }
                             Err(e) => {
                                 tracing::error!("Backend auto-restart failed: {e}");
@@ -2723,7 +2888,6 @@ async fn cmd_serve(
         let proxy_keypair = node_keypair.clone();
         let is_inprocess = proxy_backend_url.starts_with("inprocess://");
         let idle_python_cmd = python_cmd.clone();
-        let idle_be_port = be_port;
         let idle_backend_name = backend_name.to_string();
         let proxy_stats = provider_stats.clone();
         let model_to_url = model_to_url.clone();
@@ -2739,12 +2903,15 @@ async fn cmd_serve(
             .collect();
         // For idle reload: re-hash weights after reloading to detect tampering
         let rehash_handle = rehash_model_hash_opt.clone();
-        // For backwards compat (idle reload of primary model)
-        let idle_model_id = model.clone();
-        let idle_model = model_to_path
+        // For backwards compat (idle reload of primary model).
+        // These are mutable so the reload path can update them to match
+        // the *requested* model when it differs from the last-served one.
+        let mut idle_model_id = model.clone();
+        let mut idle_model = model_to_path
             .get(&model)
             .cloned()
             .unwrap_or_else(|| model.clone());
+        let mut idle_be_port = be_port;
         // Collect PIDs for per-process shutdown
         let backend_pids: Vec<(String, Option<u32>)> = backend_slots
             .iter()
@@ -2765,6 +2932,8 @@ async fn cmd_serve(
             None
         };
 
+        let event_backend_running =
+            backend_running_flag_opt.expect("backend_running_flag must be set in non-local mode");
         let event_handle = tokio::spawn(async move {
             use std::collections::HashMap;
             use tokio_util::sync::CancellationToken;
@@ -2779,12 +2948,19 @@ async fn cmd_serve(
             // requests to free GPU memory. Lazy-reload on next request.
             // `idle_timeout` is None when disabled (0 minutes).
             let mut last_request_time = tokio::time::Instant::now();
-            let mut backend_running = true;
+
+            // Helper closures for the shared backend state flag (tri-state).
+            let is_backend_running = || {
+                event_backend_running.load(std::sync::atomic::Ordering::Relaxed) == BACKEND_RUNNING
+            };
+            let set_backend_state = |state: u8| {
+                event_backend_running.store(state, std::sync::atomic::Ordering::Relaxed);
+            };
 
             loop {
                 let idle_sleep = async {
                     if let Some(timeout) = idle_timeout {
-                        if backend_running && inflight.is_empty() {
+                        if is_backend_running() && inflight.is_empty() {
                             tokio::time::sleep_until(last_request_time + timeout).await;
                         } else {
                             std::future::pending::<()>().await;
@@ -2821,19 +2997,48 @@ async fn cmd_serve(
                                 last_request_time = tokio::time::Instant::now();
                                 inference_active.store(true, std::sync::atomic::Ordering::Relaxed);
 
+                                // Determine which model the request actually wants.
+                                let req_model_id = body.get("model")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
                                 // Reload backend if it was idle-shutdown.
+                                // Use the REQUESTED model, not the last-served one.
                                 // Send InferenceError (not Accepted) if reload fails so
                                 // the coordinator can retry on another provider.
-                                if !backend_running {
-                                    tracing::info!("Backend idle-shutdown — reloading for incoming request");
+                                if !is_backend_running() {
+                                    let (reload_path, reload_id) = if !req_model_id.is_empty() {
+                                        let path = model_to_path.get(&req_model_id)
+                                            .cloned()
+                                            .unwrap_or_else(|| {
+                                                model_to_path.iter()
+                                                    .find(|(k, _)| k.contains(&req_model_id) || req_model_id.contains(k.as_str()))
+                                                    .map(|(_, v)| v.clone())
+                                                    .unwrap_or_else(|| idle_model.clone())
+                                            });
+                                        if path != idle_model {
+                                            tracing::info!(
+                                                "Reloading with requested model {} (last-served was {})",
+                                                req_model_id, idle_model_id
+                                            );
+                                        }
+                                        (path, req_model_id.clone())
+                                    } else {
+                                        (idle_model.clone(), idle_model_id.clone())
+                                    };
+
+                                    tracing::info!("Backend not running — reloading for incoming request");
                                     match reload_backend(
                                         &idle_python_cmd,
                                         &idle_backend_name,
-                                        &idle_model,
+                                        &reload_path,
                                         idle_be_port,
                                     ).await {
                                         Ok(()) => {
-                                            backend_running = true;
+                                            set_backend_state(BACKEND_RUNNING);
+                                            idle_model = reload_path;
+                                            idle_model_id = reload_id;
                                             // Re-hash model weights on reload to detect
                                             // any tampering that occurred while idle.
                                             if let Some(ref hash_arc) = rehash_handle {
@@ -3030,9 +3235,9 @@ async fn cmd_serve(
                                 inference_active.store(false, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                        if backend_dead && backend_running {
+                        if backend_dead && is_backend_running() {
                             tracing::warn!("Backend appears dead (connection refused) — will reload on next request");
-                            backend_running = false;
+                            set_backend_state(BACKEND_CRASHED);
                         }
                     }
                     _ = idle_sleep => {
@@ -3042,7 +3247,7 @@ async fn cmd_serve(
                             idle_timeout_mins
                         );
                         shutdown_backends(&backend_pids).await;
-                        backend_running = false;
+                        set_backend_state(BACKEND_IDLE_SHUTDOWN);
                     }
                 }
             }
@@ -3250,18 +3455,38 @@ async fn reload_backend(
     }
 
     // Phase 2: Wait for model to be fully loaded into GPU memory
+    let mut model_loaded = false;
     for i in 0..150 {
         if backend::check_model_loaded(&backend_url).await {
             tracing::info!("Model loaded into GPU memory after {}s total", i * 2);
+            model_loaded = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+    if !model_loaded {
+        anyhow::bail!("model did not load into GPU memory within 300s after reload");
+    }
 
-    // Phase 3: Warmup — run a single-token inference to prime GPU caches
+    // Phase 3: Warmup — run a single-token inference to prime GPU caches.
+    // Retry a few times since the model may still be finalizing even after
+    // check_model_loaded returns true (e.g. 422 Unprocessable Entity).
     tracing::info!("Running warmup inference to prime GPU caches...");
     let warmup_start = std::time::Instant::now();
-    backend::warmup_backend(&backend_url).await;
+    let mut warmup_ok = false;
+    for attempt in 0..5 {
+        if backend::warmup_backend(&backend_url).await {
+            warmup_ok = true;
+            break;
+        }
+        if attempt < 4 {
+            tracing::info!("Warmup attempt {} failed — retrying in 5s...", attempt + 1);
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
+    if !warmup_ok {
+        anyhow::bail!("backend warmup failed after 5 attempts — model may not be fully loaded");
+    }
     tracing::info!(
         "Backend fully warm and ready (warmup took {:?})",
         warmup_start.elapsed()

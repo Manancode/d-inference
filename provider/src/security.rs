@@ -391,32 +391,36 @@ fn collect_files_recursive(
         let path = entry.path();
         if path.is_dir() {
             collect_files_recursive(&path, extension, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some(extension) {
+        } else if extension == "*" || path.extension().and_then(|e| e.to_str()) == Some(extension) {
             out.push(path);
         }
     }
 }
 
-/// Compute hashes of the Python runtime, vllm-mlx package, and templates.
+/// Compute hashes of the Python runtime, all packages, and templates.
 ///
 /// These hashes allow the coordinator to verify that the provider is running
 /// the expected (blessed) runtime code — not a modified version that could
 /// leak prompts or produce tampered output.
 ///
 /// - `python_hash`: SHA-256 of the Python interpreter binary
-/// - `runtime_hash`: Combined SHA-256 of all .py files in vllm_mlx (sorted)
+/// - `runtime_hash`: Combined SHA-256 of ALL .py files in site-packages (sorted)
+///   This covers vllm_mlx, mlx_lm, mlx, transformers, and every other dependency.
+///   Any tampering with any Python package will cause a hash mismatch.
 /// - `template_hashes`: Per-file SHA-256 of each .jinja template
 pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
     // Hash the Python binary itself
     let python_hash = hash_file(std::path::Path::new(python_cmd));
 
-    // Hash all .py files in the vllm_mlx package directory
-    // Located at ~/.eigeninference/python/lib/python3.12/site-packages/vllm_mlx/
+    // Hash EVERY file in the entire site-packages directory — .py, .so, .dylib,
+    // .json, everything. This covers source code, compiled extensions (mlx GPU
+    // backend, tokenizers), config files, and all dependencies. Any modification
+    // to any file in any package is detected.
     let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
-    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
-    let runtime_hash = if vllm_mlx_dir.exists() {
+    let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
+    let runtime_hash = if site_packages_dir.exists() {
         let mut py_files = Vec::new();
-        collect_files_recursive(&vllm_mlx_dir, "py", &mut py_files);
+        collect_files_recursive(&site_packages_dir, "*", &mut py_files);
         py_files.sort();
         if py_files.is_empty() {
             None
@@ -625,6 +629,86 @@ mod tests {
         assert_eq!(files.len(), 2, "should find 2 .py files");
         assert!(files[0].ends_with("a.py"));
         assert!(files[1].ends_with("c.py"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_collect_files_recursive_wildcard() {
+        let tmp = std::env::temp_dir().join("eigeninference_test_collect_wildcard");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        std::fs::write(tmp.join("a.py"), "# python").unwrap();
+        std::fs::write(tmp.join("b.so"), "binary").unwrap();
+        std::fs::write(tmp.join("c.json"), "{}").unwrap();
+        std::fs::write(tmp.join("sub/d.dylib"), "lib").unwrap();
+        std::fs::write(tmp.join("sub/e.txt"), "text").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(&tmp, "*", &mut files);
+        files.sort();
+
+        assert_eq!(files.len(), 5, "wildcard should find all 5 files");
+
+        // Verify it finds all extensions
+        let extensions: Vec<_> = files
+            .iter()
+            .filter_map(|p| p.extension().and_then(|e| e.to_str()).map(String::from))
+            .collect();
+        assert!(extensions.contains(&"py".to_string()));
+        assert!(extensions.contains(&"so".to_string()));
+        assert!(extensions.contains(&"json".to_string()));
+        assert!(extensions.contains(&"dylib".to_string()));
+        assert!(extensions.contains(&"txt".to_string()));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_collect_files_recursive_wildcard_vs_filtered() {
+        let tmp = std::env::temp_dir().join("eigeninference_test_wildcard_vs_filter");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("code.py"), "# python").unwrap();
+        std::fs::write(tmp.join("ext.so"), "binary").unwrap();
+        std::fs::write(tmp.join("data.json"), "{}").unwrap();
+
+        let mut py_only = Vec::new();
+        collect_files_recursive(&tmp, "py", &mut py_only);
+        assert_eq!(py_only.len(), 1, "py filter should find 1 file");
+
+        let mut all = Vec::new();
+        collect_files_recursive(&tmp, "*", &mut all);
+        assert_eq!(all.len(), 3, "wildcard should find all 3 files");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_hash_files_sorted_deterministic_with_mixed_types() {
+        let tmp = std::env::temp_dir().join("eigeninference_test_hash_mixed");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("a.py"), "python code").unwrap();
+        std::fs::write(tmp.join("b.so"), "compiled extension").unwrap();
+        std::fs::write(tmp.join("c.json"), "{\"key\": \"value\"}").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(&tmp, "*", &mut files);
+        files.sort();
+
+        let hash1 = hash_files_sorted(&files);
+        let hash2 = hash_files_sorted(&files);
+        assert!(hash1.is_some());
+        assert_eq!(hash1, hash2, "hash should be deterministic");
+
+        // Modify one file — hash should change
+        std::fs::write(tmp.join("b.so"), "tampered extension").unwrap();
+        let hash3 = hash_files_sorted(&files);
+        assert_ne!(
+            hash1, hash3,
+            "hash should change when a .so file is modified"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

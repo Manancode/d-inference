@@ -168,9 +168,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	consumerKey := consumerKeyFromContext(r.Context())
 
+	// Track providers that failed during retry so we don't dispatch to them again.
+	excludeProviders := make(map[string]struct{})
+	excludeList := func() []string {
+		ids := make([]string, 0, len(excludeProviders))
+		for id := range excludeProviders {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+
 	for attempt := 0; attempt < maxDispatchAttempts; attempt++ {
-		provider = s.registry.FindProvider(model)
+		provider = s.registry.FindProvider(model, excludeList()...)
 		if provider == nil {
+			// On retry attempts, don't queue — if the only available
+			// providers already failed, waiting 120s for one of them
+			// to come back won't help. Break and return the last error.
+			if attempt > 0 {
+				break
+			}
 			// No idle provider — try queueing.
 			queuedReq := &registry.QueuedRequest{
 				RequestID:  uuid.New().String(),
@@ -178,12 +194,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				ResponseCh: make(chan *registry.Provider, 1),
 			}
 			if err := s.registry.Queue().Enqueue(queuedReq); err != nil {
-				if attempt == 0 {
-					refundReservation()
-					writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider available for model %q and queue is full", model)))
-					return
-				}
-				break // retried but no provider now
+				refundReservation()
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider available for model %q and queue is full", model)))
+				return
 			}
 
 			s.logger.Info("request queued, waiting for provider",
@@ -194,18 +207,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			var err error
 			provider, err = s.registry.Queue().WaitForProvider(queuedReq)
 			if err != nil {
-				if attempt == 0 {
-					refundReservation()
-					writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", model)))
-					return
-				}
-				break
+				refundReservation()
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", model)))
+				return
 			}
 		}
 
 		// E2E encryption — must be done per provider (different keys).
 		if provider.PublicKey == "" {
 			s.registry.SetProviderIdle(provider.ID)
+			excludeProviders[provider.ID] = struct{}{}
 			lastErr = "no provider with E2E encryption"
 			continue
 		}
@@ -213,6 +224,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		providerPubKey, err := e2e.ParsePublicKey(provider.PublicKey)
 		if err != nil {
 			s.registry.SetProviderIdle(provider.ID)
+			excludeProviders[provider.ID] = struct{}{}
 			lastErr = "provider public key invalid"
 			continue
 		}
@@ -265,6 +277,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if err := provider.Conn.Write(r.Context(), websocket.MessageText, data); err != nil {
 			provider.RemovePending(requestID)
 			s.registry.SetProviderIdle(provider.ID)
+			excludeProviders[provider.ID] = struct{}{}
 			s.logger.Error("failed to send inference request", "request_id", requestID, "error", err)
 			lastErr = "failed to send request to provider"
 			continue
@@ -297,6 +310,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				// so both can be ready simultaneously.
 				select {
 				case errMsg := <-pr.ErrorCh:
+					excludeProviders[provider.ID] = struct{}{}
 					provider.RemovePending(requestID)
 					s.registry.SetProviderIdle(provider.ID)
 					lastErr = errMsg.Error
@@ -311,6 +325,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		case errMsg := <-pr.ErrorCh:
 			timer.Stop()
+			excludeProviders[provider.ID] = struct{}{}
 			provider.RemovePending(requestID)
 			s.registry.SetProviderIdle(provider.ID)
 			lastErr = errMsg.Error
@@ -325,6 +340,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			pr = nil
 			continue
 		case <-timer.C:
+			excludeProviders[provider.ID] = struct{}{}
 			provider.RemovePending(requestID)
 			s.registry.SetProviderIdle(provider.ID)
 			cancelMsg := protocol.CancelMessage{Type: protocol.TypeCancel, RequestID: requestID}
@@ -452,6 +468,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if mdaVerified {
 		w.Header().Set("X-Provider-MDA-Verified", "true")
+	}
+	// SE public key for attestation receipt verification.
+	// Consumers can use this to verify SE signatures on response hashes.
+	if attestResult != nil && attestResult.PublicKey != "" {
+		w.Header().Set("X-Attestation-SE-Public-Key", attestResult.PublicKey)
+		w.Header().Set("X-Attestation-Device-Serial", attestResult.SerialNumber)
 	}
 
 	// When this function returns (consumer disconnect, timeout, or completion),
