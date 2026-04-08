@@ -279,9 +279,12 @@ Each reviewer should:
 
 Only proceed to the next objective after both reviewers pass. If either flags issues, fix them before moving on.
 
-## Formatting
+## Git Hooks
 
-A pre-commit hook in `.githooks/pre-commit` checks formatting on staged files only. It is enabled via `git config core.hooksPath .githooks` (already set for this repo).
+Hooks live in `.githooks/` and are enabled via `git config core.hooksPath .githooks` (already set for this repo).
+
+- **pre-commit**: Checks formatting on staged files only (fast).
+- **pre-push**: Runs formatting + compilation + tests for changed components. Includes `cargo build --no-default-features` to match CI's release build (the `python` feature flag changes compilation).
 
 | Component | Check | Manual fix |
 |-----------|-------|------------|

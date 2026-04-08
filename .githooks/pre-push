@@ -67,6 +67,12 @@ if [ "$HAS_RUST" = "1" ]; then
         FAILED=1
     fi
 
+    echo ">> [pre-push] Rust build (no-default-features, same as CI release)..."
+    if ! (cd provider && cargo build --no-default-features 2>&1 | tail -15); then
+        echo "ERROR: Rust build failed with --no-default-features (CI will also fail)."
+        FAILED=1
+    fi
+
     echo ">> [pre-push] Rust tests..."
     if ! (cd provider && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test 2>&1 | tail -15); then
         echo "ERROR: Rust tests failed."

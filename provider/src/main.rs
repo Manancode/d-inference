@@ -965,7 +965,7 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
 /// the hash against the coordinator's runtime manifest before installing.
 /// This prevents MITM attacks on the update channel.
 fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
-    const R2_CDN: &str = "https://pub-7cbee059c80c46ec9c071dbee2726f8a.r2.dev";
+    const R2_CDN: &str = "https://pub-3d1cb668259340eeb2276e1d375c846d.r2.dev";
 
     // Fetch the manifest to check if our runtime hash matches.
     let manifest = fetch_runtime_manifest(coordinator_base);
