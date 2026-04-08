@@ -397,26 +397,29 @@ fn collect_files_recursive(
     }
 }
 
-/// Compute hashes of the Python runtime, vllm-mlx package, and templates.
+/// Compute hashes of the Python runtime, all packages, and templates.
 ///
 /// These hashes allow the coordinator to verify that the provider is running
 /// the expected (blessed) runtime code — not a modified version that could
 /// leak prompts or produce tampered output.
 ///
 /// - `python_hash`: SHA-256 of the Python interpreter binary
-/// - `runtime_hash`: Combined SHA-256 of all .py files in vllm_mlx (sorted)
+/// - `runtime_hash`: Combined SHA-256 of ALL .py files in site-packages (sorted)
+///   This covers vllm_mlx, mlx_lm, mlx, transformers, and every other dependency.
+///   Any tampering with any Python package will cause a hash mismatch.
 /// - `template_hashes`: Per-file SHA-256 of each .jinja template
 pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
     // Hash the Python binary itself
     let python_hash = hash_file(std::path::Path::new(python_cmd));
 
-    // Hash all .py files in the vllm_mlx package directory
-    // Located at ~/.eigeninference/python/lib/python3.12/site-packages/vllm_mlx/
+    // Hash ALL .py files in the entire site-packages directory.
+    // This covers every Python package — vllm_mlx, mlx_lm, mlx, transformers,
+    // tokenizers, etc. Any modification to any package is detected.
     let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
-    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
-    let runtime_hash = if vllm_mlx_dir.exists() {
+    let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
+    let runtime_hash = if site_packages_dir.exists() {
         let mut py_files = Vec::new();
-        collect_files_recursive(&vllm_mlx_dir, "py", &mut py_files);
+        collect_files_recursive(&site_packages_dir, "py", &mut py_files);
         py_files.sort();
         if py_files.is_empty() {
             None

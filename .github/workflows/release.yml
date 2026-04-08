@@ -159,8 +159,12 @@ jobs:
 
           # Build a standalone Python venv with --copies (real binary, not symlinks).
           # This is THE canonical Python that all providers must run.
+          # Use Python 3.12 explicitly — providers run 3.12 and site-packages
+          # hashes must match. If 3.12 isn't available, fall back to python3.
           echo "Building canonical Python runtime..."
-          python3 -m venv --copies /tmp/eigeninference-python
+          PYTHON_BIN=$(command -v python3.12 || command -v python3)
+          echo "Using Python: $PYTHON_BIN ($($PYTHON_BIN --version))"
+          $PYTHON_BIN -m venv --copies /tmp/eigeninference-python
           source /tmp/eigeninference-python/bin/activate
 
           # Download the fork source and save it — this exact zip is uploaded
@@ -187,8 +191,11 @@ jobs:
           PYTHON_HASH=$(shasum -a 256 "$PYTHON_BIN" | cut -d' ' -f1)
           echo "Python hash: $PYTHON_HASH"
 
-          # Hash the vllm-mlx package (must match Rust hash_files_sorted algorithm)
-          VLLM_MLX_DIR=$(/tmp/eigeninference-python/bin/python3 -c "import vllm_mlx, os; print(os.path.dirname(vllm_mlx.__file__))")
+          # Hash ALL .py files in site-packages (must match Rust hash_files_sorted algorithm).
+          # This covers every Python package: vllm_mlx, mlx_lm, mlx, transformers, etc.
+          # Any tampering with any dependency will cause a hash mismatch on providers.
+          SITE_PACKAGES_DIR=$(python3 -c "import site; print(site.getsitepackages()[0])")
+          echo "Hashing all .py files in: $SITE_PACKAGES_DIR"
           RUNTIME_HASH=$(/tmp/eigeninference-python/bin/python3 -c "
           import hashlib, os, sys
           d = sys.argv[1]
@@ -198,6 +205,7 @@ jobs:
               for f in fs
               if f.endswith('.py')
           )
+          print(f'Total .py files: {len(files)}', file=sys.stderr)
           final = hashlib.sha256()
           for path in files:
               h = hashlib.sha256()
@@ -209,14 +217,21 @@ jobs:
                       h.update(chunk)
               final.update(h.digest())
           print(final.hexdigest())
-          " "$VLLM_MLX_DIR")
-          echo "Runtime hash (vllm-mlx): $RUNTIME_HASH"
+          " "$SITE_PACKAGES_DIR")
+          echo "Runtime hash (all site-packages): $RUNTIME_HASH"
 
-          # Tar the Python runtime for R2 upload
+          # Tar the full Python runtime for R2 upload
           echo "Packaging Python runtime..."
           cd /tmp && tar czf eigeninference-python-macos-arm64.tar.gz -C eigeninference-python .
           PYTHON_TARBALL_SIZE=$(du -h eigeninference-python-macos-arm64.tar.gz | cut -f1)
           echo "Python runtime: $PYTHON_TARBALL_SIZE"
+
+          # Tar just site-packages separately — providers download this for self-heal.
+          # This is the canonical set of ALL Python packages with verified integrity.
+          echo "Packaging site-packages..."
+          cd /tmp && tar czf eigeninference-site-packages.tar.gz -C "$SITE_PACKAGES_DIR" .
+          SITE_PKG_SIZE=$(du -h eigeninference-site-packages.tar.gz | cut -f1)
+          echo "Site-packages tarball: $SITE_PKG_SIZE"
 
           # Upload Python runtime to R2 (providers download this)
           aws s3 cp /tmp/eigeninference-python-macos-arm64.tar.gz \
@@ -224,8 +239,13 @@ jobs:
             --endpoint-url "$R2_ENDPOINT"
           echo "Python runtime uploaded to R2"
 
-          # Upload the exact vllm-mlx source zip so providers can pip-install
-          # the same artifact during self-heal (hash will match).
+          # Upload site-packages tarball — providers use this for self-heal
+          aws s3 cp /tmp/eigeninference-site-packages.tar.gz \
+            "s3://d-inf-app/releases/v${VERSION}/eigeninference-site-packages.tar.gz" \
+            --endpoint-url "$R2_ENDPOINT"
+          echo "Site-packages uploaded to R2"
+
+          # Upload the vllm-mlx source zip as fallback for older providers.
           aws s3 cp /tmp/vllm-mlx-source.zip \
             "s3://d-inf-app/releases/v${VERSION}/vllm-mlx-source.zip" \
             --endpoint-url "$R2_ENDPOINT"

@@ -992,32 +992,95 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
         }
     }
 
-    // Hash mismatch or vllm-mlx not installed. Download the exact
-    // vllm-mlx source zip from R2 that CI used for this release, then
-    // pip-install it. Same source → same .py files → same hash.
-    tracing::warn!("Runtime hash mismatch — updating vllm-mlx from release artifact...");
+    // Hash mismatch. Download the exact site-packages tarball from R2
+    // that CI built for this release. This replaces the ENTIRE Python
+    // package directory — vllm-mlx, mlx-lm, mlx, and all dependencies.
+    // Same packages → same .py files → same hash.
+    tracing::warn!("Runtime hash mismatch — downloading canonical site-packages from R2...");
 
     let release_version = fetch_latest_release_version(coordinator_base);
-    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
+    let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
+    let tmp_tarball = "/tmp/eigeninference-site-packages.tar.gz";
 
-    // Try R2 first (exact CI artifact), fall back to GitHub.
+    // Try R2 site-packages tarball first, fall back to vllm-mlx source zip.
     let mut downloaded = false;
     if !release_version.is_empty() {
-        let r2_url = format!("{R2_CDN}/releases/v{release_version}/vllm-mlx-source.zip");
-        tracing::info!("Downloading vllm-mlx from R2 (release v{release_version})...");
+        let r2_url =
+            format!("{R2_CDN}/releases/v{release_version}/eigeninference-site-packages.tar.gz");
+        tracing::info!("Downloading site-packages from R2 (release v{release_version})...");
         downloaded = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "30",
+                &r2_url,
+                "-o",
+                tmp_tarball,
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
+
+    if downloaded {
+        // Replace entire site-packages with the CI-built canonical version.
+        tracing::info!("Replacing site-packages with canonical CI build...");
+        if site_packages_dir.exists() {
+            let _ = std::fs::remove_dir_all(&site_packages_dir);
+        }
+        let _ = std::fs::create_dir_all(&site_packages_dir);
+        let extract = std::process::Command::new("tar")
+            .args([
+                "xzf",
+                tmp_tarball,
+                "-C",
+                &site_packages_dir.to_string_lossy(),
+            ])
+            .output();
+        let _ = std::fs::remove_file(tmp_tarball);
+
+        match extract {
+            Ok(o) if o.status.success() => {
+                let post_install = security::compute_runtime_hashes(python_cmd);
+                if let Some(actual_hash) = post_install.runtime_hash {
+                    if expected_runtime_hashes.is_empty()
+                        || expected_runtime_hashes.contains(&actual_hash)
+                    {
+                        tracing::info!("Runtime updated — all packages verified ✓");
+                    } else {
+                        tracing::error!("Post-install hash MISMATCH!");
+                        tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
+                        tracing::error!("  Got: {actual_hash}");
+                    }
+                } else {
+                    tracing::info!("Runtime updated ✓");
+                }
+                return;
+            }
+            _ => {
+                tracing::error!("Failed to extract site-packages tarball");
+            }
+        }
+    } else {
+        let _ = std::fs::remove_file(tmp_tarball);
+    }
+
+    // Fallback: pip install just vllm-mlx source zip (older releases
+    // may not have the site-packages tarball on R2).
+    tracing::info!("Falling back to vllm-mlx source zip...");
+    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+    let mut zip_downloaded = false;
+    if !release_version.is_empty() {
+        let r2_url = format!("{R2_CDN}/releases/v{release_version}/vllm-mlx-source.zip");
+        zip_downloaded = std::process::Command::new("curl")
             .args(["-fsSL", "--connect-timeout", "10", &r2_url, "-o", tmp_zip])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
-        if !downloaded {
-            tracing::warn!("R2 download failed, falling back to GitHub...");
-            let _ = std::fs::remove_file(tmp_zip);
-        }
     }
-
-    if !downloaded {
-        downloaded = std::process::Command::new("curl")
+    if !zip_downloaded {
+        zip_downloaded = std::process::Command::new("curl")
             .args([
                 "-fsSL",
                 "--connect-timeout",
@@ -1030,23 +1093,18 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
             .map(|o| o.status.success())
             .unwrap_or(false);
     }
-
-    if !downloaded {
+    if !zip_downloaded {
         let _ = std::fs::remove_file(tmp_zip);
-        tracing::error!("Failed to download vllm-mlx from both R2 and GitHub");
+        tracing::error!("Failed to download runtime from R2 and GitHub");
         return;
     }
 
-    // Remove old vllm_mlx directory before installing. pip --force-reinstall
-    // doesn't remove files that aren't in the new package (e.g. platform.py
-    // from an older version), which causes hash mismatches.
-    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
-    let vllm_mlx_dir = eigeninference_dir.join("python/lib/python3.12/site-packages/vllm_mlx");
+    // Remove old vllm_mlx before installing to prevent leftover file mismatches.
+    let vllm_mlx_dir = site_packages_dir.join("vllm_mlx");
     if vllm_mlx_dir.exists() {
         let _ = std::fs::remove_dir_all(&vllm_mlx_dir);
     }
 
-    // pip install into the existing Python environment.
     let install = std::process::Command::new(python_cmd)
         .args([
             "-m",
@@ -1054,7 +1112,6 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
             "install",
             "--break-system-packages",
             "--force-reinstall",
-            "--no-deps",
             "--quiet",
             tmp_zip,
         ])
@@ -1069,9 +1126,9 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
                 if expected_runtime_hashes.is_empty()
                     || expected_runtime_hashes.contains(&actual_hash)
                 {
-                    tracing::info!("Updated vllm-mlx — hash verified ✓");
+                    tracing::info!("Updated vllm-mlx + deps — hash verified ✓");
                 } else {
-                    tracing::error!("vllm-mlx post-install hash MISMATCH!");
+                    tracing::error!("Post-install hash MISMATCH!");
                     tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
                     tracing::error!("  Got: {actual_hash}");
                 }
