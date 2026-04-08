@@ -117,14 +117,21 @@ fi
 RC="$HOME/.zshrc"
 [ -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ] && RC="$HOME/.bashrc"
 if ! grep -q "eigeninference" "$RC" 2>/dev/null; then
-    echo -e "\n# EigenInference\nexport PATH=\"$BIN_DIR:\$PATH\"" >> "$RC"
+    cat >> "$RC" << 'SHELL'
+
+# EigenInference
+export PATH="$HOME/.eigeninference/bin:$PATH"
+alias eigeninf='eigeninference-provider'
+SHELL
 fi
 export PATH="$BIN_DIR:$PATH"
 
+# Source the rc file so commands are available immediately in this session
+# (important when running via curl | bash — the parent shell won't have PATH yet)
+source "$RC" 2>/dev/null || true
+
 echo "  Binaries installed ✓"
-if [ "$SYMLINKED" = false ]; then
-    echo "  Note: run 'source ~/${RC##*/}' or open a new terminal to use eigeninference-provider"
-fi
+echo "  Shortcut: eigeninf (alias for eigeninference-provider)"
 
 # ─── Migrate from old install (if exists) ─────────────────────
 if [ -d "$HOME/.dginf" ] && [ ! -L "$HOME/.dginf" ]; then
