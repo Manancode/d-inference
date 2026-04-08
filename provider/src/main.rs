@@ -966,6 +966,8 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
 /// This prevents MITM attacks on the update channel.
 fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
     const R2_CDN: &str = "https://pub-3d1cb668259340eeb2276e1d375c846d.r2.dev";
+    const GITHUB_FALLBACK: &str =
+        "https://github.com/Gajesh2007/vllm-mlx/archive/refs/heads/main.zip";
 
     // Fetch the manifest to check if our runtime hash matches.
     let manifest = fetch_runtime_manifest(coordinator_base);
@@ -978,7 +980,6 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
     let current_hashes = security::compute_runtime_hashes(python_cmd);
     if let Some(ref actual_hash) = current_hashes.runtime_hash {
         if expected_runtime_hashes.is_empty() || expected_runtime_hashes.contains(actual_hash) {
-            // Hash matches or no manifest — we're good.
             let current_version = std::process::Command::new(python_cmd)
                 .args(["-c", "import vllm_mlx; print(vllm_mlx.__version__)"])
                 .output()
@@ -991,108 +992,92 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
         }
     }
 
-    // Hash mismatch or vllm-mlx not installed — download the exact Python
-    // runtime from R2 that CI built for the latest release. This ensures
-    // the hash always matches because it's the same artifact.
-    tracing::warn!("Runtime hash mismatch — downloading matching runtime from release...");
+    // Hash mismatch or vllm-mlx not installed. Download the exact
+    // vllm-mlx source zip from R2 that CI used for this release, then
+    // pip-install it. Same source → same .py files → same hash.
+    tracing::warn!("Runtime hash mismatch — updating vllm-mlx from release artifact...");
 
-    // Get the latest release version from the coordinator.
     let release_version = fetch_latest_release_version(coordinator_base);
-    if release_version.is_empty() {
-        tracing::error!("Cannot determine latest release version — skipping runtime update");
+    let tmp_zip = "/tmp/eigeninference-vllm-mlx-update.zip";
+
+    // Try R2 first (exact CI artifact), fall back to GitHub.
+    let mut downloaded = false;
+    if !release_version.is_empty() {
+        let r2_url = format!("{R2_CDN}/releases/v{release_version}/vllm-mlx-source.zip");
+        tracing::info!("Downloading vllm-mlx from R2 (release v{release_version})...");
+        downloaded = std::process::Command::new("curl")
+            .args(["-fsSL", "--connect-timeout", "10", &r2_url, "-o", tmp_zip])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !downloaded {
+            tracing::warn!("R2 download failed, falling back to GitHub...");
+            let _ = std::fs::remove_file(tmp_zip);
+        }
+    }
+
+    if !downloaded {
+        downloaded = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "30",
+                GITHUB_FALLBACK,
+                "-o",
+                tmp_zip,
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
+
+    if !downloaded {
+        let _ = std::fs::remove_file(tmp_zip);
+        tracing::error!("Failed to download vllm-mlx from both R2 and GitHub");
         return;
     }
 
-    let runtime_url =
-        format!("{R2_CDN}/releases/v{release_version}/eigeninference-python-macos-arm64.tar.gz");
-    let python_dir = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".eigeninference")
-        .join("python");
-    let tmp_tarball = "/tmp/eigeninference-python-runtime-update.tar.gz";
-
-    tracing::info!("Downloading Python runtime v{release_version} from R2...");
-    let download = std::process::Command::new("curl")
+    // pip install into the existing Python environment.
+    let install = std::process::Command::new(python_cmd)
         .args([
-            "-fSL",
-            "--connect-timeout",
-            "30",
-            "--progress-bar",
-            &runtime_url,
-            "-o",
-            tmp_tarball,
+            "-m",
+            "pip",
+            "install",
+            "--break-system-packages",
+            "--force-reinstall",
+            "--no-deps",
+            "--quiet",
+            tmp_zip,
         ])
         .output();
 
-    match download {
-        Ok(output) if output.status.success() => {
-            // Extract to a staging directory, verify hash, then swap.
-            // This preserves the old runtime if the new one is broken.
-            let staging_dir = python_dir.with_file_name("python.new");
-            let backup_dir = python_dir.with_file_name("python.old");
-            let _ = std::fs::remove_dir_all(&staging_dir);
-            let _ = std::fs::create_dir_all(&staging_dir);
+    let _ = std::fs::remove_file(tmp_zip);
 
-            let extract = std::process::Command::new("tar")
-                .args(["xzf", tmp_tarball, "-C", &staging_dir.to_string_lossy()])
-                .output();
-
-            let _ = std::fs::remove_file(tmp_tarball);
-
-            match extract {
-                Ok(o) if o.status.success() => {
-                    // Verify hash of the staged runtime before swapping.
-                    let staged_python = staging_dir.join("bin").join("python3.12");
-                    let staged_cmd = staged_python.to_string_lossy().to_string();
-                    let post_install = security::compute_runtime_hashes(&staged_cmd);
-
-                    match post_install.runtime_hash {
-                        Some(actual_hash) if expected_runtime_hashes.contains(&actual_hash) => {
-                            // Hash verified — swap atomically.
-                            let _ = std::fs::remove_dir_all(&backup_dir);
-                            let _ = std::fs::rename(&python_dir, &backup_dir);
-                            if let Err(e) = std::fs::rename(&staging_dir, &python_dir) {
-                                tracing::error!("Failed to swap runtime dirs: {e}");
-                                let _ = std::fs::rename(&backup_dir, &python_dir);
-                            } else {
-                                let _ = std::fs::remove_dir_all(&backup_dir);
-                                tracing::info!(
-                                    "Runtime updated from R2 release v{release_version} — hash verified ✓"
-                                );
-                            }
-                        }
-                        Some(actual_hash) => {
-                            tracing::error!("Downloaded runtime hash does not match release!");
-                            tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
-                            tracing::error!("  Got: {actual_hash}");
-                            let _ = std::fs::remove_dir_all(&staging_dir);
-                        }
-                        None => {
-                            tracing::error!(
-                                "Downloaded runtime is invalid — vllm_mlx not found in extracted files"
-                            );
-                            let _ = std::fs::remove_dir_all(&staging_dir);
-                        }
-                    }
+    match install {
+        Ok(o) if o.status.success() => {
+            let post_install = security::compute_runtime_hashes(python_cmd);
+            if let Some(actual_hash) = post_install.runtime_hash {
+                if expected_runtime_hashes.is_empty()
+                    || expected_runtime_hashes.contains(&actual_hash)
+                {
+                    tracing::info!("Updated vllm-mlx — hash verified ✓");
+                } else {
+                    tracing::error!("vllm-mlx post-install hash MISMATCH!");
+                    tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
+                    tracing::error!("  Got: {actual_hash}");
                 }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    tracing::error!(
-                        "Failed to extract runtime: {}",
-                        stderr.chars().take(200).collect::<String>()
-                    );
-                    let _ = std::fs::remove_dir_all(&staging_dir);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to run tar: {e}");
-                    let _ = std::fs::remove_dir_all(&staging_dir);
-                }
+            } else {
+                tracing::info!("Updated vllm-mlx ✓");
             }
         }
-        _ => {
-            let _ = std::fs::remove_file(tmp_tarball);
-            tracing::error!("Failed to download Python runtime from R2");
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            tracing::error!(
+                "pip install failed: {}",
+                stderr.chars().take(200).collect::<String>()
+            );
         }
+        Err(e) => tracing::error!("Failed to run pip: {e}"),
     }
 }
 
@@ -1318,6 +1303,9 @@ enum Command {
         /// Coordinator URL to check for latest version
         #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
         coordinator: String,
+        /// Force re-download even if already on the latest version
+        #[arg(long)]
+        force: bool,
     },
 
     /// Link this machine to your EigenInference account
@@ -1428,7 +1416,7 @@ async fn main() -> Result<()> {
         }
         Command::Stop => cmd_stop().await,
         Command::Logs { lines, watch } => cmd_logs(lines, watch).await,
-        Command::Update { coordinator } => cmd_update(coordinator).await,
+        Command::Update { coordinator, force } => cmd_update(coordinator, force).await,
         Command::Login { coordinator } => cmd_login(coordinator).await,
         Command::Logout => cmd_logout().await,
     }
@@ -5202,11 +5190,14 @@ async fn cmd_stop() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_update(coordinator: String) -> Result<()> {
+async fn cmd_update(coordinator: String, force: bool) -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
     println!("EigenInference Provider Update");
     println!();
     println!("  Current version: {current_version}");
+    if force {
+        println!("  Force mode: will re-download even if up to date");
+    }
 
     // Check coordinator for latest version
     let base_url = coordinator.trim_end_matches('/');
@@ -5237,17 +5228,18 @@ async fn cmd_update(coordinator: String) -> Result<()> {
     println!("done");
     println!("  Latest version:  {latest}");
 
-    if latest == current_version {
-        println!();
-        println!("  Already up to date!");
-        return Ok(());
-    }
+    if !force {
+        if latest == current_version {
+            println!();
+            println!("  Already up to date!");
+            return Ok(());
+        }
 
-    // Compare versions: simple semver check
-    if !is_newer_version(current_version, latest) {
-        println!();
-        println!("  Already up to date!");
-        return Ok(());
+        if !is_newer_version(current_version, latest) {
+            println!();
+            println!("  Already up to date!");
+            return Ok(());
+        }
     }
 
     println!();

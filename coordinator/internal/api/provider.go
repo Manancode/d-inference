@@ -636,17 +636,11 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 	pr.SESignature = msg.SESignature
 	pr.ResponseHash = msg.ResponseHash
 
-	// Send usage and signal completion.
-	pr.CompleteCh <- msg.Usage
-	close(pr.ChunkCh)
-	close(pr.CompleteCh)
-
-	// Record job success for reputation tracking.
-	// Use a simple heuristic for response time based on token count.
+	// Record job success and usage BEFORE closing ChunkCh. Closing
+	// ChunkCh unblocks the consumer response handler, and callers may
+	// check usage immediately after the HTTP response completes.
 	responseTime := time.Duration(msg.Usage.CompletionTokens) * time.Millisecond * 10
 	s.registry.RecordJobSuccess(providerID, responseTime)
-
-	// Record usage.
 	s.store.RecordUsage(providerID, pr.ConsumerKey, pr.Model, msg.Usage.PromptTokens, msg.Usage.CompletionTokens)
 
 	// Calculate cost — check provider's custom price, then platform DB price,
@@ -737,6 +731,13 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 		}
 		_ = s.store.Credit("platform", platformFee, store.LedgerPlatformFee, msg.RequestID)
 	}
+
+	// Signal completion to the consumer response handler. This must happen
+	// AFTER usage/billing is recorded because closing ChunkCh immediately
+	// unblocks the HTTP response, and callers may check usage right after.
+	pr.CompleteCh <- msg.Usage
+	close(pr.ChunkCh)
+	close(pr.CompleteCh)
 
 	// Mark provider idle if no more pending requests.
 	s.registry.SetProviderIdle(providerID)
