@@ -438,24 +438,17 @@ pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
     let python_hash = hash_file(std::path::Path::new(python_cmd));
 
     // Hash EVERY file in the entire site-packages directory — .py, .so, .dylib,
-    // .json, everything. This covers source code, compiled extensions (mlx GPU
-    // backend, tokenizers), config files, and all dependencies. Any modification
-    // to any file in any package is detected.
+    // .json, .pyc, everything. This covers source code, compiled extensions,
+    // bytecode cache, config files, and all dependencies. Any modification to
+    // any file in any package is detected.
     //
-    // SECURITY: Delete all __pycache__ directories and .pyc files BEFORE hashing.
-    // Python executes .pyc bytecode instead of .py source on import — a malicious
-    // .pyc could intercept inference data without modifying any .py file. By
-    // deleting .pyc before hashing, we ensure: (1) only source/.so files are
-    // verified, (2) Python will recompile from verified .py source on next import,
-    // (3) CI and provider hash the same clean state.
+    // SECURITY: .pyc files ARE hashed. CI precompiles all .py → .pyc and ships
+    // them in the tarball. Any attacker-modified .pyc will cause a hash mismatch.
+    // Runtime-generated .pyc (from imports) will also cause a mismatch, but the
+    // self-heal replaces site-packages with the CI tarball which has canonical .pyc.
     let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
     let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
     let runtime_hash = if site_packages_dir.exists() {
-        // Purge all __pycache__ dirs and .pyc files before hashing.
-        // This removes any attacker-planted bytecode AND ensures hash
-        // matches CI (which also strips __pycache__ before hashing).
-        purge_pycache(&site_packages_dir);
-
         let mut py_files = Vec::new();
         collect_files_recursive(&site_packages_dir, "*", &mut py_files);
         py_files.sort();

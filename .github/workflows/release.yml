@@ -187,7 +187,14 @@ jobs:
           cd /tmp/eigeninference-python/lib/python*/site-packages
           rm -rf torch* gradio* opencv* cv2* pandas* pyarrow* \
                  sympy* networkx* mcp* miniaudio* pydub* datasets*
+          # Purge ALL .pyc and __pycache__ first, then precompile deterministically.
+          # This ensures: (1) no stale .pyc from PBS or pip installs, (2) all .pyc
+          # are compiled by the same Python version, (3) providers hash identical files
+          # because they receive the pre-compiled .pyc in the tarball.
           find /tmp/eigeninference-python -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+          find /tmp/eigeninference-python -name "*.pyc" -delete 2>/dev/null || true
+          # Precompile all .py files — .pyc is now part of the verified package
+          /tmp/eigeninference-python/bin/python3.12 -m compileall -q /tmp/eigeninference-python/lib/python3.12/site-packages/ 2>/dev/null || true
           # Remove EXTERNALLY-MANAGED marker so pip works without --break-system-packages
           rm -f /tmp/eigeninference-python/lib/python*/EXTERNALLY-MANAGED
           cd -
@@ -210,7 +217,6 @@ jobs:
               os.path.join(r, f)
               for r, _, fs in os.walk(d)
               for f in fs
-              if not f.endswith('.pyc') and '__pycache__' not in os.path.join(r, f)
           )
           print(f'Total files: {len(files)}', file=sys.stderr)
           final = hashlib.sha256()
