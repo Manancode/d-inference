@@ -957,17 +957,26 @@ func ScoreProvider(p *Provider, model string) float64 {
 // intelligent scoring based on benchmark data, trust level, reputation,
 // warm model cache, and backend capacity. Picks the highest-scoring
 // provider that has concurrency headroom (dynamic limit based on hardware).
-func (r *Registry) FindProvider(model string) *Provider {
-	return r.FindProviderWithTrust(model, "")
+// Optional excludeIDs are provider IDs to skip (e.g. providers that
+// already failed for this request during retry).
+func (r *Registry) FindProvider(model string, excludeIDs ...string) *Provider {
+	return r.FindProviderWithTrust(model, "", excludeIDs...)
 }
 
 // FindProviderWithTrust selects a provider with an optional per-request
 // minimum trust level. If minTrust is empty, the registry's default
 // MinTrustLevel is used. Consumers can request a specific trust level
-// (e.g. hardware) to filter providers.
-func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel) *Provider {
+// (e.g. hardware) to filter providers. Optional excludeIDs are provider
+// IDs to skip during selection.
+func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel, excludeIDs ...string) *Provider {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Build a set of excluded provider IDs for O(1) lookup.
+	excludeSet := make(map[string]struct{}, len(excludeIDs))
+	for _, id := range excludeIDs {
+		excludeSet[id] = struct{}{}
+	}
 
 	// Determine effective minimum: max of registry default and per-request
 	effectiveMin := r.MinTrustLevel
@@ -984,6 +993,11 @@ func (r *Registry) FindProviderWithTrust(model string, minTrust TrustLevel) *Pro
 
 	var candidates []*Provider
 	for _, p := range r.providers {
+		// Skip explicitly excluded providers (failed on previous retry attempts).
+		if _, excluded := excludeSet[p.ID]; excluded {
+			continue
+		}
+
 		// Snapshot mutable fields under the provider lock.
 		p.mu.Lock()
 		status := p.Status
