@@ -8,6 +8,8 @@ env:
   CARGO_TERM_COLOR: always
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '1'
   DEVELOPER_ID: "Developer ID Application: Eigen Labs, Inc. (SLDQ2GJ6TL)"
+  PBS_TAG: "20260408"
+  PBS_PYTHON_VERSION: "3.12.13"
 
 jobs:
   build-and-release:
@@ -157,22 +159,29 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          # Build a standalone Python venv with --copies (real binary, not symlinks).
-          # This is THE canonical Python that all providers must run.
-          # Use Python 3.12 explicitly — providers run 3.12 and site-packages
-          # hashes must match. If 3.12 isn't available, fall back to python3.
-          echo "Building canonical Python runtime..."
-          PYTHON_BIN=$(command -v python3.12 || command -v python3)
-          echo "Using Python: $PYTHON_BIN ($($PYTHON_BIN --version))"
-          $PYTHON_BIN -m venv --copies /tmp/eigeninference-python
-          source /tmp/eigeninference-python/bin/activate
+          # Download portable Python from python-build-standalone (Astral).
+          # These binaries are self-contained — no dylib dependencies on system frameworks.
+          # Works on ANY macOS ARM64 machine regardless of what Python is installed.
+          echo "Downloading portable Python ${PBS_PYTHON_VERSION}..."
+          curl -fsSL "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PBS_PYTHON_VERSION}+${PBS_TAG}-aarch64-apple-darwin-install_only.tar.gz" \
+            -o /tmp/pbs-python.tar.gz
+          tar xzf /tmp/pbs-python.tar.gz -C /tmp/
+          mv /tmp/python /tmp/eigeninference-python
+          rm -f /tmp/pbs-python.tar.gz
 
           # Download the fork source and save it — this exact zip is uploaded
           # to R2 so providers can pip-install the same artifact during self-heal.
           curl -fsSL -o /tmp/vllm-mlx-source.zip \
             'https://github.com/Gajesh2007/vllm-mlx/archive/refs/heads/main.zip'
-          pip install --quiet /tmp/vllm-mlx-source.zip
-          pip install --quiet mlx-lm
+
+          # Upgrade pip and install packages
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --upgrade pip --quiet
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet /tmp/vllm-mlx-source.zip
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet mlx-lm
+
+          # Verify packages work
+          /tmp/eigeninference-python/bin/python3.12 -c "import vllm_mlx; print(f'vllm-mlx {vllm_mlx.__version__}')"
+          /tmp/eigeninference-python/bin/python3.12 -c "import mlx_lm; print(f'mlx-lm {mlx_lm.__version__}')"
 
           # Strip unnecessary packages to keep it small (keep pip — providers need it)
           cd /tmp/eigeninference-python/lib/python*/site-packages
@@ -183,8 +192,6 @@ jobs:
           rm -f /tmp/eigeninference-python/lib/python*/EXTERNALLY-MANAGED
           cd -
 
-          deactivate
-
           # Hash the Python binary (this is what providers must match)
           # Hash python3.12 specifically — must match what compute_runtime_hashes() hashes on providers
           PYTHON_BIN="/tmp/eigeninference-python/bin/python3.12"
@@ -194,7 +201,7 @@ jobs:
           # Hash EVERY file in site-packages (must match Rust hash_files_sorted algorithm).
           # This covers .py source, .so compiled extensions (mlx GPU backend, tokenizers),
           # .dylib libraries, config files — everything. Any tampered file is detected.
-          SITE_PACKAGES_DIR=$(python3 -c "import site; print(site.getsitepackages()[0])")
+          SITE_PACKAGES_DIR=$(/tmp/eigeninference-python/bin/python3.12 -c "import site; print(site.getsitepackages()[0])")
           echo "Hashing all files in: $SITE_PACKAGES_DIR"
           RUNTIME_HASH=$(/tmp/eigeninference-python/bin/python3 -c "
           import hashlib, os, sys

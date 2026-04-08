@@ -19,6 +19,9 @@ COORD_URL="https://inference-test.openinnovation.dev"
 INSTALL_DIR="$HOME/.eigeninference"
 BIN_DIR="$INSTALL_DIR/bin"
 PYTHON_BIN="$INSTALL_DIR/python/bin/python3.12"
+PBS_TAG="20260408"
+PBS_PYTHON_VERSION="3.12.13"
+PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PBS_PYTHON_VERSION}+${PBS_TAG}-aarch64-apple-darwin-install_only.tar.gz"
 
 # Detect if running interactively (terminal) or piped (curl | bash)
 if [ -t 0 ]; then
@@ -186,11 +189,48 @@ else
     fi
 fi
 
+# Test that extracted Python actually runs (catches dyld errors from non-portable builds)
+if [ -f "$PYTHON_BIN" ] && ! "$PYTHON_BIN" -c "print('ok')" 2>/dev/null; then
+    echo "  ⚠ Downloaded Python binary doesn't run on this machine"
+    echo "  Downloading portable Python from python-build-standalone..."
+    if curl -f#L "$PBS_URL" -o "/tmp/pbs-python.tar.gz" 2>/dev/null; then
+        rm -rf "$INSTALL_DIR/python"
+        mkdir -p "$INSTALL_DIR/python"
+        tar xzf /tmp/pbs-python.tar.gz --strip-components=1 -C "$INSTALL_DIR/python"
+        rm -f /tmp/pbs-python.tar.gz
+        rm -f "$INSTALL_DIR/python/lib/python3.12/EXTERNALLY-MANAGED"
+        if "$PYTHON_BIN" -c "print('ok')" 2>/dev/null; then
+            echo "  Portable Python installed ✓"
+            # Install packages from R2 site-packages tarball (same verified artifacts as CI)
+            SITE_DIR="$INSTALL_DIR/python/lib/python3.12/site-packages"
+            R2_CDN="https://pub-3d1cb668259340eeb2276e1d375c846d.r2.dev"
+            if [ -n "$VERSION" ] && curl -fsSL "$R2_CDN/releases/v${VERSION}/eigeninference-site-packages.tar.gz" -o "/tmp/eigen-site-packages.tar.gz" 2>/dev/null; then
+                rm -rf "$SITE_DIR"
+                mkdir -p "$SITE_DIR"
+                tar xzf /tmp/eigen-site-packages.tar.gz -C "$SITE_DIR"
+                rm -f /tmp/eigen-site-packages.tar.gz
+                echo "  Packages installed from R2 ✓"
+            else
+                # Fallback: pip install from GitHub
+                "$PYTHON_BIN" -m pip install --quiet "https://github.com/Gajesh2007/vllm-mlx/archive/refs/heads/main.zip" mlx-lm 2>/dev/null || true
+            fi
+        else
+            echo "  ✗ Portable Python also failed — please report this issue"
+        fi
+    else
+        echo "  ✗ Could not download portable Python"
+    fi
+fi
+
 # Verify vllm-mlx
 if [ -f "$PYTHON_BIN" ]; then
-    PYTHONHOME="$INSTALL_DIR/python" "$PYTHON_BIN" -c \
-        "import vllm_mlx; print(f'  vllm-mlx {vllm_mlx.__version__} ✓')" 2>/dev/null \
-        || echo "  ⚠ vllm-mlx import failed"
+    if ! "$PYTHON_BIN" -c "print('ok')" 2>/dev/null; then
+        echo "  ✗ Python binary does not execute"
+    else
+        PYTHONHOME="$INSTALL_DIR/python" "$PYTHON_BIN" -c \
+            "import vllm_mlx; print(f'  vllm-mlx {vllm_mlx.__version__} ✓')" 2>/dev/null \
+            || echo "  ⚠ vllm-mlx import failed"
+    fi
 fi
 
 # Ensure ffmpeg is available

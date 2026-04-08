@@ -854,9 +854,14 @@ fn fetch_runtime_manifest(
     Some((python_hashes, runtime_hashes, template_hashes))
 }
 
-/// Verify the Python binary hash matches the coordinator's manifest.
-/// If it doesn't match, download the canonical Python runtime from R2.
-fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
+/// Verify the Python binary hash matches the coordinator's manifest and that it executes.
+/// If it doesn't match or can't execute, download the canonical Python runtime from R2,
+/// fall back to python-build-standalone, or Homebrew Python 3.12 as a last resort.
+/// Returns true if Python is working, false if all recovery strategies failed.
+fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) -> bool {
+    const PBS_PYTHON_URL: &str = "https://github.com/astral-sh/python-build-standalone/releases/download/20260408/cpython-3.12.13+20260408-aarch64-apple-darwin-install_only.tar.gz";
+
+    let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
     let manifest = fetch_runtime_manifest(coordinator_base);
     let expected_python_hashes: Vec<String> = manifest
         .as_ref()
@@ -865,7 +870,7 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
 
     if expected_python_hashes.is_empty() {
         tracing::debug!("No Python hash in manifest — skipping Python verification");
-        return;
+        return true;
     }
 
     // Hash the current Python binary
@@ -873,11 +878,18 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
     let current_hash = security::hash_file(python_path).unwrap_or_default();
 
     if expected_python_hashes.contains(&current_hash) {
-        tracing::info!("Python binary hash verified ✓");
-        return;
+        // Test that the binary actually executes (catches dyld errors)
+        let test = std::process::Command::new(python_cmd)
+            .args(["-c", "print('ok')"])
+            .output();
+        if matches!(test, Ok(ref o) if o.status.success()) {
+            tracing::info!("Python binary verified and executable ✓");
+            return true;
+        }
+        tracing::warn!("Python binary hash matches but fails to execute — re-downloading");
+    } else {
+        tracing::warn!("Python binary hash mismatch — downloading canonical runtime from CDN...");
     }
-
-    tracing::warn!("Python binary hash mismatch — downloading canonical runtime from CDN...");
 
     // Get the download URL from the coordinator's latest release
     let release_url = format!("{coordinator_base}/v1/releases/latest");
@@ -887,76 +899,153 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
 
     let python_download_url = match release_output {
         Ok(output) if output.status.success() => {
-            let release: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
-            // Derive Python tarball URL from release URL
-            // e.g. .../releases/v0.2.29/eigeninference-bundle-macos-arm64.tar.gz
-            //   -> .../releases/v0.2.29/eigeninference-python-macos-arm64.tar.gz
-            release.get("url").and_then(|v| v.as_str()).map(|url| {
-                url.replace(
-                    "eigeninference-bundle-macos-arm64.tar.gz",
-                    "eigeninference-python-macos-arm64.tar.gz",
-                )
-            })
+            match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                Ok(release) => release.get("url").and_then(|v| v.as_str()).map(|url| {
+                    url.replace(
+                        "eigeninference-bundle-macos-arm64.tar.gz",
+                        "eigeninference-python-macos-arm64.tar.gz",
+                    )
+                }),
+                Err(_) => {
+                    tracing::error!("Failed to parse release JSON");
+                    None
+                }
+            }
         }
         _ => None,
     };
 
-    let Some(download_url) = python_download_url else {
-        tracing::error!("Could not determine Python download URL");
-        return;
-    };
+    if let Some(download_url) = python_download_url {
+        // Download to temp
+        let tmp_tarball = "/tmp/eigeninference-python-update.tar.gz";
+        let download = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "30",
+                &download_url,
+                "-o",
+                tmp_tarball,
+            ])
+            .output();
 
-    // Download to temp
-    let tmp_tarball = "/tmp/eigeninference-python-update.tar.gz";
-    let download = std::process::Command::new("curl")
+        if let Ok(output) = download {
+            if output.status.success() {
+                let python_dir = eigeninference_dir.join("python");
+
+                // Extract over existing Python dir
+                tracing::info!("Extracting canonical Python runtime...");
+                let _ = std::fs::create_dir_all(&python_dir);
+                let extract = std::process::Command::new("tar")
+                    .args(["xzf", tmp_tarball, "-C", &python_dir.to_string_lossy()])
+                    .output();
+
+                let _ = std::fs::remove_file(tmp_tarball);
+
+                if let Ok(o) = extract {
+                    if o.status.success() {
+                        // Verify the extracted binary matches
+                        let new_hash = security::hash_file(&python_dir.join("bin/python3.12"))
+                            .unwrap_or_default();
+                        if expected_python_hashes.contains(&new_hash) {
+                            // Test execution
+                            let test = std::process::Command::new(python_cmd)
+                                .args(["-c", "print('ok')"])
+                                .output();
+                            if matches!(test, Ok(ref o) if o.status.success()) {
+                                tracing::info!("Canonical Python runtime installed and verified ✓");
+                                return true;
+                            }
+                            tracing::warn!("Downloaded Python hash matches but fails to execute");
+                        } else {
+                            tracing::error!("Downloaded Python hash still doesn't match manifest!");
+                        }
+                    }
+                }
+            } else {
+                let _ = std::fs::remove_file(tmp_tarball);
+            }
+        }
+    }
+
+    // Fallback: download python-build-standalone directly
+    tracing::info!("Downloading portable Python from python-build-standalone...");
+    let pbs_tmp = "/tmp/eigeninference-pbs-python.tar.gz";
+    let pbs_ok = std::process::Command::new("curl")
         .args([
             "-fsSL",
             "--connect-timeout",
             "30",
-            &download_url,
+            PBS_PYTHON_URL,
             "-o",
-            tmp_tarball,
+            pbs_tmp,
         ])
-        .output();
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
-    match download {
-        Ok(output) if output.status.success() => {
-            let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
-            let python_dir = eigeninference_dir.join("python");
+    if pbs_ok {
+        let python_dir = eigeninference_dir.join("python");
+        let _ = std::fs::remove_dir_all(&python_dir);
+        let _ = std::fs::create_dir_all(&python_dir);
+        // PBS tarball extracts to python/ — extract parent dir and it maps directly
+        let extract_ok = std::process::Command::new("tar")
+            .args([
+                "xzf",
+                pbs_tmp,
+                "--strip-components=1",
+                "-C",
+                &python_dir.to_string_lossy(),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_file(pbs_tmp);
 
-            // Extract over existing Python dir
-            tracing::info!("Extracting canonical Python runtime...");
-            let _ = std::fs::create_dir_all(&python_dir);
-            let extract = std::process::Command::new("tar")
-                .args(["xzf", tmp_tarball, "-C", &python_dir.to_string_lossy()])
+        if extract_ok {
+            let pbs_python = python_dir.join("bin/python3.12");
+            let pbs_test = std::process::Command::new(&pbs_python)
+                .args(["-c", "print('ok')"])
                 .output();
-
-            let _ = std::fs::remove_file(tmp_tarball);
-
-            match extract {
-                Ok(o) if o.status.success() => {
-                    // Verify the extracted binary matches
-                    let new_hash =
-                        security::hash_file(&python_dir.join("bin/python3.12")).unwrap_or_default();
-                    if expected_python_hashes.contains(&new_hash) {
-                        tracing::info!("Canonical Python runtime installed and verified ✓");
-                    } else {
-                        tracing::error!("Downloaded Python hash still doesn't match manifest!");
-                    }
-                }
-                _ => {
-                    tracing::error!("Failed to extract Python runtime");
-                }
+            if matches!(pbs_test, Ok(ref o) if o.status.success()) {
+                tracing::info!("Portable Python installed and executable ✓");
+                // Remove EXTERNALLY-MANAGED if present
+                let managed = python_dir.join("lib/python3.12/EXTERNALLY-MANAGED");
+                let _ = std::fs::remove_file(managed);
+                return true;
             }
         }
-        _ => {
-            tracing::error!("Failed to download canonical Python runtime");
-            let _ = std::fs::remove_file(tmp_tarball);
+        tracing::error!("python-build-standalone download failed to produce working Python");
+    }
+    let _ = std::fs::remove_file(pbs_tmp);
+
+    // Last resort: check for Homebrew Python 3.12
+    let brew_python = std::path::Path::new("/opt/homebrew/opt/python@3.12/bin/python3.12");
+    if brew_python.exists() {
+        let test = std::process::Command::new(brew_python)
+            .args(["-c", "print('ok')"])
+            .output();
+        if matches!(test, Ok(ref o) if o.status.success()) {
+            tracing::info!("Using Homebrew Python 3.12 as fallback");
+            // Create a venv from Homebrew Python
+            let python_dir = eigeninference_dir.join("python");
+            let _ = std::fs::remove_dir_all(&python_dir);
+            let venv_ok = std::process::Command::new(brew_python)
+                .args(["-m", "venv", "--copies", &python_dir.to_string_lossy()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if venv_ok {
+                let managed = python_dir.join("lib/python3.12/EXTERNALLY-MANAGED");
+                let _ = std::fs::remove_file(managed);
+                tracing::info!("Homebrew Python venv created ✓");
+                return true;
+            }
         }
     }
+
+    tracing::error!("All Python recovery strategies failed");
+    false
 }
 
 /// Ensure the Python runtime (vllm-mlx) is up to date and verified.
@@ -964,7 +1053,7 @@ fn ensure_python_verified(python_cmd: &str, coordinator_base: &str) {
 /// Called once at startup. Downloads from a verified URL and checks
 /// the hash against the coordinator's runtime manifest before installing.
 /// This prevents MITM attacks on the update channel.
-fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
+fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) -> bool {
     const R2_CDN: &str = "https://pub-3d1cb668259340eeb2276e1d375c846d.r2.dev";
     const GITHUB_FALLBACK: &str =
         "https://github.com/Gajesh2007/vllm-mlx/archive/refs/heads/main.zip";
@@ -988,7 +1077,7 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             tracing::info!("Runtime check: vllm-mlx {current_version} ✓");
-            return;
+            return true;
         }
     }
 
@@ -1024,42 +1113,72 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
     }
 
     if downloaded {
-        // Replace entire site-packages with the CI-built canonical version.
+        // Extract to staging directory first — never delete current before verifying new
         tracing::info!("Replacing site-packages with canonical CI build...");
-        if site_packages_dir.exists() {
-            let _ = std::fs::remove_dir_all(&site_packages_dir);
-        }
-        let _ = std::fs::create_dir_all(&site_packages_dir);
+        let staging_dir = eigeninference_dir.join("python/lib/python3.12/site-packages-staging");
+        let backup_dir = eigeninference_dir.join("python/lib/python3.12/site-packages-backup");
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        let _ = std::fs::remove_dir_all(&backup_dir);
+        let _ = std::fs::create_dir_all(&staging_dir);
+
         let extract = std::process::Command::new("tar")
-            .args([
-                "xzf",
-                tmp_tarball,
-                "-C",
-                &site_packages_dir.to_string_lossy(),
-            ])
+            .args(["xzf", tmp_tarball, "-C", &staging_dir.to_string_lossy()])
             .output();
         let _ = std::fs::remove_file(tmp_tarball);
 
         match extract {
             Ok(o) if o.status.success() => {
-                let post_install = security::compute_runtime_hashes(python_cmd);
-                if let Some(actual_hash) = post_install.runtime_hash {
-                    if expected_runtime_hashes.is_empty()
-                        || expected_runtime_hashes.contains(&actual_hash)
-                    {
-                        tracing::info!("Runtime updated — all packages verified ✓");
-                    } else {
-                        tracing::error!("Post-install hash MISMATCH!");
-                        tracing::error!("  Expected one of: {:?}", expected_runtime_hashes);
-                        tracing::error!("  Got: {actual_hash}");
-                    }
+                // Validate staging has critical packages
+                if !staging_dir.join("vllm_mlx/__init__.py").exists() {
+                    tracing::error!("Extracted site-packages missing vllm_mlx — aborting");
+                    let _ = std::fs::remove_dir_all(&staging_dir);
+                    // Fall through to pip fallback
                 } else {
-                    tracing::info!("Runtime updated ✓");
+                    // Atomic swap: current → backup, staging → current
+                    if site_packages_dir.exists() {
+                        if let Err(e) = std::fs::rename(&site_packages_dir, &backup_dir) {
+                            tracing::error!("Failed to backup site-packages: {e}");
+                            let _ = std::fs::remove_dir_all(&staging_dir);
+                            return true; // keep current, it's better than nothing
+                        }
+                    }
+                    if let Err(e) = std::fs::rename(&staging_dir, &site_packages_dir) {
+                        tracing::error!("Failed to swap site-packages: {e} — rolling back");
+                        let _ = std::fs::rename(&backup_dir, &site_packages_dir);
+                        return true;
+                    }
+
+                    // Test the new site-packages
+                    let import_test = std::process::Command::new(python_cmd)
+                        .args(["-c", "import vllm_mlx; print('ok')"])
+                        .output();
+                    if matches!(import_test, Ok(ref o) if o.status.success()) {
+                        let _ = std::fs::remove_dir_all(&backup_dir);
+                        // Verify hash
+                        let post_install = security::compute_runtime_hashes(python_cmd);
+                        if let Some(actual_hash) = post_install.runtime_hash {
+                            if expected_runtime_hashes.is_empty()
+                                || expected_runtime_hashes.contains(&actual_hash)
+                            {
+                                tracing::info!("Runtime updated — all packages verified ✓");
+                            } else {
+                                tracing::warn!("Runtime updated but hash differs from manifest");
+                            }
+                        }
+                        return true;
+                    } else {
+                        // Rollback
+                        tracing::error!("New site-packages failed import test — rolling back");
+                        let _ = std::fs::remove_dir_all(&site_packages_dir);
+                        let _ = std::fs::rename(&backup_dir, &site_packages_dir);
+                        // Fall through to pip fallback
+                    }
                 }
-                return;
             }
             _ => {
                 tracing::error!("Failed to extract site-packages tarball");
+                let _ = std::fs::remove_dir_all(&staging_dir);
+                // Fall through to pip fallback
             }
         }
     } else {
@@ -1096,7 +1215,7 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
     if !zip_downloaded {
         let _ = std::fs::remove_file(tmp_zip);
         tracing::error!("Failed to download runtime from R2 and GitHub");
-        return;
+        return false;
     }
 
     // Remove old vllm_mlx before installing to prevent leftover file mismatches.
@@ -1135,6 +1254,7 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
             } else {
                 tracing::info!("Updated vllm-mlx ✓");
             }
+            return true;
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -1145,6 +1265,7 @@ fn ensure_runtime_updated(python_cmd: &str, coordinator_base: &str) {
         }
         Err(e) => tracing::error!("Failed to run pip: {e}"),
     }
+    false
 }
 
 /// Fetch the latest release version string from the coordinator.
@@ -2233,7 +2354,12 @@ async fn cmd_serve(
         .replace("wss://", "https://")
         .replace("ws://", "http://")
         .replace("/ws/provider", "");
-    ensure_python_verified(&python_cmd, &coordinator_http_base);
+    if !ensure_python_verified(&python_cmd, &coordinator_http_base) {
+        anyhow::bail!(
+            "Python runtime is broken and could not be recovered. \
+             Please run: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+        );
+    }
     ensure_runtime_updated(&python_cmd, &coordinator_http_base);
 
     // =========================================================================
@@ -3222,6 +3348,10 @@ async fn cmd_serve(
                                 let heal_python = idle_python_cmd.clone();
                                 let heal_coordinator = coordinator_http_base.clone();
                                 std::thread::spawn(move || {
+                                    if !ensure_python_verified(&heal_python, &heal_coordinator) {
+                                        tracing::error!("Self-heal: Python binary is broken and could not be recovered");
+                                        return;
+                                    }
                                     ensure_runtime_updated(&heal_python, &heal_coordinator);
                                     tracing::info!("Runtime self-heal complete — next attestation challenge will re-verify");
                                 });
@@ -5581,6 +5711,18 @@ async fn cmd_update(coordinator: String, force: bool) -> Result<()> {
             }
             _ => println!("  ⚠ vllm-mlx import check failed"),
         }
+    }
+
+    // Heal Python runtime if needed
+    println!("  Verifying Python runtime...");
+    let coordinator_http = base_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+        .replace("/ws/provider", "");
+    if !ensure_python_verified(&bundled_python.to_string_lossy(), &coordinator_http) {
+        println!("  ⚠ Python runtime could not be verified");
+    } else {
+        ensure_runtime_updated(&bundled_python.to_string_lossy(), &coordinator_http);
     }
 
     // Verify manifest if included in bundle
