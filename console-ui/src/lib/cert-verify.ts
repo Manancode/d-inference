@@ -219,10 +219,18 @@ export async function verifyCertificateChain(
             error: "Intermediate CA signature verification failed",
           };
         }
-      } catch {
-        // pkijs may throw on algorithm mismatches; fall back to chain validation
-        steps[2].status = "success";
-        steps[2].detail = "Certificate chain structure valid";
+      } catch (verifyErr) {
+        // Don't silently succeed — if verify() threw, we can't confirm the signature.
+        // Fall through to chain validation in Step 4 which does fingerprint-based checks.
+        steps[2].status = "error";
+        steps[2].detail = `Signature check inconclusive: ${verifyErr instanceof Error ? verifyErr.message : "unknown error"}`;
+        notify();
+        return {
+          success: false,
+          steps,
+          deviceInfo,
+          error: "Could not verify leaf certificate signature",
+        };
       }
     } else {
       steps[2].status = "error";
@@ -276,32 +284,25 @@ export async function verifyCertificateChain(
         }
       }
     } catch {
-      // Algorithm mismatch — fall back to fingerprint check
+      // Algorithm mismatch — fall back to fingerprint check only.
+      // Do NOT fall back to CN matching — an attacker could set the
+      // issuer CN to "Apple Enterprise Attestation Root CA" without
+      // actually being signed by Apple's key.
       const topDer = base64ToBuffer(certChainB64[certChainB64.length - 1]);
       const topFp = await sha256Fingerprint(topDer);
       if (topFp === rootFingerprint) {
         steps[3].status = "success";
         steps[3].detail = "Root CA fingerprint matches Apple's published cert";
       } else {
-        // The last cert might be an intermediate signed by the root
-        // In MDA, the root is NOT included in the chain. Just verify the
-        // issuer name matches.
-        const topIssuerCN = extractCN(topCert.issuer);
-        const rootCN = extractCN(rootCert.subject);
-        if (topIssuerCN === rootCN) {
-          steps[3].status = "success";
-          steps[3].detail = `Issuer matches ${rootCN}`;
-        } else {
-          steps[3].status = "error";
-          steps[3].detail = "Cannot verify against Apple Root CA";
-          notify();
-          return {
-            success: false,
-            steps,
-            deviceInfo,
-            error: "Cannot verify certificate chain against Apple Root CA",
-          };
-        }
+        steps[3].status = "error";
+        steps[3].detail = "Cannot cryptographically verify against Apple Root CA";
+        notify();
+        return {
+          success: false,
+          steps,
+          deviceInfo,
+          error: "Cannot verify certificate chain against Apple Root CA",
+        };
       }
     }
     notify();
