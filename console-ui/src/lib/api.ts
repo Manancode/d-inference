@@ -381,6 +381,11 @@ export async function streamChat(
       callbacks.onToken(contentAccum);
       contentAccum = "";
     }
+    // Flush any remaining think close-tag buffer (truncated thinking)
+    if (inThinkBlock && thinkCloseBuffer) {
+      callbacks.onThinking(thinkCloseBuffer);
+      thinkCloseBuffer = "";
+    }
   }
 
   function handleContentToken(text: string) {
