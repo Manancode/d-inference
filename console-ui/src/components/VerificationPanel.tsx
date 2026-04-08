@@ -86,13 +86,21 @@ function VerifyStepLine({ step }: { step: VerificationStep }) {
   );
 }
 
-/** Normal mode: human-readable trust guarantees. */
+/** Normal mode: human-readable trust guarantees with one-click verification. */
 function NormalModeContent({
   trust,
   onOpenExplainer,
+  verifySteps,
+  verifyResult,
+  verifying,
+  onVerify,
 }: {
   trust: TrustMetadata;
   onOpenExplainer: () => void;
+  verifySteps: VerificationStep[];
+  verifyResult: CertVerificationResult | null;
+  verifying: boolean;
+  onVerify: () => void;
 }) {
   const isHardware = trust.trustLevel === "hardware";
 
@@ -150,6 +158,50 @@ function NormalModeContent({
           </div>
         </div>
       ))}
+
+      {/* One-click verification for normal users */}
+      {isHardware && (
+        <div className="pt-2 border-t border-border-dim/50">
+          <button
+            onClick={onVerify}
+            disabled={verifying}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-light/50 border-2 border-teal/30 text-teal text-xs font-semibold hover:bg-teal-light/70 transition-colors disabled:opacity-50 w-full justify-center"
+          >
+            {verifying ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <ShieldCheck size={14} />
+            )}
+            {verifying
+              ? "Verifying with Apple..."
+              : verifyResult?.success
+                ? "Verified — genuine Apple device"
+                : "Verify this device with Apple"}
+          </button>
+
+          {/* Step-by-step progress */}
+          {verifySteps.length > 0 && (
+            <div className="mt-2 space-y-0.5">
+              {verifySteps.map((step, i) => (
+                <VerifyStepLine key={i} step={step} />
+              ))}
+            </div>
+          )}
+
+          {/* Result message */}
+          {verifyResult && (
+            <p
+              className={`mt-2 text-xs font-semibold text-center ${
+                verifyResult.success ? "text-accent-green" : "text-accent-red"
+              }`}
+            >
+              {verifyResult.success
+                ? `Verified by Apple Inc. ${verifyResult.deviceInfo?.serial ? `(${verifyResult.deviceInfo.serial})` : ""}`
+                : verifyResult.error || "Verification failed"}
+            </p>
+          )}
+        </div>
+      )}
 
       <button
         onClick={onOpenExplainer}
@@ -564,6 +616,10 @@ export function VerificationPanel({ trust }: { trust: TrustMetadata }) {
               <NormalModeContent
                 trust={trust}
                 onOpenExplainer={() => setShowExplainer(true)}
+                verifySteps={verifySteps}
+                verifyResult={verifyResult}
+                verifying={verifying}
+                onVerify={handleVerify}
               />
             ) : (
               <TechnicalModeContent
