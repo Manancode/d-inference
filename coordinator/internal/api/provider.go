@@ -968,6 +968,15 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 	}
 
 	provider.SetAttested(true, registry.TrustSelfSigned)
+
+	// The SE attestation already proves SIP, Secure Boot, and binary hash —
+	// the same checks a challenge re-verifies. Set LastChallengeVerified so
+	// the provider is immediately routable. The 5-minute challenge cycle will
+	// re-verify and add MDM cross-check for defense-in-depth.
+	// Without this, a freshly connected provider waits up to 5 minutes before
+	// it can serve any requests (until first challenge passes).
+	provider.SetLastChallengeVerified(time.Now())
+
 	s.logger.Info("provider attestation verified (self-signed)",
 		"provider_id", providerID,
 		"hardware_model", result.HardwareModel,

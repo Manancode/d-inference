@@ -165,6 +165,13 @@ func (p *Provider) SetAttested(attested bool, trust TrustLevel) {
 	p.mu.Unlock()
 }
 
+// SetLastChallengeVerified updates the challenge timestamp (thread-safe).
+func (p *Provider) SetLastChallengeVerified(t time.Time) {
+	p.mu.Lock()
+	p.LastChallengeVerified = t
+	p.mu.Unlock()
+}
+
 // Mu returns the provider's mutex for external callers that need to read
 // fields like Status atomically. Prefer dedicated getters where available.
 func (p *Provider) Mu() *sync.Mutex {
