@@ -2723,7 +2723,6 @@ async fn cmd_serve(
         let proxy_keypair = node_keypair.clone();
         let is_inprocess = proxy_backend_url.starts_with("inprocess://");
         let idle_python_cmd = python_cmd.clone();
-        let idle_be_port = be_port;
         let idle_backend_name = backend_name.to_string();
         let proxy_stats = provider_stats.clone();
         let model_to_url = model_to_url.clone();
@@ -2739,12 +2738,15 @@ async fn cmd_serve(
             .collect();
         // For idle reload: re-hash weights after reloading to detect tampering
         let rehash_handle = rehash_model_hash_opt.clone();
-        // For backwards compat (idle reload of primary model)
-        let idle_model_id = model.clone();
-        let idle_model = model_to_path
+        // For backwards compat (idle reload of primary model).
+        // These are mutable so the reload path can update them to match
+        // the *requested* model when it differs from the last-served one.
+        let mut idle_model_id = model.clone();
+        let mut idle_model = model_to_path
             .get(&model)
             .cloned()
             .unwrap_or_else(|| model.clone());
+        let mut idle_be_port = be_port;
         // Collect PIDs for per-process shutdown
         let backend_pids: Vec<(String, Option<u32>)> = backend_slots
             .iter()
@@ -2821,21 +2823,46 @@ async fn cmd_serve(
                                 last_request_time = tokio::time::Instant::now();
                                 inference_active.store(true, std::sync::atomic::Ordering::Relaxed);
 
+                                // Determine which model the request actually wants.
+                                let req_model_id = body.get("model")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
                                 // Reload backend if it was idle-shutdown.
-                                // Send InferenceError (not Accepted) if reload fails so
-                                // the coordinator can retry on another provider.
+                                // Use the REQUESTED model, not the last-served one.
                                 if !backend_running {
+                                    let (reload_path, reload_id) = if !req_model_id.is_empty() {
+                                        let path = model_to_path.get(&req_model_id)
+                                            .cloned()
+                                            .unwrap_or_else(|| {
+                                                model_to_path.iter()
+                                                    .find(|(k, _)| k.contains(&req_model_id) || req_model_id.contains(k.as_str()))
+                                                    .map(|(_, v)| v.clone())
+                                                    .unwrap_or_else(|| idle_model.clone())
+                                            });
+                                        if path != idle_model {
+                                            tracing::info!(
+                                                "Reloading with requested model {} (last-served was {})",
+                                                req_model_id, idle_model_id
+                                            );
+                                        }
+                                        (path, req_model_id.clone())
+                                    } else {
+                                        (idle_model.clone(), idle_model_id.clone())
+                                    };
+
                                     tracing::info!("Backend idle-shutdown — reloading for incoming request");
                                     match reload_backend(
                                         &idle_python_cmd,
                                         &idle_backend_name,
-                                        &idle_model,
+                                        &reload_path,
                                         idle_be_port,
                                     ).await {
                                         Ok(()) => {
                                             backend_running = true;
-                                            // Re-hash model weights on reload to detect
-                                            // any tampering that occurred while idle.
+                                            idle_model = reload_path;
+                                            idle_model_id = reload_id;
                                             if let Some(ref hash_arc) = rehash_handle {
                                                 if let Some(new_hash) = models::compute_weight_hash(&idle_model_id) {
                                                     *hash_arc.lock().unwrap() = Some(new_hash);
@@ -3250,18 +3277,38 @@ async fn reload_backend(
     }
 
     // Phase 2: Wait for model to be fully loaded into GPU memory
+    let mut model_loaded = false;
     for i in 0..150 {
         if backend::check_model_loaded(&backend_url).await {
             tracing::info!("Model loaded into GPU memory after {}s total", i * 2);
+            model_loaded = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+    if !model_loaded {
+        anyhow::bail!("model did not load into GPU memory within 300s after reload");
+    }
 
-    // Phase 3: Warmup — run a single-token inference to prime GPU caches
+    // Phase 3: Warmup — run a single-token inference to prime GPU caches.
+    // Retry a few times since the model may still be finalizing even after
+    // check_model_loaded returns true (e.g. 422 Unprocessable Entity).
     tracing::info!("Running warmup inference to prime GPU caches...");
     let warmup_start = std::time::Instant::now();
-    backend::warmup_backend(&backend_url).await;
+    let mut warmup_ok = false;
+    for attempt in 0..5 {
+        if backend::warmup_backend(&backend_url).await {
+            warmup_ok = true;
+            break;
+        }
+        if attempt < 4 {
+            tracing::info!("Warmup attempt {} failed — retrying in 5s...", attempt + 1);
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
+    if !warmup_ok {
+        anyhow::bail!("backend warmup failed after 5 attempts — model may not be fully loaded");
+    }
     tracing::info!(
         "Backend fully warm and ready (warmup took {:?})",
         warmup_start.elapsed()
