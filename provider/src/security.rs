@@ -378,6 +378,31 @@ pub struct RuntimeHashes {
 ///
 /// Simple recursive walk using `std::fs::read_dir` — no external crate needed.
 /// The vllm_mlx directory is shallow so this is efficient.
+/// Delete all `__pycache__` directories and `.pyc` files under `dir`.
+///
+/// SECURITY: Python executes `.pyc` bytecode instead of `.py` source on import.
+/// A malicious `.pyc` could intercept inference data without modifying any `.py`.
+/// By purging before every hash check, we force Python to recompile from the
+/// verified `.py` source and ensure the hash matches CI's clean state.
+fn purge_pycache(dir: &std::path::Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some("__pycache__") {
+                let _ = std::fs::remove_dir_all(&path);
+            } else {
+                purge_pycache(&path);
+            }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("pyc") {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 fn collect_files_recursive(
     dir: &std::path::Path,
     extension: &str,
@@ -417,19 +442,22 @@ pub fn compute_runtime_hashes(python_cmd: &str) -> RuntimeHashes {
     // backend, tokenizers), config files, and all dependencies. Any modification
     // to any file in any package is detected.
     //
-    // Excludes __pycache__/*.pyc files — these are generated at runtime when
-    // Python imports modules and would cause hash mismatches between CI (clean
-    // extraction) and providers (modules imported at least once).
+    // SECURITY: Delete all __pycache__ directories and .pyc files BEFORE hashing.
+    // Python executes .pyc bytecode instead of .py source on import — a malicious
+    // .pyc could intercept inference data without modifying any .py file. By
+    // deleting .pyc before hashing, we ensure: (1) only source/.so files are
+    // verified, (2) Python will recompile from verified .py source on next import,
+    // (3) CI and provider hash the same clean state.
     let eigeninference_dir = dirs::home_dir().unwrap_or_default().join(".eigeninference");
     let site_packages_dir = eigeninference_dir.join("python/lib/python3.12/site-packages");
     let runtime_hash = if site_packages_dir.exists() {
+        // Purge all __pycache__ dirs and .pyc files before hashing.
+        // This removes any attacker-planted bytecode AND ensures hash
+        // matches CI (which also strips __pycache__ before hashing).
+        purge_pycache(&site_packages_dir);
+
         let mut py_files = Vec::new();
         collect_files_recursive(&site_packages_dir, "*", &mut py_files);
-        // Exclude .pyc bytecode cache files — generated at runtime, not shipped by CI
-        py_files.retain(|p| {
-            let s = p.to_string_lossy();
-            !s.contains("__pycache__") && !s.ends_with(".pyc")
-        });
         py_files.sort();
         if py_files.is_empty() {
             None
