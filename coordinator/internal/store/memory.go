@@ -223,6 +223,35 @@ func (s *MemoryStore) UsageRecords() []UsageRecord {
 	return out
 }
 
+// UsageByConsumer returns usage records for a specific consumer key.
+func (s *MemoryStore) UsageByConsumer(consumerKey string) []UsageRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []UsageRecord
+	for _, u := range s.usage {
+		if u.ConsumerKey == consumerKey {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// RecordUsageWithCost logs a usage event with request ID and cost (in-memory).
+func (s *MemoryStore) RecordUsageWithCost(providerID, consumerKey, model, requestID string, promptTokens, completionTokens int, costMicroUSD int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usage = append(s.usage, UsageRecord{
+		ProviderID:       providerID,
+		ConsumerKey:      consumerKey,
+		Model:            model,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		Timestamp:        time.Now(),
+		RequestID:        requestID,
+		CostMicroUSD:     costMicroUSD,
+	})
+}
+
 // KeyCount returns the number of active API keys.
 func (s *MemoryStore) KeyCount() int {
 	s.mu.RLock()

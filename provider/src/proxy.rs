@@ -173,76 +173,26 @@ async fn handle_non_streaming_request(
         }
     };
 
-    // Extract token usage info for billing
+    // Extract token usage info for billing (format-agnostic: handles both
+    // chat completions prompt_tokens/completion_tokens and Responses API
+    // input_tokens/output_tokens).
     let usage = extract_usage(&response_json);
     let completion_tokens = usage.completion_tokens;
 
-    // Extract the full message object from the response (content + tool_calls).
-    let message = response_json
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("message"))
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({"role": "assistant", "content": ""}));
+    // Forward the raw backend response as a single chunk. The proxy is
+    // format-agnostic — it doesn't parse choices/output/message fields.
+    // vllm-mlx handles all format-specific logic; we just relay the response.
+    let raw_json = serde_json::to_string(&response_json).unwrap_or_default();
 
-    let finish_reason = response_json
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("finish_reason"))
-        .and_then(|f| f.as_str())
-        .unwrap_or("stop");
-
-    // Sign the response content with the Secure Enclave key.
-    // For signing, use the text content (tool_calls are structural, not secret).
-    let content = message
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
-    let sign_data = format!("{}:{}:{}", request_id, usage.completion_tokens, content);
+    // Sign the raw response with the Secure Enclave key.
+    let sign_data = format!("{}:{}:{}", request_id, completion_tokens, &raw_json);
     let response_hash = security::sha256_hex(sign_data.as_bytes());
     let se_signature = security::se_sign(response_hash.as_bytes());
 
-    // Send the full message as an SSE-format chunk so the coordinator's
-    // non-streaming handler can reconstruct the complete response.
-    // The delta mirrors the message object (content + tool_calls if present).
-    let mut delta = serde_json::Map::new();
-    delta.insert("role".to_string(), serde_json::json!("assistant"));
-    if let Some(c) = message.get("content") {
-        delta.insert("content".to_string(), c.clone());
-    }
-    if let Some(tc) = message.get("tool_calls") {
-        // Convert non-streaming tool_calls to streaming delta format (add index).
-        if let Some(tool_calls) = tc.as_array() {
-            let indexed: Vec<serde_json::Value> = tool_calls
-                .iter()
-                .enumerate()
-                .map(|(i, tc)| {
-                    let mut tc = tc.clone();
-                    if let Some(obj) = tc.as_object_mut() {
-                        obj.insert("index".to_string(), serde_json::json!(i));
-                    }
-                    tc
-                })
-                .collect();
-            delta.insert("tool_calls".to_string(), serde_json::json!(indexed));
-        }
-    }
-
-    let chunk_json = serde_json::json!({
-        "id": response_json.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-        "object": "chat.completion.chunk",
-        "choices": [{
-            "index": 0,
-            "delta": delta,
-            "finish_reason": finish_reason,
-        }],
-    });
     outbound_tx
         .send(ProviderMessage::InferenceResponseChunk {
             request_id: request_id.to_string(),
-            data: format!("data: {}", chunk_json),
+            data: format!("data: {}", raw_json),
         })
         .await
         .ok();
@@ -873,16 +823,22 @@ async fn do_image_generation(
 ///
 /// Looks for the standard OpenAI "usage" object with prompt_tokens and
 /// completion_tokens fields. Returns zeros if the fields are missing.
+/// Extract usage from any OpenAI-compatible response format.
+/// Chat completions uses prompt_tokens/completion_tokens.
+/// Responses API uses input_tokens/output_tokens.
 fn extract_usage(response: &serde_json::Value) -> UsageInfo {
     let usage = response.get("usage");
 
     let prompt_tokens = usage
-        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|u| u.get("prompt_tokens").or_else(|| u.get("input_tokens")))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let completion_tokens = usage
-        .and_then(|u| u.get("completion_tokens"))
+        .and_then(|u| {
+            u.get("completion_tokens")
+                .or_else(|| u.get("output_tokens"))
+        })
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 

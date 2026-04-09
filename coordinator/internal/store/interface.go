@@ -39,11 +39,17 @@ type Store interface {
 	// RecordUsage logs an inference usage event.
 	RecordUsage(providerID, consumerKey, model string, promptTokens, completionTokens int)
 
+	// RecordUsageWithCost logs an inference usage event including request ID and cost.
+	RecordUsageWithCost(providerID, consumerKey, model, requestID string, promptTokens, completionTokens int, costMicroUSD int64)
+
 	// RecordPayment records a settled payment between consumer and provider.
 	RecordPayment(txHash, consumerAddr, providerAddr, amountUSD, model string, promptTokens, completionTokens int, memo string) error
 
 	// UsageRecords returns all usage records.
 	UsageRecords() []UsageRecord
+
+	// UsageByConsumer returns usage records for a specific consumer key.
+	UsageByConsumer(consumerKey string) []UsageRecord
 
 	// KeyCount returns the number of active API keys.
 	KeyCount() int
@@ -252,6 +258,9 @@ type UsageRecord struct {
 	PromptTokens     int       `json:"prompt_tokens"`
 	CompletionTokens int       `json:"completion_tokens"`
 	Timestamp        time.Time `json:"timestamp"`
+	RequestID        string    `json:"request_id,omitempty"`
+	CostMicroUSD     int64     `json:"cost_micro_usd,omitempty"`
+	CreatedAt        time.Time `json:"created_at,omitempty"`
 }
 
 // LedgerEntryType categorizes balance changes.

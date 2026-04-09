@@ -105,6 +105,10 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		`DO $$ BEGIN ALTER TABLE providers ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN others THEN NULL; END $$`,
 		`CREATE INDEX IF NOT EXISTS idx_providers_serial ON providers(serial_number) WHERE serial_number != ''`,
 
+		// Migrate usage table: add request_id and cost columns
+		`DO $$ BEGIN ALTER TABLE usage ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN others THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE usage ADD COLUMN IF NOT EXISTS cost_micro_usd BIGINT NOT NULL DEFAULT 0; EXCEPTION WHEN others THEN NULL; END $$`,
+
 		// Provider reputation — persistent reputation tracking
 		`CREATE TABLE IF NOT EXISTS provider_reputation (
 			provider_id TEXT PRIMARY KEY REFERENCES providers(id),
@@ -135,7 +139,9 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			model TEXT NOT NULL,
 			prompt_tokens INTEGER NOT NULL,
 			completion_tokens INTEGER NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			request_id TEXT NOT NULL DEFAULT '',
+			cost_micro_usd BIGINT NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS payments (
 			id BIGSERIAL PRIMARY KEY,
@@ -478,6 +484,46 @@ func (s *PostgresStore) RecordUsage(providerID, consumerKey, model string, promp
 		`INSERT INTO usage (provider_id, consumer_key_hash, model, prompt_tokens, completion_tokens)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		providerID, h, model, promptTokens, completionTokens,
+	)
+}
+
+// UsageByConsumer returns usage records for a specific consumer key.
+func (s *PostgresStore) UsageByConsumer(consumerKey string) []UsageRecord {
+	h := hashKey(consumerKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT provider_id, consumer_key_hash, model, prompt_tokens, completion_tokens, created_at, request_id, cost_micro_usd
+		 FROM usage WHERE consumer_key_hash = $1 ORDER BY created_at DESC LIMIT 100`, h)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var records []UsageRecord
+	for rows.Next() {
+		var r UsageRecord
+		if err := rows.Scan(&r.ProviderID, &r.ConsumerKey, &r.Model, &r.PromptTokens, &r.CompletionTokens, &r.CreatedAt, &r.RequestID, &r.CostMicroUSD); err != nil {
+			continue
+		}
+		records = append(records, r)
+	}
+	return records
+}
+
+// RecordUsageWithCost inserts a usage record with request ID and cost.
+func (s *PostgresStore) RecordUsageWithCost(providerID, consumerKey, model, requestID string, promptTokens, completionTokens int, costMicroUSD int64) {
+	h := hashKey(consumerKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, _ = s.pool.Exec(ctx,
+		`INSERT INTO usage (provider_id, consumer_key_hash, model, prompt_tokens, completion_tokens, request_id, cost_micro_usd)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		providerID, h, model, promptTokens, completionTokens, requestID, costMicroUSD,
 	)
 }
 

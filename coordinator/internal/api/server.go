@@ -471,6 +471,7 @@ func (s *Server) routes() {
 
 	// Consumer endpoints — API key auth required.
 	s.mux.HandleFunc("POST /v1/chat/completions", s.requireAuth(s.handleChatCompletions))
+	s.mux.HandleFunc("POST /v1/responses", s.requireAuth(s.handleChatCompletions)) // Responses API — same handler, auto-detects input vs messages
 	s.mux.HandleFunc("POST /v1/completions", s.requireAuth(s.handleCompletions))
 	s.mux.HandleFunc("POST /v1/messages", s.requireAuth(s.handleAnthropicMessages))
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.requireAuth(s.handleTranscriptions))

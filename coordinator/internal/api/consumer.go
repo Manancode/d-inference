@@ -111,10 +111,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Accept either chat completions format (messages) or Responses API
+	// format (input). The provider's backend handles both natively.
 	messages, _ := parsed["messages"].([]any)
-	if len(messages) == 0 {
-		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "messages is required and must be non-empty"))
+	input := parsed["input"]
+	if len(messages) == 0 && input == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "messages or input is required"))
 		return
+	}
+
+	// If this is a Responses API request, tag it so the provider proxies
+	// to /v1/responses instead of /v1/chat/completions.
+	if input != nil && len(messages) == 0 {
+		parsed["endpoint"] = "/v1/responses"
+		rawBody, _ = json.Marshal(parsed)
 	}
 
 	stream, _ := parsed["stream"].(bool)
@@ -914,9 +924,18 @@ func (s *Server) handleStreamingResponseWithFirstChunk(w http.ResponseWriter, r 
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Detect Responses API format to skip appending chat-completions-style
+	// termination events (SE signature chunk + [DONE]).
+	sawResponsesAPI := false
+
 	// Write the first chunk that was already consumed during dispatch.
 	if firstChunk != "" {
-		firstChunk = normalizeSSEChunk(firstChunk)
+		if strings.Contains(firstChunk, `"response.created"`) || strings.Contains(firstChunk, `"response.output_text.delta"`) {
+			sawResponsesAPI = true
+		}
+		if !sawResponsesAPI {
+			firstChunk = normalizeSSEChunk(firstChunk)
+		}
 		fmt.Fprintf(w, "%s\n\n", firstChunk)
 		flusher.Flush()
 	}
@@ -931,23 +950,33 @@ func (s *Server) handleStreamingResponseWithFirstChunk(w http.ResponseWriter, r 
 		case chunk, ok := <-pr.ChunkCh:
 			if !ok {
 				// Channel closed — inference complete.
-				// Include SE signature as final event before [DONE].
-				// Wrap in a valid OpenAI-compatible chunk structure so
-				// strict parsers (Vercel AI SDK, etc.) don't reject it.
-				if pr.SESignature != "" {
-					sigEvent, _ := json.Marshal(map[string]any{
-						"choices":       []any{},
-						"se_signature":  pr.SESignature,
-						"response_hash": pr.ResponseHash,
-					})
-					fmt.Fprintf(w, "data: %s\n\n", sigEvent)
+				// For Responses API streams, the provider already sent
+				// "response.completed" as the terminal event. Adding
+				// extra chunks would break SDK parsers.
+				if !sawResponsesAPI {
+					// Chat completions format: append SE signature + [DONE].
+					if pr.SESignature != "" {
+						sigEvent, _ := json.Marshal(map[string]any{
+							"choices":       []any{},
+							"se_signature":  pr.SESignature,
+							"response_hash": pr.ResponseHash,
+						})
+						fmt.Fprintf(w, "data: %s\n\n", sigEvent)
+						flusher.Flush()
+					}
+					fmt.Fprint(w, "data: [DONE]\n\n")
 					flusher.Flush()
 				}
-				fmt.Fprint(w, "data: [DONE]\n\n")
-				flusher.Flush()
 				return
 			}
-			chunk = normalizeSSEChunk(chunk)
+			if !sawResponsesAPI {
+				if strings.Contains(chunk, `"response.created"`) || strings.Contains(chunk, `"response.output_text.delta"`) {
+					sawResponsesAPI = true
+				}
+			}
+			if !sawResponsesAPI {
+				chunk = normalizeSSEChunk(chunk)
+			}
 			fmt.Fprintf(w, "%s\n\n", chunk)
 			flusher.Flush()
 
@@ -1002,6 +1031,34 @@ func (s *Server) handleNonStreamingResponseWithFirstChunk(w http.ResponseWriter,
 		select {
 		case chunk, ok := <-pr.ChunkCh:
 			if !ok {
+				// The provider forwards the raw backend response as a single
+				// chunk. Detect complete responses (object=chat.completion
+				// or object=response) and pass through directly — this is
+				// format-agnostic and works for chat completions, Responses
+				// API, or any future endpoint without parsing.
+				if len(chunks) == 1 {
+					raw := strings.TrimPrefix(chunks[0], "data: ")
+					var obj map[string]any
+					if json.Unmarshal([]byte(raw), &obj) == nil {
+						objType, _ := obj["object"].(string)
+						// Complete responses have object=chat.completion or
+						// object=response. Delta chunks have object=chat.completion.chunk.
+						if objType == "chat.completion" || objType == "response" {
+							select {
+							case <-pr.CompleteCh:
+							case <-ctx.Done():
+							}
+							if pr.SESignature != "" {
+								obj["se_signature"] = pr.SESignature
+								obj["response_hash"] = pr.ResponseHash
+							}
+							writeJSON(w, http.StatusOK, obj)
+							return
+						}
+					}
+				}
+
+				// Fallback: SSE delta chunks — reconstruct into response.
 				msg := extractMessage(chunks)
 				select {
 				case usage := <-pr.CompleteCh:
@@ -1399,23 +1456,22 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	entries := s.ledger.Usage(consumerKey)
 
 	// If in-memory usage is empty (coordinator restarted), build from
-	// persisted ledger entries so the billing page isn't blank.
+	// the persisted usage table which has full request details.
 	if len(entries) == 0 {
-		accountID := s.resolveAccountID(r)
-		if accountID != "" {
-			ledgerEntries := s.store.LedgerHistory(accountID)
-			for _, le := range ledgerEntries {
-				if le.Type == store.LedgerCharge && le.Reference != "" && !strings.HasPrefix(le.Reference, "reserve:") {
-					entries = append(entries, payments.UsageEntry{
-						JobID:            le.Reference,
-						Model:            "",
-						CostMicroUSD:     -le.AmountMicroUSD, // charges are negative
-						PromptTokens:     0,
-						CompletionTokens: 0,
-						Timestamp:        le.CreatedAt,
-					})
-				}
+		usageRecords := s.store.UsageByConsumer(consumerKey)
+		for _, u := range usageRecords {
+			jobID := u.RequestID
+			if jobID == "" {
+				jobID = u.ProviderID
 			}
+			entries = append(entries, payments.UsageEntry{
+				JobID:            jobID,
+				Model:            u.Model,
+				PromptTokens:     u.PromptTokens,
+				CompletionTokens: u.CompletionTokens,
+				CostMicroUSD:     u.CostMicroUSD,
+				Timestamp:        u.CreatedAt,
+			})
 		}
 	}
 
@@ -1455,6 +1511,26 @@ func (s *Server) handleProviderEarnings(w http.ResponseWriter, r *http.Request) 
 			totalJobs++
 		}
 	}
+
+	// If in-memory payouts are empty (coordinator restarted), reconstruct
+	// from persisted ledger entries (payout type with wallet as account).
+	if len(walletPayouts) == 0 {
+		ledgerEntries := s.store.LedgerHistory(wallet)
+		for _, le := range ledgerEntries {
+			if le.Type == store.LedgerPayout && le.Reference != "" {
+				walletPayouts = append(walletPayouts, payments.Payout{
+					ProviderAddress: wallet,
+					AmountMicroUSD:  le.AmountMicroUSD,
+					JobID:           le.Reference,
+					Timestamp:       le.CreatedAt,
+					Settled:         true,
+				})
+				totalEarned += le.AmountMicroUSD
+				totalJobs++
+			}
+		}
+	}
+
 	if walletPayouts == nil {
 		walletPayouts = []payments.Payout{}
 	}

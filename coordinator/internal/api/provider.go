@@ -643,7 +643,6 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 	// check usage immediately after the HTTP response completes.
 	responseTime := time.Duration(msg.Usage.CompletionTokens) * time.Millisecond * 10
 	s.registry.RecordJobSuccess(providerID, responseTime)
-	s.store.RecordUsage(providerID, pr.ConsumerKey, pr.Model, msg.Usage.PromptTokens, msg.Usage.CompletionTokens)
 
 	// Calculate cost — check provider's custom price, then platform DB price,
 	// then hardcoded defaults.
@@ -688,7 +687,8 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 		}
 	}
 
-	// Record usage entry for the consumer's payment history.
+	// Record usage entry — both in-memory (for current session) and persisted
+	// to database (survives coordinator restart).
 	s.ledger.RecordUsage(pr.ConsumerKey, payments.UsageEntry{
 		JobID:            msg.RequestID,
 		Model:            pr.Model,
@@ -697,6 +697,7 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 		CostMicroUSD:     totalCost,
 		Timestamp:        time.Now(),
 	})
+	s.store.RecordUsageWithCost(providerID, pr.ConsumerKey, pr.Model, msg.RequestID, msg.Usage.PromptTokens, msg.Usage.CompletionTokens, totalCost)
 
 	// Credit the provider's pending payout.
 	// If the provider is linked to an account (via device auth), credit that account.
@@ -862,13 +863,14 @@ func (s *Server) handleImageGenerationComplete(providerID string, provider *regi
 		)
 	}
 
-	// Record usage entry.
+	// Record usage entry — in-memory + persisted.
 	s.ledger.RecordUsage(pr.ConsumerKey, payments.UsageEntry{
 		JobID:        msg.RequestID,
 		Model:        pr.Model,
 		CostMicroUSD: totalCost,
 		Timestamp:    time.Now(),
 	})
+	s.store.RecordUsageWithCost(providerID, pr.ConsumerKey, pr.Model, msg.RequestID, 0, 0, totalCost)
 
 	// Credit the provider.
 	providerWallet := ""
