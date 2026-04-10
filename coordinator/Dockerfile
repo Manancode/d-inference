@@ -7,11 +7,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o coordinator ./cmd/coordina
 
 # Download MicroMDM and step-ca binaries.
 FROM alpine:3.21 AS fetcher
-RUN apk add --no-cache curl tar
-# MicroMDM v1.12.1
-RUN curl -fsSL https://github.com/micromdm/micromdm/releases/download/v1.12.1/micromdm_v1.12.1_linux_amd64.tar.gz \
-    | tar -xz -C /tmp && mv /tmp/build/linux/micromdm /usr/local/bin/micromdm \
-    && mv /tmp/build/linux/mdmctl /usr/local/bin/mdmctl
+RUN apk add --no-cache curl tar unzip
+# MicroMDM v1.13.1
+RUN curl -fsSL -o /tmp/micromdm.zip https://github.com/micromdm/micromdm/releases/download/v1.13.1/micromdm_v1.13.1.zip \
+    && unzip -o /tmp/micromdm.zip -d /tmp && mv /tmp/build/linux/micromdm /usr/local/bin/micromdm \
+    && mv /tmp/build/linux/mdmctl /usr/local/bin/mdmctl && rm /tmp/micromdm.zip
 # step-ca (Smallstep)
 RUN curl -fsSL https://dl.smallstep.com/gh-release/certificates/gh-release-header/v0.28.3/step-ca_linux_0.28.3_amd64.tar.gz \
     | tar -xz -C /tmp && mv /tmp/step-ca_0.28.3/bin/step-ca /usr/local/bin/step-ca
