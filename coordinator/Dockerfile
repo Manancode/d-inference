@@ -12,9 +12,9 @@ RUN apk add --no-cache curl tar unzip
 RUN curl -fsSL -o /tmp/micromdm.zip https://github.com/micromdm/micromdm/releases/download/v1.13.1/micromdm_v1.13.1.zip \
     && unzip -o /tmp/micromdm.zip -d /tmp && mv /tmp/build/linux/micromdm /usr/local/bin/micromdm \
     && mv /tmp/build/linux/mdmctl /usr/local/bin/mdmctl && rm /tmp/micromdm.zip
-# step-ca (Smallstep)
+# step-ca (Smallstep) — step-ca extracts flat, step CLI into step_VERSION/bin/
 RUN curl -fsSL https://dl.smallstep.com/gh-release/certificates/gh-release-header/v0.28.3/step-ca_linux_0.28.3_amd64.tar.gz \
-    | tar -xz -C /tmp && mv /tmp/step-ca_0.28.3/bin/step-ca /usr/local/bin/step-ca
+    | tar -xz -C /tmp && mv /tmp/step-ca /usr/local/bin/step-ca
 RUN curl -fsSL https://dl.smallstep.com/gh-release/cli/gh-release-header/v0.28.3/step_linux_0.28.3_amd64.tar.gz \
     | tar -xz -C /tmp && mv /tmp/step_0.28.3/bin/step /usr/local/bin/step
 
