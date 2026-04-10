@@ -40,6 +40,9 @@ COPY deploy/Apple_Enterprise_Attestation_Root_CA.pem /data/step-ca/apple/Apple_E
 # ACME device-attest-01 certificate template.
 COPY deploy/acme-device.tpl /data/step-ca/templates/acme-device.tpl
 
+# Caddyfile — EigenCloud's layered build picks this up from /Caddyfile.
+COPY Caddyfile /Caddyfile
+
 # Entrypoint.
 COPY deploy/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
