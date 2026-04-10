@@ -19,7 +19,7 @@ RUN curl -fsSL https://dl.smallstep.com/gh-release/cli/gh-release-header/v0.28.3
     | tar -xz -C /tmp && mv /tmp/step_0.28.3/bin/step /usr/local/bin/step
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates su-exec openssl
+RUN apk add --no-cache ca-certificates su-exec openssl jq
 
 # Binaries.
 COPY --from=builder /app/coordinator /usr/local/bin/coordinator

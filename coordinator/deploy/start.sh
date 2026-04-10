@@ -6,31 +6,37 @@ if [ ! -d "/data/step-ca/config" ]; then
     echo "Initializing step-ca (first boot)..."
     mkdir -p /data/step-ca/secrets
     echo "eigeninference-step-ca" > /data/step-ca/secrets/password
-    step ca init \
+    STEPPATH=/data/step-ca step ca init \
         --name "EigenInference CA" \
         --dns "${DOMAIN:-localhost}" \
         --address ":9000" \
         --provisioner "eigeninference-admin" \
         --password-file /data/step-ca/secrets/password \
         --deployment-type standalone \
-        --path /data/step-ca 2>&1
+        --acme 2>&1
     echo "step-ca initialized."
 
-    # Add ACME provisioner for device-attest-01 (Apple Secure Enclave attestation)
-    echo "Adding ACME device-attest-01 provisioner..."
-    STEPPATH=/data/step-ca step ca provisioner add eigeninference-acme \
-        --type ACME \
-        --challenge device-attest-01 \
-        --attestation-format apple \
-        --attestation-roots /data/step-ca/apple/Apple_Enterprise_Attestation_Root_CA.pem \
-        --x509-template /data/step-ca/templates/acme-device.tpl \
-        --admin-provisioner eigeninference-admin \
-        --admin-password-file /data/step-ca/secrets/password \
-        2>&1 || echo "ACME provisioner may already exist"
+    # Patch ca.json: replace the default ACME provisioner with one configured
+    # for device-attest-01 (Apple Secure Enclave attestation).
+    echo "Configuring ACME device-attest-01 provisioner..."
+    CA_JSON=/data/step-ca/config/ca.json
+    jq '(.authority.provisioners[] | select(.type == "ACME")) |=
+        {
+            "type": "ACME",
+            "name": "eigeninference-acme",
+            "challenges": ["device-attest-01"],
+            "attestationFormats": ["apple"],
+            "forceCN": false,
+            "options": {
+                "x509": {
+                    "templateFile": "/data/step-ca/templates/acme-device.tpl"
+                }
+            }
+        }' "$CA_JSON" > /tmp/ca.json && mv /tmp/ca.json "$CA_JSON"
     echo "ACME provisioner configured."
 fi
 echo "Starting step-ca..."
-step-ca /data/step-ca/config/ca.json \
+STEPPATH=/data/step-ca step-ca /data/step-ca/config/ca.json \
     --password-file /data/step-ca/secrets/password \
     >> /data/step-ca.log 2>&1 &
 echo "step-ca started (port 9000)."
