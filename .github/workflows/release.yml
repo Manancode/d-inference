@@ -355,6 +355,7 @@ jobs:
           cd app/EigenInference
           swift build -c release 2>&1 | tail -3
           APP_BIN=$(swift build -c release --show-bin-path)/EigenInference
+          cd "$GITHUB_WORKSPACE"
 
           # Create app bundle
           APP_DIR="/tmp/EigenInference.app"
@@ -412,15 +413,18 @@ jobs:
 
           # Notarize DMG
           xcrun notarytool submit "/tmp/EigenInference.dmg" \
-            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" \
-            --keychain-profile "notarytool-profile" --wait || true
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait || true
           xcrun stapler staple "/tmp/EigenInference.dmg" || true
 
           echo "DMG_SIZE=$(du -h /tmp/EigenInference.dmg | cut -f1)" >> $GITHUB_ENV
           echo "DMG built: $(du -h /tmp/EigenInference.dmg | cut -f1)"
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: "SLDQ2GJ6TL"
 
       - name: Upload DMG to R2
         env:
