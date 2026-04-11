@@ -5171,10 +5171,10 @@ async fn cmd_doctor(coordinator_url: String) -> Result<()> {
         issues.push("Download a model: darkbloom models download".to_string());
     }
 
-    // 7. Node key
+    // 7. Node key (SE-derived keys don't touch disk, so try loading rather than checking file)
     print!("7. Node encryption key......... ");
     let key_path = crypto::default_key_path().unwrap_or_default();
-    if key_path.exists() {
+    if crypto::NodeKeyPair::load_or_generate(&key_path).is_ok() {
         println!("✓ Generated");
         passed += 1;
     } else {
