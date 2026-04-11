@@ -21,7 +21,7 @@ import {
 
 const API_KEY_STORAGE = "eigeninference_api_key";
 const COORDINATOR_STORAGE = "eigeninference_coordinator_url";
-const DEFAULT_COORDINATOR = "https://inference-test.openinnovation.dev";
+const DEFAULT_COORDINATOR = "https://api.darkbloom.dev";
 
 function getApiKey() {
   if (typeof window === "undefined") return "";

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/x509"
+	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -94,7 +95,7 @@ type Server struct {
 	// It can only POST /v1/releases — no admin access.
 	releaseKey string
 
-	// consoleURL is the frontend URL (e.g. "https://private-inference.openinnovation.dev").
+	// consoleURL is the frontend URL (e.g. "https://console.darkbloom.dev").
 	// Used for device auth verification_uri so the browser opens the console, not the coordinator.
 	consoleURL string
 
@@ -458,8 +459,18 @@ func (s *Server) HandleMDMWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+//go:embed install.sh
+var installScript []byte
+
 // routes mounts all HTTP and WebSocket handlers.
 func (s *Server) routes() {
+	// Install script — served directly from embedded binary.
+	s.mux.HandleFunc("GET /install.sh", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(installScript)
+	})
+
 	// Health check — no auth required.
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 

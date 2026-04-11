@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-const ATTESTATION_API = "https://inference-test.openinnovation.dev";
+const ATTESTATION_API = "https://api.darkbloom.dev";
 
 function maskSerial(serial: string): string {
   if (serial.length <= 6) return serial;

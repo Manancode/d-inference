@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const defaultCoord = process.env.NEXT_PUBLIC_COORDINATOR_URL || "https://inference-test.openinnovation.dev";
+  const defaultCoord = process.env.NEXT_PUBLIC_COORDINATOR_URL || "https://api.darkbloom.dev";
   const coordUrl = req.headers.get("x-coordinator-url") || defaultCoord;
   const apiKey = req.headers.get("x-api-key") || "";
 

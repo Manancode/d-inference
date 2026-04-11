@@ -63,7 +63,7 @@ const STEPS = [
     icon: Terminal,
     title: "Install the Provider CLI",
     description: "One command to download and install the EigenInference provider on your Mac.",
-    command: "curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash",
+    command: "curl -fsSL https://api.darkbloom.dev/install.sh | bash",
   },
   {
     icon: Shield,

@@ -26,7 +26,7 @@ import {
   Info,
 } from "lucide-react";
 
-const ATTESTATION_API = "https://inference-test.openinnovation.dev";
+const ATTESTATION_API = "https://api.darkbloom.dev";
 
 /** Mask a serial number for normal mode: show first 4 + last 2, mask the rest. */
 function maskSerial(serial: string): string {

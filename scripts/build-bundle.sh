@@ -401,7 +401,7 @@ print('   ✓ manifest.json uploaded to R2')
 
         # Register runtime hashes with coordinator
         echo "   Registering runtime hashes with coordinator..."
-        COORDINATOR="https://inference-test.openinnovation.dev"
+        COORDINATOR="https://api.darkbloom.dev"
         curl -fsSL -X POST "$COORDINATOR/v1/runtime/manifest" \
             -H "Content-Type: application/json" \
             -d @"$BUNDLE_DIR/manifest.json" 2>/dev/null \
@@ -422,7 +422,7 @@ echo ""
 if [ "$UPLOAD" = true ]; then
     echo "  Status: UPLOADED"
     echo "  Users can install with:"
-    echo "    curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+    echo "    curl -fsSL https://api.darkbloom.dev/install.sh | bash"
 else
     echo "  To upload:"
     echo "    ./scripts/build-bundle.sh --upload"

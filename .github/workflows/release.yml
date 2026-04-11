@@ -347,6 +347,98 @@ jobs:
             --endpoint-url "$R2_ENDPOINT"
           echo "Uploaded to R2: releases/v${VERSION}/eigeninference-bundle-macos-arm64.tar.gz"
 
+      # --- Build macOS App (DMG) ---
+
+      - name: Build macOS app
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd app/EigenInference
+          swift build -c release 2>&1 | tail -3
+          APP_BIN=$(swift build -c release --show-bin-path)/EigenInference
+
+          # Create app bundle
+          APP_DIR="/tmp/EigenInference.app"
+          CONTENTS="$APP_DIR/Contents"
+          MACOS="$CONTENTS/MacOS"
+          RESOURCES="$CONTENTS/Resources"
+          rm -rf "$APP_DIR"
+          mkdir -p "$MACOS" "$RESOURCES"
+
+          # Info.plist
+          cat > "$CONTENTS/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>EigenInference</string>
+            <key>CFBundleDisplayName</key><string>EigenInference</string>
+            <key>CFBundleIdentifier</key><string>io.eigeninference.provider</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleExecutable</key><string>EigenInference</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Copy binaries (same signed binaries as CLI bundle)
+          cp "$APP_BIN" "$MACOS/EigenInference"
+          cp /tmp/eigeninference-bundle/eigeninference-provider "$MACOS/eigeninference-provider"
+          cp /tmp/eigeninference-bundle/eigeninference-enclave "$MACOS/eigeninference-enclave" 2>/dev/null || true
+
+          # Sign all binaries with Hardened Runtime
+          for bin in "$MACOS"/*; do
+            codesign --force --options runtime \
+              --entitlements scripts/entitlements.plist \
+              --sign "$DEVELOPER_ID" "$bin"
+          done
+          codesign --force --options runtime --no-strict \
+            --entitlements scripts/entitlements.plist \
+            --sign "$DEVELOPER_ID" "$APP_DIR"
+
+          # Create DMG
+          DMG_TMP="/tmp/dmg-staging"
+          rm -rf "$DMG_TMP"
+          mkdir -p "$DMG_TMP"
+          cp -a "$APP_DIR" "$DMG_TMP/"
+          ln -s /Applications "$DMG_TMP/Applications"
+          hdiutil create -volname "EigenInference" -srcfolder "$DMG_TMP" \
+            -ov -format UDZO "/tmp/EigenInference.dmg" >/dev/null
+          rm -rf "$DMG_TMP"
+
+          # Notarize DMG
+          xcrun notarytool submit "/tmp/EigenInference.dmg" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" \
+            --keychain-profile "notarytool-profile" --wait || true
+          xcrun stapler staple "/tmp/EigenInference.dmg" || true
+
+          echo "DMG_SIZE=$(du -h /tmp/EigenInference.dmg | cut -f1)" >> $GITHUB_ENV
+          echo "DMG built: $(du -h /tmp/EigenInference.dmg | cut -f1)"
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+
+      - name: Upload DMG to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Versioned
+          aws s3 cp /tmp/EigenInference.dmg \
+            "s3://d-inf-app/releases/v${VERSION}/EigenInference.dmg" \
+            --endpoint-url "$R2_ENDPOINT"
+          # Latest (stable URL for website download button)
+          aws s3 cp /tmp/EigenInference.dmg \
+            "s3://d-inf-app/releases/latest/EigenInference.dmg" \
+            --endpoint-url "$R2_ENDPOINT"
+          echo "DMG uploaded to R2: releases/v${VERSION}/EigenInference.dmg + releases/latest/EigenInference.dmg"
+
       # --- Register with coordinator ---
 
       - name: Register release with coordinator
@@ -402,7 +494,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: /tmp/eigeninference-bundle-macos-arm64.tar.gz
+          files: |
+            /tmp/eigeninference-bundle-macos-arm64.tar.gz
+            /tmp/EigenInference.dmg
           generate_release_notes: true
           body: |
             ## Provider v${{ github.ref_name }}
@@ -416,5 +510,5 @@ jobs:
 
             ### Install
             ```bash
-            curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash
+            curl -fsSL https://api.darkbloom.dev/install.sh | bash
             ```

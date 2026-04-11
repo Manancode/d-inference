@@ -299,7 +299,7 @@ describe("proxy headers", () => {
     await fetchBalance();
 
     const [, opts] = fetchMock.mock.calls[0];
-    expect(opts.headers["x-coordinator-url"]).toContain("openinnovation.dev");
+    expect(opts.headers["x-coordinator-url"]).toContain("darkbloom.dev");
   });
 
   it("includes x-api-key when set in localStorage", async () => {

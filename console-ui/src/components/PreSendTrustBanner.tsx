@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { ShieldCheck, Info } from "lucide-react";
 import { TrustExplainerModal } from "./TrustExplainerModal";
 
-const ATTESTATION_API = "https://inference-test.openinnovation.dev";
+const ATTESTATION_API = "https://api.darkbloom.dev";
 
 interface ProviderSummary {
   count: number;

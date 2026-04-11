@@ -1422,7 +1422,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback to hardcoded version + coordinator download.
 	scheme := "https"
-	if r.TLS == nil && !strings.Contains(r.Host, "openinnovation.dev") {
+	if r.TLS == nil && !strings.Contains(r.Host, "darkbloom.dev") {
 		scheme = "http"
 	}
 	downloadURL := fmt.Sprintf("%s://%s/dl/eigeninference-bundle-macos-arm64.tar.gz", scheme, r.Host)

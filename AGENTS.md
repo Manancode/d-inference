@@ -188,7 +188,7 @@ Canonical runbook: `docs/coordinator-deploy-runbook.md`
 
 Current release-sensitive pieces:
 
-- Coordinator deploy target in the runbook is AWS EC2 `34.197.17.112` (`inference-test.openinnovation.dev`).
+- Coordinator deploy target in the runbook is AWS EC2 `34.197.17.112` (`api.darkbloom.dev`).
 - Provider bundle creation lives in `scripts/build-bundle.sh`.
 - App bundle + DMG creation lives in `scripts/bundle-app.sh`.
 - Installer flow lives in `scripts/install.sh`.

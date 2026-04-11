@@ -3,7 +3,7 @@
 // server-side route can forward them to the upstream coordinator.
 
 const DEFAULT_COORDINATOR =
-  process.env.NEXT_PUBLIC_COORDINATOR_URL || "https://inference-test.openinnovation.dev";
+  process.env.NEXT_PUBLIC_COORDINATOR_URL || "https://api.darkbloom.dev";
 
 const getConfig = () => {
   if (typeof window === "undefined") return { apiKey: "", baseUrl: DEFAULT_COORDINATOR };

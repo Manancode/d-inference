@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
 
-const STATS_API = "https://inference-test.openinnovation.dev";
+const STATS_API = "https://api.darkbloom.dev";
 
 interface CPUCores {
   total: number;

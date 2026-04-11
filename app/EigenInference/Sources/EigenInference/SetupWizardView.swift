@@ -208,7 +208,7 @@ struct SetupWizardView: View {
                             Button("Install Now") {
                                 Task {
                                     isInstallingCLI = true
-                                    let result = await CLIRunner.shell("curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash")
+                                    let result = await CLIRunner.shell("curl -fsSL https://api.darkbloom.dev/install.sh | bash")
                                     if result.success {
                                         viewModel.securityManager.binaryFound = CLIRunner.resolveBinaryPath() != nil
                                     } else {

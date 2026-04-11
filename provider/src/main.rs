@@ -1347,10 +1347,7 @@ enum Command {
         local: bool,
 
         /// Coordinator WebSocket URL
-        #[arg(
-            long,
-            default_value = "wss://inference-test.openinnovation.dev/ws/provider"
-        )]
+        #[arg(long, default_value = "wss://api.darkbloom.dev/ws/provider")]
         coordinator: String,
 
         /// Port for local API server
@@ -1386,17 +1383,11 @@ enum Command {
     /// One-command setup: enroll in MDM, download model, start serving
     Install {
         /// Coordinator URL (WebSocket for serving, HTTPS for API)
-        #[arg(
-            long,
-            default_value = "wss://inference-test.openinnovation.dev/ws/provider"
-        )]
+        #[arg(long, default_value = "wss://api.darkbloom.dev/ws/provider")]
         coordinator: String,
 
         /// MDM enrollment profile URL
-        #[arg(
-            long,
-            default_value = "https://inference-test.openinnovation.dev/enroll.mobileconfig"
-        )]
+        #[arg(long, default_value = "https://api.darkbloom.dev/enroll.mobileconfig")]
         profile_url: String,
 
         /// Model to serve (auto-selects if not specified)
@@ -1407,7 +1398,7 @@ enum Command {
     /// Enroll this Mac in EigenInference MDM (without starting to serve)
     Enroll {
         /// Coordinator URL for device attestation enrollment
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
@@ -1427,31 +1418,28 @@ enum Command {
         action: String,
 
         /// Coordinator URL to fetch model catalog
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
     /// Show earnings and usage history
     Earnings {
         /// Coordinator API URL
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
     /// Diagnose issues: check SIP, Secure Enclave, MDM, models, connectivity
     Doctor {
         /// Coordinator URL to test connectivity
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
     /// Start the provider in the background (uses existing config)
     Start {
         /// Coordinator WebSocket URL
-        #[arg(
-            long,
-            default_value = "wss://inference-test.openinnovation.dev/ws/provider"
-        )]
+        #[arg(long, default_value = "wss://api.darkbloom.dev/ws/provider")]
         coordinator: String,
 
         /// Model to serve
@@ -1488,7 +1476,7 @@ enum Command {
     /// Check for updates and install the latest version
     Update {
         /// Coordinator URL to check for latest version
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
         /// Force re-download even if already on the latest version
         #[arg(long)]
@@ -1498,7 +1486,7 @@ enum Command {
     /// Link this machine to your EigenInference account
     Login {
         /// Coordinator URL
-        #[arg(long, default_value = "https://inference-test.openinnovation.dev")]
+        #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
@@ -1624,7 +1612,7 @@ async fn check_for_update_alert() {
                 .replace("wss://", "https://")
                 .replace("/ws/provider", "")
         })
-        .unwrap_or_else(|| "https://inference-test.openinnovation.dev".to_string());
+        .unwrap_or_else(|| "https://api.darkbloom.dev".to_string());
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
@@ -2362,7 +2350,7 @@ async fn cmd_serve(
     if !ensure_python_verified(&python_cmd, &coordinator_http_base) {
         anyhow::bail!(
             "Python runtime is broken and could not be recovered. \
-             Please run: curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+             Please run: curl -fsSL https://api.darkbloom.dev/install.sh | bash"
         );
     }
     ensure_runtime_updated(&python_cmd, &coordinator_http_base);
@@ -4393,7 +4381,7 @@ async fn cmd_benchmark() -> Result<()> {
 
     // Scan downloaded models and filter by catalog
     let downloaded = models::scan_models(&hw);
-    let catalog = fetch_catalog("https://inference-test.openinnovation.dev").await;
+    let catalog = fetch_catalog("https://api.darkbloom.dev").await;
     let catalog_ids: std::collections::HashSet<String> =
         catalog.iter().map(|c| c.id.clone()).collect();
 
@@ -4670,7 +4658,7 @@ async fn cmd_status() -> Result<()> {
 
     // Models (catalog-filtered)
     let models = models::scan_models(&hw);
-    let catalog = fetch_catalog("https://inference-test.openinnovation.dev").await;
+    let catalog = fetch_catalog("https://api.darkbloom.dev").await;
     let catalog_ids: std::collections::HashSet<String> =
         catalog.iter().map(|c| c.id.clone()).collect();
 
@@ -5151,7 +5139,7 @@ async fn cmd_doctor(coordinator_url: String) -> Result<()> {
                     println!("✗ Not installed");
                     issues.push(
                         "Inference runtime not found. Reinstall:\n\
-                         \x20    curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+                         \x20    curl -fsSL https://api.darkbloom.dev/install.sh | bash"
                             .to_string(),
                     );
                 }

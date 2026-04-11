@@ -26,7 +26,7 @@ export default function SettingsPage() {
       setCoordinatorUrl(
         localStorage.getItem("eigeninference_coordinator_url") ||
           process.env.NEXT_PUBLIC_COORDINATOR_URL ||
-          "https://inference-test.openinnovation.dev"
+          "https://api.darkbloom.dev"
       );
     }
   }, []);

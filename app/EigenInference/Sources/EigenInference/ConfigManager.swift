@@ -16,7 +16,7 @@
 ///   enabled_models = []
 ///
 ///   [coordinator]
-///   url = "wss://inference-test.openinnovation.dev/ws/provider"
+///   url = "wss://api.darkbloom.dev/ws/provider"
 ///   heartbeat_interval_secs = 30
 
 import Foundation
@@ -40,7 +40,7 @@ struct ProviderConfig: Equatable {
         backendModel: nil,
         continuousBatching: true,
         enabledModels: [],
-        coordinatorURL: "wss://inference-test.openinnovation.dev/ws/provider",
+        coordinatorURL: "wss://api.darkbloom.dev/ws/provider",
         heartbeatIntervalSecs: 30
     )
 }

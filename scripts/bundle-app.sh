@@ -214,7 +214,7 @@ if [ -d "$PYTHON_SRC" ]; then
 else
     echo "   ⚠ No Python bundle at $PYTHON_SRC"
     echo "     Run install.sh first, or install manually:"
-    echo "     curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+    echo "     curl -fsSL https://api.darkbloom.dev/install.sh | bash"
 fi
 
 # ─────────────────────────────────────────────────────────

@@ -130,7 +130,7 @@ final class ProviderManager: ObservableObject {
     private func spawnProcess() {
         guard let binaryPath = Self.resolveBinaryPath() else {
             lastError = "eigeninference-provider binary not found. Run the installer:\n"
-                + "  curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash"
+                + "  curl -fsSL https://api.darkbloom.dev/install.sh | bash"
             return
         }
 

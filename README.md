@@ -60,7 +60,7 @@ OpenAI-compatible. Works with any OpenAI SDK by changing the base URL.
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://inference-test.openinnovation.dev/v1",
+    base_url="https://api.darkbloom.dev/v1",
     api_key="eigeninference-..."
 )
 
@@ -99,7 +99,7 @@ Earn by serving inference on your idle Mac.
 ### Install
 
 ```bash
-curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash
+curl -fsSL https://api.darkbloom.dev/install.sh | bash
 ```
 
 Zero prerequisites. The installer bundles the provider binary, Python 3.12 runtime, vllm-mlx, ffmpeg, and Secure Enclave tooling. You pick a model from the catalog, link your account, and you're serving within minutes.

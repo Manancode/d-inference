@@ -66,7 +66,7 @@ The `.github/workflows/release.yml` workflow:
 gh release view v0.2.1
 
 # Check a fresh install works
-curl -fsSL https://inference-test.openinnovation.dev/install.sh | bash
+curl -fsSL https://api.darkbloom.dev/install.sh | bash
 ```
 
 ## Manual Release (fallback)
@@ -125,7 +125,7 @@ aws s3 cp /tmp/eigeninference-bundle-macos-arm64.tar.gz \
 VERSION="0.2.1"
 R2_PUBLIC_URL="https://pub-XXXX.r2.dev"
 
-curl -X POST https://inference-test.openinnovation.dev/v1/releases \
+curl -X POST https://api.darkbloom.dev/v1/releases \
   -H "Authorization: Bearer $EIGENINFERENCE_RELEASE_KEY" \
   -H "Content-Type: application/json" \
   -d "{
@@ -155,7 +155,7 @@ Or using the admin script with the full bundle script:
 
 ```bash
 ./scripts/admin.sh releases latest
-# or: curl https://inference-test.openinnovation.dev/v1/releases/latest?platform=macos-arm64
+# or: curl https://api.darkbloom.dev/v1/releases/latest?platform=macos-arm64
 ```
 
 ### Deactivate an old version

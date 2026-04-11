@@ -8,7 +8,8 @@ const eslintConfig = defineConfig([
     rules: {
       // React 19.2 adds this rule but our init-in-useEffect patterns are fine
       // (theme init from localStorage, settings load, etc.)
-      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/set-state-in-effect": "off",
+      "@next/next/no-img-element": "off",
     },
   },
 ]);
