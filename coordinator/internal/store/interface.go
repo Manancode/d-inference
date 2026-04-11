@@ -270,7 +270,7 @@ const (
 	LedgerDeposit        LedgerEntryType = "deposit"         // consumer funds account
 	LedgerCharge         LedgerEntryType = "charge"          // consumer pays for inference
 	LedgerPayout         LedgerEntryType = "payout"          // provider credited for serving
-	LedgerPlatformFee    LedgerEntryType = "platform_fee"    // EigenInference platform cut
+	LedgerPlatformFee    LedgerEntryType = "platform_fee"    // Darkbloom platform cut
 	LedgerWithdrawal     LedgerEntryType = "withdrawal"      // on-chain withdrawal
 	LedgerReferralReward LedgerEntryType = "referral_reward" // referrer earns share of platform fee
 	LedgerStripeDeposit  LedgerEntryType = "stripe_deposit"  // Stripe checkout deposit

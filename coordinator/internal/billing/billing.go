@@ -1,4 +1,4 @@
-// Package billing provides unified payment processing for the EigenInference coordinator.
+// Package billing provides unified payment processing for the Darkbloom coordinator.
 //
 // Payment flow (Privy auth + client-side Solana signing):
 //  1. User authenticates via Privy → gets embedded Solana wallet

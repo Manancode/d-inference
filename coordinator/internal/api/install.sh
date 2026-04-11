@@ -3,7 +3,7 @@
 # The copy at coordinator/internal/api/install.sh must be kept in sync.
 set -euo pipefail
 
-# EigenInference Provider Installer
+# Darkbloom Provider Installer
 # Usage: curl -fsSL https://api.darkbloom.dev/install.sh | bash
 #
 # This script:
@@ -33,17 +33,17 @@ else
 fi
 
 echo "╔══════════════════════════════════════════════╗"
-echo "║  EigenInference — Private AI on Verified Macs ║"
+echo "║  Darkbloom — Private AI on Verified Macs ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
 # ─── Pre-flight checks ───────────────────────────────────────
 if [ "$(uname)" != "Darwin" ]; then
-    echo "Error: EigenInference requires macOS with Apple Silicon."
+    echo "Error: Darkbloom requires macOS with Apple Silicon."
     exit 1
 fi
 if [ "$(uname -m)" != "arm64" ]; then
-    echo "Error: EigenInference requires Apple Silicon (arm64)."
+    echo "Error: Darkbloom requires Apple Silicon (arm64)."
     exit 1
 fi
 
@@ -75,7 +75,7 @@ echo "  Signed by: Developer ID Application: Eigen Labs, Inc."
 echo ""
 
 # ─── Step 2: Download and install bundle ──────────────────────
-echo "→ [2/7] Downloading EigenInference v${VERSION}..."
+echo "→ [2/7] Downloading Darkbloom v${VERSION}..."
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 curl -f#L "$BUNDLE_URL" -o "/tmp/eigeninference-bundle.tar.gz"
@@ -138,7 +138,7 @@ fi
 if ! grep -q "eigeninference" "$RC" 2>/dev/null; then
     cat >> "$RC" << 'SHELL'
 
-# EigenInference
+# Darkbloom
 export PATH="$HOME/.eigeninference/bin:$PATH"
 alias eigeninf='eigeninference-provider'
 SHELL
@@ -297,7 +297,7 @@ elif [ -n "$SERIAL" ]; then
         echo "  │  • Generate a key in your Secure Enclave          │"
         echo "  │  • Apple verifies your device is genuine          │"
         echo "  │                                                   │"
-        echo "  │ EigenInference CANNOT erase, lock, or control     │"
+        echo "  │ Darkbloom CANNOT erase, lock, or control     │"
         echo "  │ your Mac. Remove anytime in System Settings.      │"
         echo "  └──────────────────────────────────────────────────┘"
         echo ""
@@ -421,7 +421,7 @@ fi
 echo ""
 echo "════════════════════════════════════════════════"
 echo ""
-echo "  EigenInference v${VERSION} installed!"
+echo "  Darkbloom v${VERSION} installed!"
 echo ""
 echo "  Hardware:  $CHIP · ${MEM}GB"
 if [ -n "$MODEL_NAME" ]; then

@@ -84,7 +84,7 @@ final class SecurityManager: ObservableObject {
         SecureEnclave.isAvailable
     }
 
-    /// Check if this Mac is enrolled in EigenInference MDM.
+    /// Check if this Mac is enrolled in Darkbloom MDM.
     ///
     /// Uses the same 3-method approach as security.rs:
     ///   1. Marker file at /var/db/ConfigurationProfiles/Settings/.profilesAreInstalled

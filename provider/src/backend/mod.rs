@@ -1,4 +1,4 @@
-//! Inference backend management for the EigenInference provider.
+//! Inference backend management for the Darkbloom provider.
 //!
 //! Supported backends are vllm-mlx and mlx-lm.
 //!

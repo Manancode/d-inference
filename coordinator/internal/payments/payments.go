@@ -1,4 +1,4 @@
-// Package payments provides balance tracking and pricing for EigenInference inference.
+// Package payments provides balance tracking and pricing for Darkbloom inference.
 //
 // The payment flow:
 //  1. Consumer deposits USDC on Solana (verified on-chain via JSON-RPC)

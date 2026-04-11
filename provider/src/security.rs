@@ -188,7 +188,7 @@ pub fn verify_security_posture() -> Result<(), String> {
     Ok(())
 }
 
-/// Check if this Mac is enrolled in EigenInference MDM.
+/// Check if this Mac is enrolled in Darkbloom MDM.
 ///
 /// Tries multiple detection methods since system-level profiles
 /// require sudo to see via `profiles list`. This is the single

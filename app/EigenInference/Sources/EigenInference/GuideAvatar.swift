@@ -165,7 +165,7 @@ enum GuideMessages {
         } else {
             return (
                 "Let's check your security settings.",
-                "EigenInference needs a few macOS security features to protect the prompts being processed."
+                "Darkbloom needs a few macOS security features to protect the prompts being processed."
             )
         }
     }

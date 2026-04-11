@@ -287,7 +287,7 @@ struct SetupWizardView: View {
                     .foregroundColor(viewModel.securityManager.mdmEnrolled ? .tealAccent : .warmInkFaint)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(viewModel.securityManager.mdmEnrolled ? "Enrolled in EigenInference MDM" : "Not enrolled")
+                    Text(viewModel.securityManager.mdmEnrolled ? "Enrolled in Darkbloom MDM" : "Not enrolled")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(viewModel.securityManager.mdmEnrolled ? Color.tealAccent : Color.warmInk)
                     Text(viewModel.securityManager.mdmEnrolled

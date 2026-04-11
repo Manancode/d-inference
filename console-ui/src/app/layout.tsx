@@ -25,7 +25,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EigenInference — Eigen Labs Research Project",
+  title: "Darkbloom — Private AI on Verified Macs",
   description:
     "Private AI inference through hardware-attested Apple Silicon providers. Your prompts stay encrypted, your data stays yours.",
   icons: {

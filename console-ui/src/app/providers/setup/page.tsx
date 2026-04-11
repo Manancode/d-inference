@@ -62,13 +62,13 @@ const STEPS = [
   {
     icon: Terminal,
     title: "Install the Provider CLI",
-    description: "One command to download and install the EigenInference provider on your Mac.",
+    description: "One command to download and install the Darkbloom provider on your Mac.",
     command: "curl -fsSL https://api.darkbloom.dev/install.sh | bash",
   },
   {
     icon: Shield,
     title: "Link Your Account",
-    description: "Link this machine to your EigenInference account. You'll get a code to enter on the web to verify ownership.",
+    description: "Link this machine to your Darkbloom account. You'll get a code to enter on the web to verify ownership.",
     command: "eigeninference-provider login",
   },
   {
@@ -141,14 +141,14 @@ export default function ProviderSetupPage() {
           Pilot Program
         </div>
         <h1 className="text-3xl font-bold text-text-primary tracking-tight mb-3">
-          Become an EigenInference Provider
+          Become a Darkbloom Provider
         </h1>
         <p className="text-base text-text-secondary max-w-xl mx-auto leading-relaxed">
           Earn by serving AI inference from your Apple Silicon hardware.
           Your Mac becomes part of a decentralized, hardware-attested inference network.
         </p>
         <p className="text-xs text-text-tertiary max-w-md mx-auto mt-3 leading-relaxed">
-          EigenInference is an experimental research project in active development.
+          Darkbloom is an experimental research project in active development.
           Provider participation is part of our pilot program and the system may change as we iterate.
         </p>
       </div>

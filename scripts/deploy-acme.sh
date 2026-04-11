@@ -40,7 +40,7 @@ curl -s https://api.darkbloom.dev/acme/eigeninference-acme/directory | python3 -
 echo ""
 echo "=== Done ==="
 echo "Next steps:"
-echo "  1. On each Mac: System Settings > General > Device Management > Remove EigenInference profile"
+echo "  1. On each Mac: System Settings > General > Device Management > Remove Darkbloom profile"
 echo "  2. Re-install: open https://api.darkbloom.dev/enroll.mobileconfig"
 echo "  3. macOS will generate SE key and complete ACME device-attest-01 challenge"
 echo "  4. step-ca issues a certificate binding the SE key to the device identity"

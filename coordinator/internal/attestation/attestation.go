@@ -1,4 +1,4 @@
-// Package attestation verifies signed attestation blobs from EigenInference
+// Package attestation verifies signed attestation blobs from Darkbloom
 // provider nodes.
 //
 // Each provider generates an attestation blob containing hardware identity

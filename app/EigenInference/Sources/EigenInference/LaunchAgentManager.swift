@@ -1,10 +1,10 @@
 /// LaunchAgentManager — Install/remove a launchd LaunchAgent for app auto-launch on login.
 ///
 /// Creates a plist at ~/Library/LaunchAgents/com.eigeninference.app.plist that opens
-/// the EigenInference app on login. This is separate from the provider service plist
+/// the Darkbloom app on login. This is separate from the provider service plist
 /// which is managed by the CLI's `start`/`stop`.
 ///
-/// Only installed when the user explicitly toggles "Start EigenInference when you
+/// Only installed when the user explicitly toggles "Start Darkbloom when you
 /// log in" in Settings. Opening the app does NOT auto-start the provider;
 /// the user must click "Go Online" to begin serving.
 

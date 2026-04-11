@@ -1,6 +1,6 @@
 package api
 
-// Stress and resilience tests for the EigenInference coordinator.
+// Stress and resilience tests for the Darkbloom coordinator.
 //
 // Covers: queue overflow, provider disconnect under active load, request
 // cancellation with slow providers, billing race conditions, provider

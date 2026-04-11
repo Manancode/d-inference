@@ -69,7 +69,7 @@ export default function SettingsPage() {
               </h3>
             </div>
             <p className="text-xs text-text-tertiary mb-4">
-              The base URL of the EigenInference coordinator that routes your inference
+              The base URL of the Darkbloom coordinator that routes your inference
               requests to attested providers.
             </p>
             <input
@@ -127,11 +127,11 @@ export default function SettingsPage() {
           {/* Info */}
           <div className="rounded-xl bg-bg-white border-[3px] border-ink p-5 shadow-md">
             <h4 className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-3">
-              About EigenInference
+              About Darkbloom
             </h4>
             <div className="space-y-2 text-xs text-text-tertiary leading-relaxed">
               <p>
-                EigenInference is a decentralized private inference network. Your
+                Darkbloom is a decentralized private inference network. Your
                 requests are routed to hardware-attested Apple Silicon providers
                 with Secure Enclave verification, SIP enforcement, and Hardened
                 Runtime protection.

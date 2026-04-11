@@ -1,6 +1,6 @@
-# EigenInference
+# Darkbloom
 
-> **Research project** -- EigenInference is an experimental prototype exploring decentralized private inference on Apple Silicon. Expect rough edges, breaking changes, and downtime.
+> **Research project** -- Darkbloom is an experimental prototype exploring decentralized private inference on Apple Silicon. Expect rough edges, breaking changes, and downtime.
 
 Private AI inference on a decentralized network of hardware-verified Apple Silicon Macs. Your prompts are encrypted end-to-end -- nobody sees your data, not even us.
 
@@ -144,7 +144,7 @@ end = "08:00"
 
 ## Security
 
-EigenInference prevents anyone -- including providers -- from reading consumer prompts.
+Darkbloom prevents anyone -- including providers -- from reading consumer prompts.
 
 | Layer | What It Does |
 |-------|-------------|

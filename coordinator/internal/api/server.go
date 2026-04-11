@@ -1,4 +1,4 @@
-// Package api provides the HTTP and WebSocket server for the EigenInference coordinator.
+// Package api provides the HTTP and WebSocket server for the Darkbloom coordinator.
 //
 // This package is the network-facing layer of the coordinator. It handles:
 //   - Consumer HTTP endpoints (OpenAI-compatible chat completions, model listing)

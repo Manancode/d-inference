@@ -498,7 +498,7 @@ export default function StatsPage() {
               Network Statistics
             </h1>
             <p className="text-sm text-text-tertiary mt-1">
-              Live metrics from the EigenInference decentralized inference network
+              Live metrics from the Darkbloom decentralized inference network
             </p>
           </div>
           <div className="flex items-center gap-3">

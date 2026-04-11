@@ -60,7 +60,7 @@ VERSION="0.1.0"
 BUNDLE_ID="io.eigeninference.provider"
 
 echo "╔══════════════════════════════════════════════════╗"
-echo "║  EigenInference App Bundle Builder                        ║"
+echo "║  Darkbloom App Bundle Builder                        ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
 echo "Version:    $VERSION"

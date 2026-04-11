@@ -1,7 +1,7 @@
-//! EigenInference provider agent for Apple Silicon Macs.
+//! Darkbloom provider agent for Apple Silicon Macs.
 //!
 //! The provider agent runs on Mac hardware and serves local inference requests
-//! from the EigenInference coordinator. It manages the lifecycle of an inference backend
+//! from the Darkbloom coordinator. It manages the lifecycle of an inference backend
 //! (vllm-mlx or mlx-lm), connects to the coordinator via WebSocket, and
 //! handles attestation using the Apple Secure Enclave.
 //!
@@ -1325,7 +1325,7 @@ async fn fetch_catalog(coordinator_url: &str) -> Vec<CatalogModel> {
 }
 
 #[derive(Parser)]
-#[command(name = "eigeninference-provider", about = "EigenInference provider agent for Apple Silicon Macs", version = env!("CARGO_PKG_VERSION"))]
+#[command(name = "eigeninference-provider", about = "Darkbloom provider agent for Apple Silicon Macs", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -1395,14 +1395,14 @@ enum Command {
         model: Option<String>,
     },
 
-    /// Enroll this Mac in EigenInference MDM (without starting to serve)
+    /// Enroll this Mac in Darkbloom MDM (without starting to serve)
     Enroll {
         /// Coordinator URL for device attestation enrollment
         #[arg(long, default_value = "https://api.darkbloom.dev")]
         coordinator: String,
     },
 
-    /// Remove MDM enrollment and clean up EigenInference data
+    /// Remove MDM enrollment and clean up Darkbloom data
     Unenroll,
 
     /// Run standardized benchmarks
@@ -1483,7 +1483,7 @@ enum Command {
         force: bool,
     },
 
-    /// Link this machine to your EigenInference account
+    /// Link this machine to your Darkbloom account
     Login {
         /// Coordinator URL
         #[arg(long, default_value = "https://api.darkbloom.dev")]
@@ -1692,7 +1692,7 @@ async fn cmd_install(
     model_override: Option<String>,
 ) -> Result<()> {
     println!("╔══════════════════════════════════════════╗");
-    println!("║       EigenInference Provider Setup               ║");
+    println!("║       Darkbloom Provider Setup               ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
 
@@ -2016,7 +2016,7 @@ async fn cmd_install(
         println!("╚══════════════════════════════════════════╝");
         println!();
         println!("  Run this command to connect your provider");
-        println!("  to your EigenInference account:");
+        println!("  to your Darkbloom account:");
         println!();
         println!("    eigeninference-provider login");
         println!();
@@ -4217,7 +4217,7 @@ fn self_verify_attestation(attestation_json: &serde_json::Value) -> bool {
 }
 
 async fn cmd_enroll(coordinator_url: String) -> Result<()> {
-    println!("EigenInference Device Attestation Enrollment");
+    println!("Darkbloom Device Attestation Enrollment");
     println!();
 
     // Check if already enrolled
@@ -4270,13 +4270,13 @@ async fn cmd_enroll(coordinator_url: String) -> Result<()> {
 
         println!("→ System Settings opened to Device Management");
         println!();
-        println!("  Click \"Install\" on the EigenInference profile, then enter your password.");
+        println!("  Click \"Install\" on the Darkbloom profile, then enter your password.");
         println!("  This verifies:");
         println!("    • SIP and Secure Boot are enabled");
         println!("    • Your Secure Enclave is genuine Apple hardware");
         println!("    • Device identity signed by Apple's Root CA");
         println!();
-        println!("  EigenInference CANNOT erase, lock, or control your Mac.");
+        println!("  Darkbloom CANNOT erase, lock, or control your Mac.");
         println!("  Remove anytime in System Settings → Device Management.");
     }
 
@@ -4304,13 +4304,13 @@ fn get_serial_number() -> Result<String> {
 }
 
 async fn cmd_unenroll() -> Result<()> {
-    println!("EigenInference Unenrollment");
+    println!("Darkbloom Unenrollment");
     println!();
 
     if security::check_mdm_enrolled() {
         println!("MDM profile found. To remove:");
         println!("  System Settings → General → Device Management");
-        println!("  Click on the EigenInference profile → Remove");
+        println!("  Click on the Darkbloom profile → Remove");
         println!();
         #[cfg(target_os = "macos")]
         {
@@ -4320,12 +4320,12 @@ async fn cmd_unenroll() -> Result<()> {
                 .status();
         }
     } else {
-        println!("No EigenInference MDM profile found. Nothing to remove.");
+        println!("No Darkbloom MDM profile found. Nothing to remove.");
     }
 
     // Clean up local data
     println!();
-    println!("Clean up local EigenInference data? This removes:");
+    println!("Clean up local Darkbloom data? This removes:");
     println!("  - Config: ~/.config/eigeninference/");
     println!("  - Node key: ~/.eigeninference/node_key");
     println!("  - Enclave key: ~/.eigeninference/enclave_key.data");
@@ -4351,7 +4351,7 @@ async fn cmd_unenroll() -> Result<()> {
 async fn cmd_benchmark() -> Result<()> {
     let hw = hardware::detect()?;
     println!();
-    println!("  EigenInference Benchmark");
+    println!("  Darkbloom Benchmark");
     println!("  ─────────────────────────────────────");
     println!(
         "  {} · {} GB RAM · {} GPU cores · {} GB/s",
@@ -4544,7 +4544,7 @@ async fn cmd_status() -> Result<()> {
     let eigeninference_dir = home.join(".eigeninference");
 
     println!();
-    println!("  EigenInference Provider Status");
+    println!("  Darkbloom Provider Status");
     println!("  ─────────────────────────────────────");
 
     // Running state
@@ -4716,7 +4716,7 @@ async fn cmd_models(action: String, coordinator_url: String) -> Result<()> {
     let effective_action = if action == "list" {
         // Show overview first
         println!();
-        println!("  EigenInference Models");
+        println!("  Darkbloom Models");
         println!("  ─────────────────────────────────────");
         println!(
             "  {} · {} GB available",
@@ -4924,7 +4924,7 @@ async fn cmd_models(action: String, coordinator_url: String) -> Result<()> {
 }
 
 async fn cmd_earnings(coordinator_url: String) -> Result<()> {
-    println!("EigenInference Earnings");
+    println!("Darkbloom Earnings");
     println!();
 
     // Query coordinator for balance
@@ -5007,7 +5007,7 @@ async fn cmd_earnings(coordinator_url: String) -> Result<()> {
 }
 
 async fn cmd_doctor(coordinator_url: String) -> Result<()> {
-    println!("EigenInference Doctor — System Diagnostics");
+    println!("Darkbloom Doctor — System Diagnostics");
     println!();
 
     let mut issues: Vec<String> = Vec::new();
@@ -5734,7 +5734,7 @@ async fn cmd_stop() -> Result<()> {
 
 async fn cmd_update(coordinator: String, force: bool) -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
-    println!("EigenInference Provider Update");
+    println!("Darkbloom Provider Update");
     println!();
     println!("  Current version: {current_version}");
     if force {
@@ -6042,7 +6042,7 @@ async fn cmd_login(coordinator_url: String) -> Result<()> {
     }
 
     println!("╔══════════════════════════════════════════╗");
-    println!("║     Link to EigenInference Account       ║");
+    println!("║     Link to Darkbloom Account       ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
 

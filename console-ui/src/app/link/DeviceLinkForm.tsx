@@ -115,7 +115,7 @@ export function DeviceLinkForm() {
     return (
       <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
         <p className="text-text-secondary mb-6">
-          Sign in to your EigenInference account to link your device.
+          Sign in to your Darkbloom account to link your device.
         </p>
         <button
           onClick={login}

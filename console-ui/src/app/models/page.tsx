@@ -108,7 +108,7 @@ export default function ModelsPage() {
               Available Models
             </h2>
             <p className="text-sm text-text-tertiary">
-              Models served by hardware-attested providers on the EigenInference network.
+              Models served by hardware-attested providers on the Darkbloom network.
             </p>
           </div>
 
@@ -236,7 +236,7 @@ export default function ModelsPage() {
                 Pricing vs Competitors
               </h2>
               <p className="text-sm text-text-tertiary">
-                EigenInference runs on idle Apple Silicon hardware — 50% cheaper than centralized providers.
+                Darkbloom runs on idle Apple Silicon hardware — 50% cheaper than centralized providers.
               </p>
             </div>
 
@@ -245,7 +245,7 @@ export default function ModelsPage() {
                 <thead>
                   <tr className="border-b border-border-dim">
                     <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Model</th>
-                    <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">EigenInference</th>
+                    <th>Darkbloom</th>
                     <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Competitor</th>
                     <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Savings</th>
                   </tr>

@@ -22,7 +22,7 @@ export default function LinkPage() {
             Link Your <span className="text-coral">Device</span>
           </h1>
           <p className="text-text-secondary mt-2">
-            Connect your Mac to your EigenInference account to receive
+            Connect your Mac to your Darkbloom account to receive
             earnings for providing compute.
           </p>
         </div>

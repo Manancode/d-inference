@@ -1,4 +1,4 @@
-/// DesignSystem — Warm, hand-drawn aesthetic tokens for EigenInference.
+/// DesignSystem — Warm, hand-drawn aesthetic tokens for Darkbloom.
 ///
 /// Provides a unified color palette, typography helpers, and reusable
 /// view modifiers that match the landing page's hand-drawn style:

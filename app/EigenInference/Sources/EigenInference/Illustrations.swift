@@ -1,4 +1,4 @@
-/// Illustrations — Hand-drawn SwiftUI illustrations for EigenInference.
+/// Illustrations — Hand-drawn SwiftUI illustrations for Darkbloom.
 ///
 /// Cartoon Mac character with mood-based expressions, plus decorative
 /// elements for onboarding, empty states, and dashboards.

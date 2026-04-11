@@ -1,4 +1,4 @@
-/// MenuBarView — The dropdown UI shown when clicking the EigenInference menu bar icon.
+/// MenuBarView — The dropdown UI shown when clicking the Darkbloom menu bar icon.
 ///
 /// Shows at-a-glance provider status with quick actions.
 /// Uses Liquid Glass on macOS 26+, falls back to .ultraThinMaterial on older versions.
@@ -159,7 +159,7 @@ struct MenuBarView: View {
             }
 
             Button(action: { NSApplication.shared.terminate(nil) }) {
-                Label("Quit EigenInference", systemImage: "power")
+                Label("Quit Darkbloom", systemImage: "power")
             }
             .buttonStyle(.plain)
         }

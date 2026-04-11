@@ -217,7 +217,7 @@ final class ProviderManager: ObservableObject {
                 {
                     self.autoRestartEnabled = false
                     let content = UNMutableNotificationContent()
-                    content.title = "EigenInference Provider Stopped"
+                    content.title = "Darkbloom Provider Stopped"
                     content.body = "Provider crashed \(self.maxRestarts) times. Check logs: eigeninference-provider logs"
                     content.sound = .default
                     let request = UNNotificationRequest(identifier: "crash-limit", content: content, trigger: nil)

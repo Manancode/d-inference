@@ -1,6 +1,6 @@
 package api
 
-// Provider WebSocket management for the EigenInference coordinator.
+// Provider WebSocket management for the Darkbloom coordinator.
 //
 // This file handles the provider side of the coordinator: WebSocket connections,
 // provider registration, attestation verification, challenge-response loops,

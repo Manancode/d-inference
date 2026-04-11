@@ -133,7 +133,7 @@ func generateCombinedProfile(serialNumber, baseURL string) string {
       <key>IdentityCertificateUUID</key>
       <string>D01D95F9-762E-4538-A9B3-4D949D55577C</string>
       <key>PayloadDescription</key>
-      <string>Enrolls with the EigenInference coordinator for security verification</string>
+      <string>Enrolls with the Darkbloom coordinator for security verification</string>
       <key>PayloadIdentifier</key>
       <string>io.eigeninference.enroll.mdm</string>
       <key>PayloadOrganization</key>
@@ -191,7 +191,7 @@ func generateCombinedProfile(serialNumber, baseURL string) string {
         <array>
           <array>
             <string>O</string>
-            <string>EigenInference Provider</string>
+            <string>Darkbloom Provider</string>
           </array>
         </array>
         <array>
@@ -204,9 +204,9 @@ func generateCombinedProfile(serialNumber, baseURL string) string {
     </dict>
   </array>
   <key>PayloadDescription</key>
-  <string>EigenInference provider enrollment and device attestation. Grants read-only security verification (SIP, SecureBoot) and generates an Apple-attested Secure Enclave key.</string>
+  <string>Darkbloom provider enrollment and device attestation. Grants read-only security verification (SIP, SecureBoot) and generates an Apple-attested Secure Enclave key.</string>
   <key>PayloadDisplayName</key>
-  <string>EigenInference Provider Enrollment</string>
+  <string>Darkbloom Provider Enrollment</string>
   <key>PayloadIdentifier</key>
   <string>io.eigeninference.enroll.%s</string>
   <key>PayloadOrganization</key>

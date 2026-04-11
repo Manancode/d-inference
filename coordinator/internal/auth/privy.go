@@ -1,4 +1,4 @@
-// Package auth provides Privy-based authentication for the EigenInference coordinator.
+// Package auth provides Privy-based authentication for the Darkbloom coordinator.
 //
 // Privy issues ES256 (ECDSA P-256) JWTs to authenticated users. The coordinator
 // verifies these tokens using the app's verification key from the Privy dashboard.

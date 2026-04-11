@@ -414,7 +414,7 @@ export default function EarnPage() {
             </h2>
             <p className="text-sm text-text-tertiary">
               Estimate how much your Apple Silicon Mac can earn serving inference
-              on the EigenInference network.
+              on the Darkbloom network.
             </p>
           </div>
 

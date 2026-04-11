@@ -333,7 +333,7 @@ for model in models:
           <section>
             <h2 className="text-lg font-semibold text-text-primary mb-4">Chat Completions</h2>
             <p className="text-sm text-text-secondary mb-4">
-              The API is OpenAI-compatible. Use any OpenAI SDK by pointing it at the EigenInference coordinator.
+              The API is OpenAI-compatible. Use any OpenAI SDK by pointing it at the Darkbloom coordinator.
             </p>
             <CodeExample examples={chatExample} />
           </section>

@@ -20,7 +20,7 @@ if [ ! -d "/data/step-ca/config" ]; then
     cp /opt/step-ca-seed/acme-device.tpl /data/step-ca/templates/
 
     STEPPATH=/data/step-ca step ca init \
-        --name "EigenInference CA" \
+        --name "Darkbloom CA" \
         --dns "${DOMAIN:-localhost}" \
         --address ":9000" \
         --provisioner "eigeninference-admin" \

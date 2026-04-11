@@ -1,4 +1,4 @@
-/// SettingsView — Configuration window for the EigenInference provider.
+/// SettingsView — Configuration window for the Darkbloom provider.
 ///
 /// Tabs:
 ///   - General: Coordinator URL, API key, auto-start on login
@@ -53,7 +53,7 @@ private struct GeneralTab: View {
             }
 
             Section {
-                Toggle("Start EigenInference when you log in", isOn: $viewModel.autoStart)
+                Toggle("Start Darkbloom when you log in", isOn: $viewModel.autoStart)
 
                 HStack {
                     Text("LaunchAgent:")
@@ -124,7 +124,7 @@ private struct AvailabilityTab: View {
                     viewModel.idleTimeoutSeconds = newValue
                 }
 
-                Text("When you're using your Mac, EigenInference will pause inference to keep your machine responsive. It resumes automatically when you step away.")
+                Text("When you're using your Mac, Darkbloom will pause inference to keep your machine responsive. It resumes automatically when you step away.")
                     .font(.caption)
                     .foregroundColor(.warmInkLight)
             } header: {

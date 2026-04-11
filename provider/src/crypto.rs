@@ -1,4 +1,4 @@
-//! NaCl Box encryption primitives for the EigenInference provider.
+//! NaCl Box encryption primitives for the Darkbloom provider.
 //!
 //! Uses NaCl crypto_box (X25519 + XSalsa20-Poly1305) for cross-language
 //! compatibility with PyNaCl on the consumer side.

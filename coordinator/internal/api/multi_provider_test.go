@@ -1,6 +1,6 @@
 package api
 
-// Multi-provider integration tests for the EigenInference coordinator.
+// Multi-provider integration tests for the Darkbloom coordinator.
 //
 // These tests verify correct behavior when multiple providers are connected
 // simultaneously: load distribution, failover, model catalog enforcement

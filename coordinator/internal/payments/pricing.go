@@ -1,6 +1,6 @@
 package payments
 
-// Pricing model for EigenInference.
+// Pricing model for Darkbloom.
 //
 // Prices are set at 50% of the cheapest major competitor for each model type.
 // Users accept higher latency and lower reliability in exchange for the discount.
@@ -28,7 +28,7 @@ const defaultOutputPricePerMillion int64 = 200_000 // $0.20 per 1M output tokens
 // Minimum charge per inference request in micro-USD ($0.0001).
 const minimumChargeMicroUSD int64 = 100
 
-// Platform fee percentage — EigenInference retains 5% as a routing fee, provider receives 95%.
+// Platform fee percentage — Darkbloom retains 5% as a routing fee, provider receives 95%.
 const platformFeePercent int64 = 5
 
 // modelPricing stores input and output prices per model (micro-USD per 1M tokens).
@@ -174,7 +174,7 @@ func CalculateImageCost(model string, width, height, count int) int64 {
 	return totalCost
 }
 
-// PlatformFee returns EigenInference's routing fee (5%).
+// PlatformFee returns Darkbloom's routing fee (5%).
 func PlatformFee(totalCost int64) int64 {
 	return totalCost * platformFeePercent / 100
 }

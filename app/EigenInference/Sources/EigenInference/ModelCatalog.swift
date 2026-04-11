@@ -23,7 +23,7 @@ enum ModelCatalog {
         }
     }
 
-    /// Known models from the EigenInference catalog, ordered by min RAM tier.
+    /// Known models from the Darkbloom catalog, ordered by min RAM tier.
     static let models: [Entry] = [
         // Transcription
         Entry(id: "CohereLabs/cohere-transcribe-03-2026", name: "Cohere Transcribe", modelType: "transcription", sizeGB: 4.2, architecture: "2B conformer", description: "Best-in-class STT", minRAMGB: 8),

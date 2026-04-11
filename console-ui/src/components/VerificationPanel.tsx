@@ -128,7 +128,7 @@ function NormalModeContent({
       color: "text-coral",
       title: "Data Protection",
       description:
-        "Your prompts are encrypted end-to-end. Not even EigenInference servers can read them.",
+        "Your prompts are encrypted end-to-end. Not even Darkbloom servers can read them.",
       info: "X25519 key exchange + XSalsa20-Poly1305 encryption (NaCl box). The coordinator only sees ciphertext.",
       ok: true, // E2E is always active
     },

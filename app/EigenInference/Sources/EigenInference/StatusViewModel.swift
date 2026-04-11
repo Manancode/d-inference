@@ -1,4 +1,4 @@
-/// StatusViewModel — Observable state for the EigenInference menu bar UI.
+/// StatusViewModel — Observable state for the Darkbloom menu bar UI.
 ///
 /// Centralizes all provider state: online/serving status, hardware info,
 /// throughput metrics, session stats, security posture, wallet/earnings.

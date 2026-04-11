@@ -1,6 +1,6 @@
 package api
 
-// Consumer-facing API handlers for the EigenInference coordinator.
+// Consumer-facing API handlers for the Darkbloom coordinator.
 //
 // This file implements the OpenAI-compatible HTTP endpoints that consumers
 // use to send inference requests. The coordinator acts as a trusted routing
