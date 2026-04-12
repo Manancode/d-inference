@@ -169,6 +169,10 @@ pub enum ProviderMessage {
         /// Combined SHA-256 hash of image bridge Python source files.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image_bridge_hash: Option<String>,
+        /// Per-model weight hashes: model_id → SHA-256 of weight files.
+        /// Covers all active models (text, STT, image).
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        model_hashes: std::collections::HashMap<String, String>,
     },
 }
 
@@ -722,6 +726,7 @@ mod tests {
             template_hashes: std::collections::HashMap::new(),
             grpc_binary_hash: None,
             image_bridge_hash: None,
+            model_hashes: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -1266,6 +1271,7 @@ mod tests {
                 template_hashes: std::collections::HashMap::new(),
                 grpc_binary_hash: None,
                 image_bridge_hash: None,
+            model_hashes: std::collections::HashMap::new(),
             },
         ];
 

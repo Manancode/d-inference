@@ -572,7 +572,15 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 		"hypervisor_active", resp.HypervisorActive,
 		"binary_hash", resp.BinaryHash,
 		"active_model_hash", resp.ActiveModelHash,
+		"model_hashes_count", len(resp.ModelHashes),
 	)
+	for modelID, hash := range resp.ModelHashes {
+		s.logger.Info("model weight hash verified",
+			"provider_id", providerID,
+			"model_id", modelID,
+			"weight_hash", hash,
+		)
+	}
 }
 
 // handleChallengeFailure records a failed challenge and marks the provider

@@ -2423,6 +2423,7 @@ async fn cmd_serve(
 
     // Advertise image model if configured (backend starts later)
     if !image_model.is_empty() && !image_model_id.is_empty() {
+        let image_weight_hash = models::compute_weight_hash(&image_model_id);
         advertised_models.push(models::ModelInfo {
             id: image_model_id.clone(),
             model_type: Some("image".to_string()),
@@ -2430,7 +2431,7 @@ async fn cmd_serve(
             quantization: None,
             size_bytes: 0,
             estimated_memory_gb: 8.0,
-            weight_hash: None,
+            weight_hash: image_weight_hash,
         });
         tracing::info!("Advertising image model: {image_model_id}");
     }
@@ -2500,11 +2501,30 @@ async fn cmd_serve(
         let warm_models: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(selected_models.clone()));
 
-        // Compute weight hash on-demand for the primary served model only.
+        // Compute weight hashes for all active models (text, STT, image).
         let initial_model_hash = models::compute_weight_hash(&model);
         let current_model_hash: std::sync::Arc<std::sync::Mutex<Option<String>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash));
+            std::sync::Arc::new(std::sync::Mutex::new(initial_model_hash.clone()));
         rehash_model_hash_opt = Some(current_model_hash.clone());
+
+        let mut all_model_hashes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // Primary text model hash
+        if let Some(ref h) = initial_model_hash {
+            all_model_hashes.insert(model.clone(), h.clone());
+        }
+        // STT model hash (if STT model is available)
+        if !stt_model_path.is_empty() {
+            if let Some(h) = models::compute_weight_hash(&stt_model_id) {
+                all_model_hashes.insert(stt_model_id.clone(), h);
+            }
+        }
+        // Image model hash (if image model is configured)
+        if !image_model.is_empty() {
+            if let Some(h) = models::compute_weight_hash(&image_model_id) {
+                all_model_hashes.insert(image_model_id.clone(), h);
+            }
+        }
+        tracing::info!("Computed weight hashes for {} model(s)", all_model_hashes.len());
 
         // Shared backend capacity data (updated by polling task, read by heartbeats).
         let backend_capacity: std::sync::Arc<std::sync::Mutex<Option<protocol::BackendCapacity>>> =
@@ -2563,6 +2583,7 @@ async fn cmd_serve(
                             }
                         }
                         if stt_healthy {
+                            let stt_weight_hash = models::compute_weight_hash(&stt_model_id);
                             advertised_models.push(models::ModelInfo {
                                 id: stt_model_id.clone(),
                                 model_type: Some("stt".to_string()),
@@ -2570,7 +2591,7 @@ async fn cmd_serve(
                                 quantization: None,
                                 size_bytes: 0,
                                 estimated_memory_gb: 4.0,
-                                weight_hash: None,
+                                weight_hash: stt_weight_hash,
                             });
                             tracing::info!("STT backend healthy — advertising model: {stt_model_id}");
                         } else {
@@ -2607,6 +2628,7 @@ async fn cmd_serve(
         .with_current_model(current_model)
         .with_warm_models(warm_models)
         .with_current_model_hash(current_model_hash)
+        .with_model_hashes(all_model_hashes)
         .with_backend_capacity(backend_capacity);
 
         // Store coordinator client for deferred spawn after backends are ready.

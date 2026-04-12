@@ -270,6 +270,7 @@ type AttestationResponseMessage struct {
 	TemplateHashes  map[string]string `json:"template_hashes,omitempty"`   // template_name -> SHA-256 hash
 	GrpcBinaryHash  string            `json:"grpc_binary_hash,omitempty"`  // SHA-256 of gRPCServerCLI binary
 	ImageBridgeHash string            `json:"image_bridge_hash,omitempty"` // SHA-256 of image bridge Python source
+	ModelHashes     map[string]string `json:"model_hashes,omitempty"`      // model_id -> SHA-256 weight hash (all active models)
 }
 
 // ---------------------------------------------------------------------------

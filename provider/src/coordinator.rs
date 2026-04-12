@@ -101,6 +101,8 @@ pub struct CoordinatorClient {
     current_model_hash: Arc<std::sync::Mutex<Option<String>>>,
     /// Runtime integrity hashes (Python binary, vllm_mlx package, templates).
     runtime_hashes: Option<RuntimeHashes>,
+    /// Per-model weight hashes for all active models (text, STT, image).
+    model_hashes: std::collections::HashMap<String, String>,
     /// Live backend capacity data (updated by main loop, read by heartbeat tick).
     backend_capacity: Arc<std::sync::Mutex<Option<crate::protocol::BackendCapacity>>>,
 }
@@ -130,8 +132,15 @@ impl CoordinatorClient {
             warm_models: Arc::new(std::sync::Mutex::new(Vec::new())),
             current_model_hash: Arc::new(std::sync::Mutex::new(None)),
             runtime_hashes: None,
+            model_hashes: std::collections::HashMap::new(),
             backend_capacity: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Set per-model weight hashes for all active models.
+    pub fn with_model_hashes(mut self, hashes: std::collections::HashMap<String, String>) -> Self {
+        self.model_hashes = hashes;
+        self
     }
 
     /// Set the wallet address for Tempo blockchain payouts (pathUSD).
@@ -475,6 +484,7 @@ impl CoordinatorClient {
                                         self.public_key.as_deref(),
                                         model_hash.as_deref(),
                                         self.runtime_hashes.as_ref(),
+                                        self.model_hashes.clone(),
                                     );
                                     let json = serde_json::to_string(&response)
                                         .unwrap_or_default();
@@ -597,6 +607,7 @@ pub fn handle_attestation_challenge(
     public_key: Option<&str>,
     current_model_hash: Option<&str>,
     runtime_hashes: Option<&RuntimeHashes>,
+    model_hashes: std::collections::HashMap<String, String>,
 ) -> ProviderMessage {
     use base64::Engine;
     let data = format!("{}{}", nonce, timestamp);
@@ -659,6 +670,7 @@ pub fn handle_attestation_challenge(
         template_hashes,
         grpc_binary_hash,
         image_bridge_hash,
+        model_hashes,
     }
 }
 
@@ -777,7 +789,7 @@ mod tests {
         let timestamp = "2025-01-15T10:30:00Z";
         let public_key = Some("cHVia2V5");
 
-        let response = handle_attestation_challenge(nonce, timestamp, public_key, None, None);
+        let response = handle_attestation_challenge(nonce, timestamp, public_key, None, None, std::collections::HashMap::new());
 
         match response {
             ProviderMessage::AttestationResponse {
@@ -799,7 +811,7 @@ mod tests {
     #[test]
     fn test_handle_attestation_challenge_without_public_key() {
         let response =
-            handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", None, None, None);
+            handle_attestation_challenge("bm9uY2U=", "2025-01-15T00:00:00Z", None, None, None, std::collections::HashMap::new());
 
         match response {
             ProviderMessage::AttestationResponse {
@@ -826,6 +838,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
         let resp2 = handle_attestation_challenge(
             "bm9uY2U=",
@@ -833,6 +846,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
 
         // Same inputs should produce same output (deterministic).
@@ -847,6 +861,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
         let resp2 = handle_attestation_challenge(
             "bm9uY2Uy",
@@ -854,6 +869,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
 
         // Different nonces should produce different signatures.
@@ -879,6 +895,7 @@ mod tests {
             Some("a2V5"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"type\":\"attestation_response\""));
@@ -1029,6 +1046,7 @@ mod tests {
             Some("cHVibGljLWtleQ=="),
             None,
             None,
+            std::collections::HashMap::new(),
         );
 
         match response {
@@ -1047,6 +1065,7 @@ mod tests {
                 template_hashes: _,
                 grpc_binary_hash: _,
                 image_bridge_hash: _,
+                model_hashes: _,
             } => {
                 // Nonce echoed back exactly
                 assert_eq!(nonce, "dGVzdG5vbmNl");
@@ -1075,7 +1094,7 @@ mod tests {
         // The public key in the response should match what was passed in.
         let pk = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=";
         let response =
-            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", Some(pk), None, None);
+            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", Some(pk), None, None, std::collections::HashMap::new());
 
         match response {
             ProviderMessage::AttestationResponse { public_key, .. } => {
@@ -1089,7 +1108,7 @@ mod tests {
     fn test_attestation_response_none_public_key_becomes_empty() {
         // When no public key is configured, the response should use empty string.
         let response =
-            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", None, None, None);
+            handle_attestation_challenge("bm9uY2U=", "2026-06-15T00:00:00Z", None, None, None, std::collections::HashMap::new());
 
         match response {
             ProviderMessage::AttestationResponse { public_key, .. } => {
@@ -1107,6 +1126,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
         let resp2 = handle_attestation_challenge(
             "bm9uY2U=",
@@ -1114,6 +1134,7 @@ mod tests {
             Some("key"),
             None,
             None,
+            std::collections::HashMap::new(),
         );
 
         match (&resp1, &resp2) {
@@ -1135,7 +1156,7 @@ mod tests {
         // The response must serialize with snake_case field names and the
         // "attestation_response" type tag that the Go coordinator expects.
         let response =
-            handle_attestation_challenge("YWJj", "2026-03-15T10:00:00Z", Some("cGs="), None, None);
+            handle_attestation_challenge("YWJj", "2026-03-15T10:00:00Z", Some("cGs="), None, None, std::collections::HashMap::new());
 
         let json = serde_json::to_string(&response).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
