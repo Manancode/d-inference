@@ -97,6 +97,29 @@ jobs:
           cp provider/target/release/darkbloom /tmp/eigeninference-bundle/
           cp enclave/.build/release/eigeninference-enclave /tmp/eigeninference-bundle/
 
+          # Copy stt_server.py
+          cp provider/stt_server.py /tmp/eigeninference-bundle/
+
+          # Bundle ffmpeg (installed via Homebrew which verifies bottle checksums)
+          FFMPEG_BIN="$(brew --prefix ffmpeg 2>/dev/null)/bin/ffmpeg"
+          if [ ! -f "$FFMPEG_BIN" ]; then
+            brew install --quiet ffmpeg
+            FFMPEG_BIN="$(brew --prefix ffmpeg)/bin/ffmpeg"
+          fi
+          cp "$FFMPEG_BIN" /tmp/eigeninference-bundle/ffmpeg
+
+          # Verify it's a real binary before signing
+          file "$FFMPEG_BIN" | grep -q "Mach-O" || { echo "ERROR: ffmpeg is not a Mach-O binary"; exit 1; }
+
+          # Code sign ffmpeg with our Developer ID for distribution
+          # Standard practice: we are the distributor, not claiming authorship
+          codesign --force --sign "$DEVELOPER_ID" \
+            --keychain "$KEYCHAIN_PATH" \
+            --options runtime \
+            --timestamp \
+            /tmp/eigeninference-bundle/ffmpeg
+          codesign --verify --verbose /tmp/eigeninference-bundle/ffmpeg
+
           # Copy gRPCServerCLI and image bridge into bundle
           cp /tmp/gRPCServerCLI /tmp/eigeninference-bundle/
           mkdir -p /tmp/eigeninference-bundle/image-bridge
@@ -151,6 +174,7 @@ jobs:
           xcrun stapler staple /tmp/eigeninference-bundle/darkbloom || true
           xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-enclave || true
           xcrun stapler staple /tmp/eigeninference-bundle/gRPCServerCLI || true
+          xcrun stapler staple /tmp/eigeninference-bundle/ffmpeg || true
 
           # Recreate tarball with stapled binaries
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
@@ -192,6 +216,11 @@ jobs:
           echo "image_bridge_hash=$IMAGE_BRIDGE_HASH" >> "$GITHUB_OUTPUT"
           echo "Image bridge hash: $IMAGE_BRIDGE_HASH"
 
+          # Hash ffmpeg (signed)
+          FFMPEG_HASH=$(shasum -a 256 /tmp/eigeninference-bundle/ffmpeg | cut -d' ' -f1)
+          echo "ffmpeg_hash=$FFMPEG_HASH" >> "$GITHUB_OUTPUT"
+          echo "ffmpeg hash (signed): $FFMPEG_HASH"
+
       # --- Compute runtime integrity hashes ---
       # Build a temp Python venv with our fork to compute reference hashes.
       # The venv is NOT shipped — providers self-heal at startup.
@@ -225,6 +254,7 @@ jobs:
           /tmp/eigeninference-python/bin/python3.12 -m pip install --upgrade pip --quiet
           /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet /tmp/vllm-mlx-source.zip
           /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet mlx-lm
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet grpcio flatbuffers soundfile mlx-audio
 
           # Verify packages work
           /tmp/eigeninference-python/bin/python3.12 -c "import vllm_mlx; print(f'vllm-mlx {vllm_mlx.__version__}')"
@@ -473,6 +503,7 @@ jobs:
               'template_hashes': '${{ steps.runtime.outputs.template_hashes }}',
               'grpc_binary_hash': '${{ steps.hash.outputs.grpc_binary_hash }}',
               'image_bridge_hash': '${{ steps.hash.outputs.image_bridge_hash }}',
+              'ffmpeg_hash': '${{ steps.hash.outputs.ffmpeg_hash }}',
               'url': '${BUNDLE_URL}',
               'changelog': '''${TAG_MSG}'''.strip()
           }
@@ -509,6 +540,7 @@ jobs:
             **Bundle hash:** `${{ steps.hash.outputs.bundle_hash }}`
             **Runtime hash (vllm-mlx):** `${{ steps.runtime.outputs.runtime_hash }}`
             **gRPCServerCLI hash:** `${{ steps.hash.outputs.grpc_binary_hash }}`
+            **ffmpeg hash (signed):** `${{ steps.hash.outputs.ffmpeg_hash }}`
             **Signed by:** Developer ID Application: Eigen Labs, Inc. (SLDQ2GJ6TL)
             **Notarized:** Yes
 

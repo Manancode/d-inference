@@ -95,7 +95,7 @@ echo "  Hash verified ✓"
 
 echo "  Installing binaries..."
 tar xzf /tmp/eigeninference-bundle.tar.gz -C "$BIN_DIR"
-chmod +x "$BIN_DIR/darkbloom" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" 2>/dev/null || true
+chmod +x "$BIN_DIR/darkbloom" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" "$BIN_DIR/ffmpeg" "$BIN_DIR/stt_server.py" 2>/dev/null || true
 # Move image bridge to the expected location
 if [ -d "$BIN_DIR/image-bridge" ]; then
     rm -rf "$INSTALL_DIR/image-bridge"
@@ -250,11 +250,13 @@ if [ -f "$PYTHON_BIN" ]; then
     fi
 fi
 
-# Ensure ffmpeg is available
-if command -v ffmpeg &>/dev/null; then
-    echo "  ffmpeg ✓"
-elif [ -x "$BIN_DIR/ffmpeg" ] || [ -x "$INSTALL_DIR/ffmpeg" ]; then
+# Ensure ffmpeg is available (bundled since v0.3.4, fallback download for older installs)
+if [ -x "$BIN_DIR/ffmpeg" ]; then
     echo "  ffmpeg ✓ (bundled)"
+elif command -v ffmpeg &>/dev/null; then
+    echo "  ffmpeg ✓ (system)"
+elif [ -x "$INSTALL_DIR/ffmpeg" ]; then
+    echo "  ffmpeg ✓"
 else
     echo "  Downloading ffmpeg..."
     if curl -fsSL "$COORD_URL/dl/ffmpeg-macos-arm64" -o "$BIN_DIR/ffmpeg" 2>/dev/null; then
