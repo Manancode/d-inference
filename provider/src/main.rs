@@ -2380,12 +2380,27 @@ async fn cmd_serve(
         advertised_models.len()
     );
 
-    // STT model env vars (needed for both advertising and backend startup)
+    // STT model setup — auto-detect from huggingface cache if not explicitly set.
     // Allocate STT/image ports after all text model ports
     let stt_port = be_port + backend_slots.len() as u16;
-    let stt_model_path = std::env::var("EIGENINFERENCE_STT_MODEL").unwrap_or_default();
     let stt_model_id = std::env::var("EIGENINFERENCE_STT_MODEL_ID")
         .unwrap_or_else(|_| "CohereLabs/cohere-transcribe-03-2026".to_string());
+    let stt_model_path = {
+        let explicit = std::env::var("EIGENINFERENCE_STT_MODEL").unwrap_or_default();
+        if !explicit.is_empty() {
+            explicit
+        } else {
+            // Auto-detect: check if the default STT model exists in huggingface cache
+            match models::resolve_local_path(&stt_model_id) {
+                Some(p) => {
+                    let path = p.to_string_lossy().to_string();
+                    tracing::info!("Auto-detected STT model in cache: {path}");
+                    path
+                }
+                None => String::new(),
+            }
+        }
+    };
 
     // Image model env vars (needed for both advertising and backend startup)
     let image_port = stt_port + 1;
@@ -2403,19 +2418,8 @@ async fn cmd_serve(
         image_model_path_raw
     };
 
-    // Advertise STT model if configured (backend starts later)
-    if !stt_model_path.is_empty() && !stt_model_id.is_empty() {
-        advertised_models.push(models::ModelInfo {
-            id: stt_model_id.clone(),
-            model_type: Some("stt".to_string()),
-            parameters: None,
-            quantization: None,
-            size_bytes: 0,
-            estimated_memory_gb: 4.0,
-            weight_hash: None,
-        });
-        tracing::info!("Advertising STT model: {stt_model_id}");
-    }
+    // STT model is advertised AFTER backend health check (see below).
+    // Do not advertise before confirming the backend is actually running.
 
     // Advertise image model if configured (backend starts later)
     if !image_model.is_empty() && !image_model_id.is_empty() {
@@ -2522,6 +2526,65 @@ async fn cmd_serve(
             runtime_hashes.runtime_hash.as_deref().unwrap_or("none"),
             runtime_hashes.template_hashes.len()
         );
+
+        // Start STT backend before coordinator registration so we only
+        // advertise the model if the backend is actually healthy.
+        if !stt_model_path.is_empty() {
+            tracing::info!("Starting STT backend on port {stt_port} for model: {stt_model_path}");
+            if let Some(script) = find_stt_server_script() {
+                let stt_result = std::process::Command::new(&python_cmd)
+                    .args([
+                        &script,
+                        "--model",
+                        &stt_model_path,
+                        "--port",
+                        &stt_port.to_string(),
+                        "--host",
+                        "127.0.0.1",
+                        "--max-batch-size",
+                        "16",
+                        "--max-wait-ms",
+                        "100",
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                match stt_result {
+                    Ok(child) => {
+                        tracing::info!("STT server started (PID: {:?}) on port {stt_port}", child.id());
+                        let stt_url = format!("http://127.0.0.1:{stt_port}");
+                        let mut stt_healthy = false;
+                        for i in 0..30 {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            if backend::check_health(&stt_url).await {
+                                tracing::info!("STT backend ready after {}s", (i + 1) * 2);
+                                stt_healthy = true;
+                                break;
+                            }
+                        }
+                        if stt_healthy {
+                            advertised_models.push(models::ModelInfo {
+                                id: stt_model_id.clone(),
+                                model_type: Some("stt".to_string()),
+                                parameters: None,
+                                quantization: None,
+                                size_bytes: 0,
+                                estimated_memory_gb: 4.0,
+                                weight_hash: None,
+                            });
+                            tracing::info!("STT backend healthy — advertising model: {stt_model_id}");
+                        } else {
+                            tracing::warn!("STT backend failed health check — model will NOT be advertised");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to start STT backend: {e}");
+                    }
+                }
+            } else {
+                tracing::warn!("stt_server.py not found — STT will not be available");
+            }
+        }
 
         let client = coordinator::CoordinatorClient::new(
             coordinator_url,
@@ -2695,67 +2758,7 @@ async fn cmd_serve(
                 .collect(),
         ));
 
-    // Start STT backend (continuous-batching stt_server.py) on be_port + 1 if available.
-    // EIGENINFERENCE_STT_MODEL: local path or HuggingFace repo ID for the STT model.
-    // EIGENINFERENCE_STT_MODEL_ID: clean model name for coordinator registration (optional,
-    //   defaults to "CohereLabs/cohere-transcribe-03-2026").
-    let _stt_available = if !stt_model_path.is_empty() {
-        tracing::info!("Starting STT backend on port {stt_port} for model: {stt_model_path}");
-
-        // Find stt_server.py relative to the binary or in standard locations
-        let stt_server_script = find_stt_server_script();
-        if stt_server_script.is_none() {
-            tracing::warn!("stt_server.py not found — STT will not be available");
-            false
-        } else {
-            let script = stt_server_script.unwrap();
-            let stt_result = std::process::Command::new(&python_cmd)
-                .args([
-                    &script,
-                    "--model",
-                    &stt_model_path,
-                    "--port",
-                    &stt_port.to_string(),
-                    "--host",
-                    "127.0.0.1",
-                    "--max-batch-size",
-                    "16",
-                    "--max-wait-ms",
-                    "100",
-                ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-            match stt_result {
-                Ok(child) => {
-                    tracing::info!(
-                        "STT server started (PID: {:?}) on port {stt_port}",
-                        child.id()
-                    );
-                    // Wait for STT backend to be ready (model loading can take a few seconds)
-                    let stt_url = format!("http://127.0.0.1:{stt_port}");
-                    for i in 0..150 {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if backend::check_health(&stt_url).await {
-                            tracing::info!("STT backend ready after {}s", (i + 1) * 2);
-                            break;
-                        }
-                        if i == 29 {
-                            tracing::warn!("STT backend health check timed out after 60s");
-                        }
-                    }
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to start STT backend: {e} — STT will not be available");
-                    false
-                }
-            }
-        }
-    } else {
-        tracing::info!("No STT model configured (set EIGENINFERENCE_STT_MODEL to enable)");
-        false
-    };
+    // STT backend was started before coordinator registration (see coordinator setup above).
 
     // Start image generation bridge on be_port + 2 if configured.
     // EIGENINFERENCE_IMAGE_MODEL: model ID for the image bridge (e.g. "flux-klein-4b").
@@ -2892,10 +2895,7 @@ async fn cmd_serve(
         // (running requests, token counts, GPU memory). This data is included
         // in heartbeats so the coordinator can make informed routing decisions.
         if let Some(cap_arc) = backend_capacity_opt {
-            let poll_urls: Vec<(String, String)> = backend_slots
-                .iter()
-                .map(|s| (s.model_id.clone(), s.backend_url.clone()))
-                .collect();
+            let poll_shared_slots = shared_slots.clone();
             let total_mem_gb = hw.memory_gb as f64;
             let poll_backend_running = backend_running_flag_opt
                 .as_ref()
@@ -2910,8 +2910,28 @@ async fn cmd_serve(
                     let mut gpu_active = 0.0_f64;
                     let mut gpu_peak = 0.0_f64;
                     let mut gpu_cache = 0.0_f64;
-                    for (model_id, url) in &poll_urls {
-                        match hardware::poll_backend_status(url).await {
+                    let slot_snapshots: Vec<(String, u16, bool)> = {
+                        let slots = poll_shared_slots.lock().unwrap();
+                        slots
+                            .iter()
+                            .map(|s| (s.model_id.clone(), s.port, s.restarting))
+                            .collect()
+                    };
+                    for (model_id, port, restarting) in &slot_snapshots {
+                        if *restarting {
+                            slots.push(protocol::BackendSlotCapacity {
+                                model: model_id.clone(),
+                                state: "reloading".to_string(),
+                                num_running: 0,
+                                num_waiting: 0,
+                                active_tokens: 0,
+                                max_tokens_potential: 0,
+                            });
+                            continue;
+                        }
+
+                        let url = format!("http://127.0.0.1:{port}");
+                        match hardware::poll_backend_status(&url).await {
                             Some(status) => {
                                 // Use GPU memory from any slot (Metal memory is shared)
                                 // Take the max across slots to avoid double-counting.

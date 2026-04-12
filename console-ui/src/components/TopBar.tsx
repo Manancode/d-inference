@@ -18,7 +18,7 @@ export function TopBar({ title }: { title?: string }) {
 
   return (
     <>
-      <header className="h-14 bg-bg-primary/80 backdrop-blur-sm flex items-center px-3 sm:px-5 gap-3 shrink-0 squiggly-border-bottom">
+      <header className="h-14 bg-bg-primary/80 backdrop-blur-sm flex items-center px-3 sm:px-5 gap-3 shrink-0 border-b border-border-dim">
         {!sidebarOpen && (
           <button
             onClick={() => setSidebarOpen(true)}
@@ -29,13 +29,13 @@ export function TopBar({ title }: { title?: string }) {
         )}
         {!sidebarOpen && (
           <div className="mr-3">
-            <span className="text-xl font-display text-ink tracking-tight">
-              Eigen<span className="text-coral">Inference</span>
+            <span className="text-xl text-ink tracking-tight" style={{ fontFamily: "'Louize', Georgia, serif" }}>
+              Darkbloom
             </span>
           </div>
         )}
         {title && (
-          <h1 className="text-base font-display text-text-secondary">{title}</h1>
+          <h1 className="text-base font-medium text-text-secondary">{title}</h1>
         )}
 
         {/* E2E lock indicator — shown when there's an active chat */}

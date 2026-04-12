@@ -104,7 +104,7 @@ export default function ModelsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-8">
           <div className="mb-6">
-            <h2 className="text-2xl font-display text-ink mb-1">
+            <h2 className="text-2xl font-semibold text-ink mb-1">
               Available Models
             </h2>
             <p className="text-sm text-text-tertiary">
@@ -139,7 +139,7 @@ export default function ModelsPage() {
                 return (
                   <div
                     key={model.id}
-                    className="group rounded-xl bg-bg-white border-[3px] border-ink p-5 hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)] transition-all"
+                    className="group rounded-xl bg-bg-white border border-border-dim p-5 hover:shadow-sm transition-all"
                   >
                     {/* Header */}
                     <div className="flex items-start justify-between mb-3">
@@ -232,7 +232,7 @@ export default function ModelsPage() {
           {/* Pricing comparison table */}
           <div className="mt-12 mb-8">
             <div className="mb-4">
-              <h2 className="text-2xl font-display text-ink mb-1">
+              <h2 className="text-2xl font-semibold text-ink mb-1">
                 Pricing vs Competitors
               </h2>
               <p className="text-sm text-text-tertiary">
@@ -240,7 +240,7 @@ export default function ModelsPage() {
               </p>
             </div>
 
-            <div className="rounded-xl bg-bg-white border-[3px] border-ink overflow-hidden shadow-md">
+            <div className="rounded-xl bg-bg-white border border-border-dim overflow-hidden shadow-md">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border-dim">

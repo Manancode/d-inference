@@ -303,7 +303,7 @@ describe("proxy headers", () => {
   });
 
   it("includes x-api-key when set in localStorage", async () => {
-    localStorage.setItem("eigeninference_api_key", "test-key-123");
+    localStorage.setItem("darkbloom_api_key", "test-key-123");
     fetchMock.mockResolvedValueOnce(jsonResponse({ balance_micro_usd: 0, balance_usd: 0 }));
     await fetchBalance();
 

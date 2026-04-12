@@ -1114,14 +1114,15 @@ func (s *Server) verifyAppleDeviceAttestation(providerID string, provider *regis
 
 	// Compute SE key hash for nonce-based key binding.
 	// If the provider has an SE public key, include its hash as the
-	// DeviceAttestationNonce. Apple will embed SHA-256(nonce) as FreshnessCode
+	// DeviceAttestationNonce (base64-encoded). Apple decodes the nonce and
+	// embeds the raw bytes as FreshnessCode (OID 1.2.840.113635.100.8.11.1)
 	// in the signed cert, cryptographically binding the SE key to genuine hardware.
 	var seKeyNonce string
 	var expectedFreshness [32]byte
 	if attestResult.PublicKey != "" {
 		seKeyHash := sha256.Sum256([]byte(attestResult.PublicKey))
 		seKeyNonce = base64.StdEncoding.EncodeToString(seKeyHash[:])
-		expectedFreshness = sha256.Sum256([]byte(seKeyNonce))
+		expectedFreshness = seKeyHash
 		s.logger.Info("requesting Apple Device Attestation (MDA) with SE key binding",
 			"provider_id", providerID,
 			"udid", udid,

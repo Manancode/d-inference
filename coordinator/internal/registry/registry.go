@@ -54,17 +54,23 @@ const (
 
 // PendingRequest is a channel-based handle for an in-flight inference request.
 type PendingRequest struct {
-	RequestID      string
-	ProviderID     string
-	Model          string
-	ConsumerKey    string
-	AcceptedCh     chan struct{}           // signalled when provider accepts request
-	ChunkCh        chan string             // SSE data chunks
-	CompleteCh     chan protocol.UsageInfo // closed after usage sent
-	ErrorCh        chan protocol.InferenceErrorMessage
-	SessionPrivKey *[32]byte // E2E session private key for decrypting responses
-	SESignature    string    // SE signature over response hash
-	ResponseHash   string    // SHA-256 of response data
+	RequestID   string
+	ProviderID  string
+	Model       string
+	ConsumerKey string
+	// EstimatedPromptTokens is a coordinator-side heuristic used only for
+	// routing and queue admission. It does not need tokenizer-perfect accuracy.
+	EstimatedPromptTokens int
+	// RequestedMaxTokens is the consumer's requested output budget (or a
+	// sensible default when omitted). It is used for backlog estimation.
+	RequestedMaxTokens int
+	AcceptedCh         chan struct{}           // signalled when provider accepts request
+	ChunkCh            chan string             // SSE data chunks
+	CompleteCh         chan protocol.UsageInfo // closed after usage sent
+	ErrorCh            chan protocol.InferenceErrorMessage
+	SessionPrivKey     *[32]byte // E2E session private key for decrypting responses
+	SESignature        string    // SE signature over response hash
+	ResponseHash       string    // SHA-256 of response data
 
 	// STT transcription result (nil for inference requests)
 	TranscriptionCh chan *protocol.TranscriptionCompleteMessage
@@ -137,6 +143,11 @@ type Provider struct {
 func (p *Provider) AddPending(pr *PendingRequest) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.addPendingLocked(pr)
+}
+
+// addPendingLocked registers a pending request. Caller must hold p.mu.
+func (p *Provider) addPendingLocked(pr *PendingRequest) {
 	p.pendingReqs[pr.RequestID] = pr
 }
 
@@ -144,6 +155,11 @@ func (p *Provider) AddPending(pr *PendingRequest) {
 func (p *Provider) RemovePending(requestID string) *PendingRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.removePendingLocked(requestID)
+}
+
+// removePendingLocked removes and returns a pending request. Caller must hold p.mu.
+func (p *Provider) removePendingLocked(requestID string) *PendingRequest {
 	pr := p.pendingReqs[requestID]
 	delete(p.pendingReqs, requestID)
 	return pr
@@ -690,6 +706,11 @@ func (r *Registry) Heartbeat(id string, msg *protocol.HeartbeatMessage) {
 		}
 	}
 	p.mu.Unlock()
+
+	// Heartbeats can make a recovered slot routable again (for example after a
+	// crash auto-restart). Drain matching queues using the canonical scheduler
+	// rather than the legacy direct queue assignment path.
+	r.drainQueuedRequestsForModels(providerModelIDs(p))
 }
 
 // Disconnect removes a provider from the registry and cleans up pending requests.
@@ -787,14 +808,8 @@ func (r *Registry) RecordChallengeSuccess(providerID string) {
 	r.persistProvider(p)
 	r.persistReputation(p)
 
-	// Drain queued requests — a newly verified provider can serve them.
-	if r.queue != nil && p.PendingCount() < p.MaxConcurrency() {
-		for _, m := range p.Models {
-			if r.queue.TryAssign(m.ID, p) {
-				break
-			}
-		}
-	}
+	// A newly verified provider may unlock queued requests for any model it serves.
+	r.drainQueuedRequestsForModels(providerModelIDs(p))
 }
 
 // RecordChallengeFailure records a failed challenge-response. Returns the
@@ -1108,23 +1123,13 @@ func (r *Registry) SetProviderIdle(id string) {
 	}
 
 	p.mu.Lock()
-	if p.pendingCount() == 0 {
+	if p.pendingCount() == 0 && p.Status != StatusUntrusted && p.Status != StatusOffline {
 		p.Status = StatusOnline
 	}
 	p.mu.Unlock()
 
-	// Check if there are queued requests and this provider has headroom.
-	hasCap := p.PendingCount() < p.MaxConcurrency()
-	p.mu.Lock()
-	trust := p.TrustLevel
-	p.mu.Unlock()
-	if r.queue != nil && hasCap && r.trustMeetsMinimum(trust) {
-		for _, m := range p.Models {
-			if r.queue.TryAssign(m.ID, p) {
-				break
-			}
-		}
-	}
+	// Use all newly available capacity, not just a single queued request.
+	r.drainQueuedRequestsForModels(providerModelIDs(p))
 }
 
 // AttestationSummary provides aggregate attestation status for a model's providers.

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuthContext } from "@/components/providers/PrivyClientProvider";
 
-const API_KEY_STORAGE = "eigeninference_api_key";
+const API_KEY_STORAGE = "darkbloom_api_key";
 const OLD_API_KEY_STORAGE = "eigeninference_api_key";
 
 export function useAuth() {

@@ -8,9 +8,9 @@ const DEFAULT_COORDINATOR =
 const getConfig = () => {
   if (typeof window === "undefined") return { apiKey: "", baseUrl: DEFAULT_COORDINATOR };
   return {
-    apiKey: localStorage.getItem("eigeninference_api_key") || "",
+    apiKey: localStorage.getItem("darkbloom_api_key") || "",
     baseUrl:
-      localStorage.getItem("eigeninference_coordinator_url") || DEFAULT_COORDINATOR,
+      localStorage.getItem("darkbloom_coordinator_url") || DEFAULT_COORDINATOR,
   };
 };
 
@@ -305,7 +305,7 @@ export async function streamChat(
   if (!res.ok) {
     // If 401, key is stale — auto-regenerate and tell user to retry
     if (res.status === 401) {
-      localStorage.removeItem("eigeninference_api_key");
+      localStorage.removeItem("darkbloom_api_key");
       try {
         const keyRes = await fetch("/api/auth/keys", {
           method: "POST",
@@ -313,7 +313,7 @@ export async function streamChat(
         });
         if (keyRes.ok) {
           const { api_key } = await keyRes.json();
-          localStorage.setItem("eigeninference_api_key", api_key);
+          localStorage.setItem("darkbloom_api_key", api_key);
         }
       } catch { /* ignore */ }
       callbacks.onError("Session expired — please resend your message");

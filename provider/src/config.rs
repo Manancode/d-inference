@@ -78,7 +78,7 @@ impl ProviderConfig {
             },
             coordinator: CoordinatorSettings {
                 url: "ws://localhost:8080/ws/provider".to_string(),
-                heartbeat_interval_secs: 30,
+                heartbeat_interval_secs: 5,
             },
             schedule: None,
         }
@@ -230,7 +230,7 @@ mod tests {
         let config = ProviderConfig::default_for_hardware(&hw);
         assert_eq!(config.provider.name, "eigeninference-mac16-1");
         assert_eq!(config.backend.port, 8100);
-        assert_eq!(config.coordinator.heartbeat_interval_secs, 30);
+        assert_eq!(config.coordinator.heartbeat_interval_secs, 5);
         assert!(config.backend.continuous_batching);
         assert!(config.backend.model.is_none());
         assert!(config.backend.enabled_models.is_empty());

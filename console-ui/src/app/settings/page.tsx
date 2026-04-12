@@ -24,7 +24,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setCoordinatorUrl(
-        localStorage.getItem("eigeninference_coordinator_url") ||
+        localStorage.getItem("darkbloom_coordinator_url") ||
           process.env.NEXT_PUBLIC_COORDINATOR_URL ||
           "https://api.darkbloom.dev"
       );
@@ -32,7 +32,7 @@ export default function SettingsPage() {
   }, []);
 
   const handleSave = () => {
-    localStorage.setItem("eigeninference_coordinator_url", coordinatorUrl);
+    localStorage.setItem("darkbloom_coordinator_url", coordinatorUrl);
     setSaved(true);
     addToast("Settings saved", "success");
     setTimeout(() => setSaved(false), 2000);
@@ -61,7 +61,7 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-3 sm:px-6 py-6 sm:py-8 space-y-8">
           {/* Coordinator URL */}
-          <section className="rounded-xl bg-bg-white border-[3px] border-ink p-6 shadow-md">
+          <section className="rounded-xl bg-bg-white border border-border-dim p-6 shadow-md">
             <div className="flex items-center gap-2 mb-4">
               <Globe size={14} className="text-accent-green" />
               <h3 className="text-sm font-medium text-text-primary">
@@ -112,7 +112,7 @@ export default function SettingsPage() {
           {/* Save */}
           <button
             onClick={handleSave}
-            className="w-full py-3 rounded-lg bg-coral text-white font-bold text-sm border-[3px] border-ink hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)] transition-all flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-lg bg-coral text-white font-bold text-sm border border-border-dim hover:opacity-90 transition-all flex items-center justify-center gap-2"
           >
             {saved ? (
               <>
@@ -125,7 +125,7 @@ export default function SettingsPage() {
           </button>
 
           {/* Info */}
-          <div className="rounded-xl bg-bg-white border-[3px] border-ink p-5 shadow-md">
+          <div className="rounded-xl bg-bg-white border border-border-dim p-5 shadow-md">
             <h4 className="text-xs font-mono text-text-tertiary uppercase tracking-wider mb-3">
               About Darkbloom
             </h4>

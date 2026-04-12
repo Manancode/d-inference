@@ -97,7 +97,7 @@ export default function ImagesPage() {
   const downloadImage = useCallback((b64: string, index: number) => {
     const link = document.createElement("a");
     link.href = `data:image/png;base64,${b64}`;
-    link.download = `eigeninference-${Date.now()}-${index}.png`;
+    link.download = `darkbloom-${Date.now()}-${index}.png`;
     link.click();
   }, []);
 
@@ -109,9 +109,9 @@ export default function ImagesPage() {
   return (
     <div className="flex-1 flex flex-col h-full">
       {/* Header */}
-      <div className="squiggly-border-bottom px-6 py-4">
+      <div className="border-b border-border-dim px-6 py-4">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-display text-ink">Image Generation</h1>
+          <h1 className="text-2xl font-semibold text-ink">Image Generation</h1>
           <span className="px-2 py-0.5 rounded-full bg-accent-amber/15 border border-accent-amber/30 text-accent-amber text-[10px] font-bold uppercase tracking-wider">
             Experimental
           </span>
@@ -126,7 +126,7 @@ export default function ImagesPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-6">
           {/* Prompt input */}
-          <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-4 space-y-3">
+          <div className="bg-bg-white rounded-2xl border border-border-dim shadow-md p-4 space-y-3">
             <textarea
               ref={textareaRef}
               value={prompt}
@@ -213,7 +213,7 @@ export default function ImagesPage() {
               <button
                 onClick={handleGenerate}
                 disabled={!prompt.trim() || !selectedModel || generating}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-coral border-2 border-ink text-white text-sm font-bold disabled:opacity-30 hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] transition-all"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-coral border-2 border-ink text-white text-sm font-bold disabled:opacity-30 hover:opacity-90 transition-all"
               >
                 {generating ? (
                   <>

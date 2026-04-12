@@ -40,7 +40,7 @@ function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-bg-white border-[3px] border-ink rounded-xl w-full max-w-md mx-2 sm:mx-4 shadow-lg">
+      <div className="bg-bg-white border border-border-dim rounded-xl w-full max-w-md mx-2 sm:mx-4 shadow-lg">
         <div className="flex justify-end p-3">
           <button
             onClick={onClose}
@@ -165,7 +165,7 @@ export default function BillingPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 py-6 sm:py-8 space-y-8">
           {/* Balance Card */}
-          <div className="relative overflow-hidden rounded-2xl border-[3px] border-ink bg-bg-white p-6 sm:p-8 shadow-md">
+          <div className="relative overflow-hidden rounded-2xl border border-border-dim bg-bg-white p-6 sm:p-8 shadow-md">
             <div className="relative">
               <p className="text-xs font-mono text-text-tertiary uppercase tracking-widest mb-2">
                 Available Credits
@@ -202,8 +202,8 @@ export default function BillingPage() {
 
               <button
                 onClick={() => setBuyOpen(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-coral border-[3px] border-ink text-white text-sm font-bold
-                           hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)] transition-all"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-coral border border-border-dim text-white text-sm font-bold
+                           hover:opacity-90 transition-all"
               >
                 <CreditCard size={14} />
                 Buy Credits
@@ -212,7 +212,7 @@ export default function BillingPage() {
           </div>
 
           {/* Invite Code Redemption */}
-          <div className="rounded-2xl border-[3px] border-ink bg-bg-white p-6 shadow-md">
+          <div className="rounded-2xl border border-border-dim bg-bg-white p-6 shadow-md">
             <div className="flex items-center gap-2 mb-4">
               <Ticket size={16} className="text-gold" />
               <h3 className="text-sm font-semibold text-text-primary">Invite Code</h3>
@@ -234,7 +234,7 @@ export default function BillingPage() {
               <button
                 onClick={handleRedeem}
                 disabled={inviteLoading || !inviteCode.trim()}
-                className="px-5 py-2.5 rounded-lg bg-coral border-2 border-ink text-white text-sm font-bold hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+                className="px-5 py-2.5 rounded-lg bg-coral border-2 border-ink text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
               >
                 {inviteLoading ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -295,7 +295,7 @@ export default function BillingPage() {
           <UsageChart usage={usage} />
 
           {/* Usage Table */}
-          <div className="rounded-xl bg-bg-white border-[3px] border-ink overflow-hidden shadow-md">
+          <div className="rounded-xl bg-bg-white border border-border-dim overflow-hidden shadow-md">
             <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-2">
               <Clock size={14} className="text-text-tertiary" />
               <h3 className="text-sm font-semibold text-text-primary">
@@ -377,7 +377,7 @@ export default function BillingPage() {
       {/* Buy Credits Modal */}
       <Modal open={buyOpen} onClose={() => setBuyOpen(false)}>
         <div className="px-6 pb-6">
-          <h3 className="text-2xl font-display text-ink mb-2">
+          <h3 className="text-2xl font-semibold text-ink mb-2">
             Buy Credits
           </h3>
           <p className="text-sm text-text-secondary mb-4">
@@ -406,12 +406,12 @@ export default function BillingPage() {
             Amount (USD)
           </label>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-text-tertiary text-lg font-display">$</span>
+            <span className="text-text-tertiary text-lg">$</span>
             <input
               type="number"
               value={buyAmount}
               onChange={(e) => setBuyAmount(e.target.value)}
-              className="flex-1 bg-bg-primary border-[3px] border-ink rounded-lg px-4 py-3 text-text-primary font-mono text-lg outline-none focus:border-coral transition-colors"
+              className="flex-1 bg-bg-primary border border-border-dim rounded-lg px-4 py-3 text-text-primary font-mono text-lg outline-none focus:border-coral transition-colors"
               min="1"
               step="1"
             />
@@ -434,9 +434,9 @@ export default function BillingPage() {
           <button
             onClick={() => setConfirmOpen(true)}
             disabled={actionLoading || !buyAmount || parseFloat(buyAmount) <= 0}
-            className="w-full py-3 rounded-lg bg-coral border-[3px] border-ink text-white font-bold text-sm
-                       hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)]
-                       disabled:opacity-50 disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-none
+            className="w-full py-3 rounded-lg bg-coral border border-border-dim text-white font-bold text-sm
+                       hover:opacity-90
+                       disabled:opacity-50
                        transition-all flex items-center justify-center gap-2"
           >
             Continue
@@ -450,7 +450,7 @@ export default function BillingPage() {
       {/* Confirmation Modal */}
       <Modal open={confirmOpen} onClose={() => !actionLoading && setConfirmOpen(false)}>
         <div className="px-6 pb-6">
-          <h3 className="text-xl font-display text-ink mb-2">Confirm Purchase</h3>
+          <h3 className="text-xl font-semibold text-ink mb-2">Confirm Purchase</h3>
           <p className="text-sm text-text-secondary mb-4">
             This will transfer <span className="font-bold text-text-primary">${buyAmount} USDC</span> from your wallet to buy inference credits.
           </p>
@@ -482,8 +482,8 @@ export default function BillingPage() {
                 setConfirmOpen(false);
               }}
               disabled={actionLoading}
-              className="flex-1 py-3 rounded-lg bg-coral border-[3px] border-ink text-white font-bold text-sm
-                         hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--ink)]
+              className="flex-1 py-3 rounded-lg bg-coral border border-border-dim text-white font-bold text-sm
+                         hover:opacity-90
                          disabled:opacity-50 transition-all flex items-center justify-center gap-2"
             >
               {actionLoading && <Loader2 size={14} className="animate-spin" />}

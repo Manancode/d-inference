@@ -157,7 +157,7 @@ describe("LinkPage", () => {
 
     expect(screen.getByText("Link Your Device")).toBeInTheDocument();
     expect(
-      screen.getByText(/Connect your Mac to your EigenInference account/)
+      screen.getByText(/Connect your Mac to your Darkbloom account/)
     ).toBeInTheDocument();
   });
 

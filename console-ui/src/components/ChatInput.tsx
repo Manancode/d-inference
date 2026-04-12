@@ -58,9 +58,9 @@ export function ChatInput({ onSend, onStop, isStreaming, authenticated = true, o
     return () => document.removeEventListener("click", handler);
   }, [modelOpen]);
 
-  // Find a transcription model from the model list
+  // Find a transcription model that has at least one active provider
   const sttModel = models.find(
-    (m) => m.model_type === "stt" || m.model_type === "transcription"
+    (m) => (m.model_type === "stt" || m.model_type === "transcription") && (m.provider_count ?? 0) > 0
   );
 
   const startRecording = useCallback(async () => {
@@ -135,7 +135,7 @@ export function ChatInput({ onSend, onStop, isStreaming, authenticated = true, o
         <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-4">
           <button
             onClick={onLogin}
-            className="w-full flex items-center justify-center gap-2 bg-bg-tertiary rounded-2xl border-[3px] border-border-dim
+            className="w-full flex items-center justify-center gap-2 bg-bg-tertiary rounded-2xl border border-border-dim
                        py-4 text-text-tertiary hover:text-text-secondary hover:border-border-subtle cursor-pointer transition-all"
           >
             <LogIn size={16} />
@@ -149,8 +149,8 @@ export function ChatInput({ onSend, onStop, isStreaming, authenticated = true, o
   return (
     <div className="bg-bg-primary/80 backdrop-blur-sm">
       <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-4">
-        <div className="relative flex flex-col gap-2 bg-bg-white rounded-2xl border-[3px] border-ink
-                        shadow-md focus-within:shadow-lg focus-within:translate-x-[-1px] focus-within:translate-y-[-1px] transition-all">
+        <div className="relative flex flex-col gap-2 bg-bg-white rounded-2xl border border-border-dim
+                        shadow-md focus-within:shadow-lg transition-all">
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -180,7 +180,7 @@ export function ChatInput({ onSend, onStop, isStreaming, authenticated = true, o
                 </button>
 
                 {modelOpen && chatModels.length > 0 && (
-                  <div className="absolute bottom-full left-0 mb-1 w-[calc(100vw-3rem)] sm:w-80 bg-bg-white border-[3px] border-ink rounded-xl shadow-lg overflow-hidden z-50">
+                  <div className="absolute bottom-full left-0 mb-1 w-[calc(100vw-3rem)] sm:w-80 bg-bg-white border border-border-dim rounded-xl shadow-lg overflow-hidden z-50">
                     {chatModels.map((m) => {
                       const name = m.display_name || m.id.split("/").pop() || m.id;
                       return (
@@ -249,7 +249,7 @@ export function ChatInput({ onSend, onStop, isStreaming, authenticated = true, o
                   disabled={!input.trim() || isStreaming}
                   className="flex items-center justify-center w-9 h-9 rounded-xl bg-coral border-2 border-ink text-white
                              disabled:opacity-30 disabled:border-border-subtle
-                             hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)]
+                             hover:opacity-90
                              transition-all"
                 >
                   <Send size={16} />

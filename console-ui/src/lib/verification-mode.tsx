@@ -14,7 +14,7 @@ const VerificationModeContext = createContext<VerificationModeContextValue>({
   toggle: () => {},
 });
 
-const STORAGE_KEY = "eigeninference-verification-mode";
+const STORAGE_KEY = "darkbloom-verification-mode";
 
 function getInitialMode(): VerificationMode {
   if (typeof window === "undefined") return "normal";

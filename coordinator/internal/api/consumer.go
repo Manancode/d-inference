@@ -81,6 +81,86 @@ type genericInferenceRequest struct {
 	RawBody json.RawMessage `json:"-"`
 }
 
+func intFromRequestValue(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int32:
+		return int(x), true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	case json.Number:
+		n, err := x.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+func approximateTokenCount(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch x := v.(type) {
+	case string:
+		if x == "" {
+			return 0
+		}
+		tokens := len(x) / 4
+		if tokens < 1 {
+			tokens = 1
+		}
+		return tokens
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return 0
+		}
+		tokens := len(b) / 4
+		if tokens < 1 {
+			tokens = 1
+		}
+		return tokens
+	}
+}
+
+func estimatePromptTokens(parsed map[string]any) int {
+	total := 0
+	if v, ok := parsed["messages"]; ok {
+		total += approximateTokenCount(v)
+	}
+	if v, ok := parsed["input"]; ok {
+		total += approximateTokenCount(v)
+	}
+	if v, ok := parsed["prompt"]; ok {
+		total += approximateTokenCount(v)
+	}
+	if total == 0 {
+		total = approximateTokenCount(parsed)
+	}
+	return total
+}
+
+func estimateRequestedMaxTokens(parsed map[string]any) int {
+	for _, key := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if n, ok := intFromRequestValue(parsed[key]); ok && n > 0 {
+			if copies, ok := intFromRequestValue(parsed["n"]); ok && copies > 1 {
+				return n * copies
+			}
+			return n
+		}
+	}
+	if copies, ok := intFromRequestValue(parsed["n"]); ok && copies > 1 {
+		return 256 * copies
+	}
+	return 256
+}
+
 // handleChatCompletions handles POST /v1/chat/completions.
 //
 // This is the main inference endpoint. It validates the request, finds an
@@ -128,6 +208,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stream, _ := parsed["stream"].(bool)
+	estimatedPromptTokens := estimatePromptTokens(parsed)
+	requestedMaxTokens := estimateRequestedMaxTokens(parsed)
 
 	// Pre-flight balance reservation — atomically debit the minimum charge
 	// before routing to a provider. This prevents concurrent requests from
@@ -189,7 +271,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for attempt := 0; attempt < maxDispatchAttempts; attempt++ {
-		provider = s.registry.FindProvider(model, excludeList()...)
+		requestID = uuid.New().String()
+		pr = &registry.PendingRequest{
+			RequestID:             requestID,
+			Model:                 model,
+			ConsumerKey:           consumerKey,
+			EstimatedPromptTokens: estimatedPromptTokens,
+			RequestedMaxTokens:    requestedMaxTokens,
+			AcceptedCh:            make(chan struct{}, 1),
+			ChunkCh:               make(chan string, chunkBufferSize),
+			CompleteCh:            make(chan protocol.UsageInfo, 1),
+			ErrorCh:               make(chan protocol.InferenceErrorMessage, 1),
+		}
+
+		provider = s.registry.ReserveProvider(model, pr, excludeList()...)
 		if provider == nil {
 			// On retry attempts, don't queue — if the only available
 			// providers already failed, waiting 120s for one of them
@@ -199,8 +294,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			// No idle provider — try queueing.
 			queuedReq := &registry.QueuedRequest{
-				RequestID:  uuid.New().String(),
+				RequestID:  requestID,
 				Model:      model,
+				Pending:    pr,
 				ResponseCh: make(chan *registry.Provider, 1),
 			}
 			if err := s.registry.Queue().Enqueue(queuedReq); err != nil {
@@ -215,8 +311,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			)
 
 			var err error
-			provider, err = s.registry.Queue().WaitForProvider(queuedReq)
+			provider, err = s.registry.Queue().WaitForProviderContext(r.Context(), queuedReq)
 			if err != nil {
+				if err == context.Canceled {
+					refundReservation()
+					return
+				}
 				refundReservation()
 				writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available", fmt.Sprintf("no hardware-trusted provider became available for model %q (queue timeout)", model)))
 				return
@@ -253,7 +353,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		requestID = uuid.New().String()
 		wireMsg := map[string]any{
 			"type":       protocol.TypeInferenceRequest,
 			"request_id": requestID,
@@ -263,19 +362,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		pr = &registry.PendingRequest{
-			RequestID:   requestID,
-			ProviderID:  provider.ID,
-			Model:       model,
-			ConsumerKey: consumerKey,
-			AcceptedCh:  make(chan struct{}, 1),
-			ChunkCh:     make(chan string, chunkBufferSize),
-			CompleteCh:  make(chan protocol.UsageInfo, 1),
-			ErrorCh:     make(chan protocol.InferenceErrorMessage, 1),
-		}
 		pr.SessionPrivKey = &sessionKeys.PrivateKey
 		pr.ReservedMicroUSD = reservedMicroUSD
-		provider.AddPending(pr)
 
 		data, err := json.Marshal(wireMsg)
 		if err != nil {
@@ -557,17 +645,25 @@ func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		ext = "wav"
 	}
 
-	// Find a provider that serves the requested STT model.
-	provider := s.registry.FindProviderWithTrust(model, "")
-	if provider == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
-			fmt.Sprintf("no provider available for STT model %q", model)))
-		return
-	}
-
-	// Build the transcription request.
 	requestID := uuid.New().String()
 	consumerKey := consumerKeyFromContext(r.Context())
+	pr := &registry.PendingRequest{
+		RequestID:       requestID,
+		Model:           model,
+		ConsumerKey:     consumerKey,
+		ChunkCh:         make(chan string, 1),
+		CompleteCh:      make(chan protocol.UsageInfo, 1),
+		ErrorCh:         make(chan protocol.InferenceErrorMessage, 1),
+		TranscriptionCh: make(chan *protocol.TranscriptionCompleteMessage, 1),
+	}
+
+	// Find and reserve a provider that serves the requested STT model.
+	provider := s.registry.ReserveProvider(model, pr)
+	if provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
+			fmt.Sprintf("no hardware-attested provider available for STT model %q", model)))
+		return
+	}
 
 	transcriptionBody := protocol.TranscriptionRequestBody{
 		Model:  model,
@@ -626,22 +722,9 @@ func (s *Server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		"request_id", requestID,
 		"provider_id", provider.ID,
 	)
-
-	// Create pending request with transcription channel.
-	pr := &registry.PendingRequest{
-		RequestID:       requestID,
-		ProviderID:      provider.ID,
-		Model:           model,
-		ConsumerKey:     consumerKey,
-		ChunkCh:         make(chan string, 1),
-		CompleteCh:      make(chan protocol.UsageInfo, 1),
-		ErrorCh:         make(chan protocol.InferenceErrorMessage, 1),
-		TranscriptionCh: make(chan *protocol.TranscriptionCompleteMessage, 1),
-	}
 	if sessionKeys != nil {
 		pr.SessionPrivKey = &sessionKeys.PrivateKey
 	}
-	provider.AddPending(pr)
 
 	// Send the request to the provider.
 	data, err := json.Marshal(wireMsg)
@@ -760,16 +843,25 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Find a hardware-trusted provider that serves the requested image model.
-	provider := s.registry.FindProvider(req.Model)
-	if provider == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
-			fmt.Sprintf("no provider available for image model %q", req.Model)))
-		return
-	}
-
 	requestID := uuid.New().String()
 	consumerKey := consumerKeyFromContext(r.Context())
+	pr := &registry.PendingRequest{
+		RequestID:         requestID,
+		Model:             req.Model,
+		ConsumerKey:       consumerKey,
+		ChunkCh:           make(chan string, 1),
+		CompleteCh:        make(chan protocol.UsageInfo, 1),
+		ErrorCh:           make(chan protocol.InferenceErrorMessage, 1),
+		ImageGenerationCh: make(chan *protocol.ImageGenerationCompleteMessage, 1),
+	}
+
+	// Find and reserve a hardware-attested provider that serves the requested image model.
+	provider := s.registry.ReserveProvider(req.Model, pr)
+	if provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
+			fmt.Sprintf("no hardware-attested provider available for image model %q", req.Model)))
+		return
+	}
 
 	bodyJSON, _ := json.Marshal(req)
 
@@ -820,22 +912,9 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 			"ciphertext":           encrypted.Ciphertext,
 		},
 	}
-
-	// Create pending request with image generation channel.
-	pr := &registry.PendingRequest{
-		RequestID:         requestID,
-		ProviderID:        provider.ID,
-		Model:             req.Model,
-		ConsumerKey:       consumerKey,
-		ChunkCh:           make(chan string, 1),
-		CompleteCh:        make(chan protocol.UsageInfo, 1),
-		ErrorCh:           make(chan protocol.InferenceErrorMessage, 1),
-		ImageGenerationCh: make(chan *protocol.ImageGenerationCompleteMessage, 1),
-	}
 	if sessionKeys != nil {
 		pr.SessionPrivKey = &sessionKeys.PrivateKey
 	}
-	provider.AddPending(pr)
 
 	// Send the request to the provider.
 	data, err := json.Marshal(wireMsg)
@@ -1597,15 +1676,31 @@ func (s *Server) handleGenericInference(w http.ResponseWriter, r *http.Request, 
 	}
 
 	stream, _ := parsed["stream"].(bool)
+	estimatedPromptTokens := estimatePromptTokens(parsed)
+	requestedMaxTokens := estimateRequestedMaxTokens(parsed)
 
 	// Inject the endpoint so the provider knows which local path to forward to.
 	parsed["endpoint"] = endpoint
 
-	provider := s.registry.FindProvider(model)
+	requestID := uuid.New().String()
+	consumerKey := consumerKeyFromContext(r.Context())
+	pr := &registry.PendingRequest{
+		RequestID:             requestID,
+		Model:                 model,
+		ConsumerKey:           consumerKey,
+		EstimatedPromptTokens: estimatedPromptTokens,
+		RequestedMaxTokens:    requestedMaxTokens,
+		ChunkCh:               make(chan string, chunkBufferSize),
+		CompleteCh:            make(chan protocol.UsageInfo, 1),
+		ErrorCh:               make(chan protocol.InferenceErrorMessage, 1),
+	}
+
+	provider := s.registry.ReserveProvider(model, pr)
 	if provider == nil {
 		queuedReq := &registry.QueuedRequest{
-			RequestID:  uuid.New().String(),
+			RequestID:  requestID,
 			Model:      model,
+			Pending:    pr,
 			ResponseCh: make(chan *registry.Provider, 1),
 		}
 		if err := s.registry.Queue().Enqueue(queuedReq); err != nil {
@@ -1613,15 +1708,17 @@ func (s *Server) handleGenericInference(w http.ResponseWriter, r *http.Request, 
 				fmt.Sprintf("no provider available for model %q", model)))
 			return
 		}
-		provider, err = s.registry.Queue().WaitForProvider(queuedReq)
+		provider, err = s.registry.Queue().WaitForProviderContext(r.Context(), queuedReq)
 		if err != nil {
+			if err == context.Canceled {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse("model_not_available",
 				fmt.Sprintf("no provider became available for model %q", model)))
 			return
 		}
 	}
 
-	requestID := uuid.New().String()
 	inferenceBody, _ := json.Marshal(parsed)
 
 	if provider.PublicKey == "" {
@@ -1661,18 +1758,7 @@ func (s *Server) handleGenericInference(w http.ResponseWriter, r *http.Request, 
 		},
 	}
 
-	consumerKey := consumerKeyFromContext(r.Context())
-	pr := &registry.PendingRequest{
-		RequestID:   requestID,
-		ProviderID:  provider.ID,
-		Model:       model,
-		ConsumerKey: consumerKey,
-		ChunkCh:     make(chan string, chunkBufferSize),
-		CompleteCh:  make(chan protocol.UsageInfo, 1),
-		ErrorCh:     make(chan protocol.InferenceErrorMessage, 1),
-	}
 	pr.SessionPrivKey = &sessionKeys.PrivateKey
-	provider.AddPending(pr)
 
 	data, _ := json.Marshal(wireMsg)
 	if err := provider.Conn.Write(r.Context(), websocket.MessageText, data); err != nil {

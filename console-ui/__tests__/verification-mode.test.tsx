@@ -66,13 +66,13 @@ describe("VerificationModeProvider", () => {
       </VerificationModeProvider>
     );
     fireEvent.click(screen.getByText("Toggle"));
-    expect(localStorage.getItem("eigeninference-verification-mode")).toBe(
+    expect(localStorage.getItem("darkbloom-verification-mode")).toBe(
       "technical"
     );
   });
 
   it("reads persisted mode from localStorage", () => {
-    localStorage.setItem("eigeninference-verification-mode", "technical");
+    localStorage.setItem("darkbloom-verification-mode", "technical");
     render(
       <VerificationModeProvider>
         <ModeDisplay />
@@ -82,7 +82,7 @@ describe("VerificationModeProvider", () => {
   });
 
   it("ignores invalid localStorage values", () => {
-    localStorage.setItem("eigeninference-verification-mode", "garbage");
+    localStorage.setItem("darkbloom-verification-mode", "garbage");
     render(
       <VerificationModeProvider>
         <ModeDisplay />

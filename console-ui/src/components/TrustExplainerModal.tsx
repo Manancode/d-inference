@@ -149,12 +149,12 @@ export function TrustExplainerModal({ open, onClose }: TrustExplainerModalProps)
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto rounded-2xl bg-bg-white border-[3px] border-ink shadow-xl fade-in">
+      <div className="relative w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto rounded-2xl bg-bg-white border border-border-dim shadow-xl fade-in">
         {/* Header */}
         <div className="sticky top-0 bg-bg-white z-10 px-6 pt-6 pb-4 border-b-2 border-border-dim">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-display text-ink">
+              <h2 className="text-2xl font-semibold text-ink">
                 How Your Privacy is Protected
               </h2>
               <p className="text-sm text-text-secondary mt-1">

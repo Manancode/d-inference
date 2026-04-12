@@ -71,7 +71,7 @@ export function DeviceLinkForm() {
 
   if (!ready) {
     return (
-      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+      <div className="bg-bg-white rounded-2xl border border-border-dim shadow-md p-8 text-center">
         <div className="animate-pulse text-text-tertiary">Loading...</div>
       </div>
     );
@@ -80,7 +80,7 @@ export function DeviceLinkForm() {
   // Success state
   if (status === "success") {
     return (
-      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+      <div className="bg-bg-white rounded-2xl border border-border-dim shadow-md p-8 text-center">
         <div className="w-16 h-16 bg-teal-light border-2 border-teal rounded-full flex items-center justify-center mx-auto mb-4">
           <svg
             className="w-8 h-8 text-teal"
@@ -96,7 +96,7 @@ export function DeviceLinkForm() {
             />
           </svg>
         </div>
-        <h2 className="text-2xl font-display text-ink mb-2">
+        <h2 className="text-2xl font-semibold text-ink mb-2">
           Device Linked!
         </h2>
         <p className="text-text-secondary">
@@ -113,14 +113,14 @@ export function DeviceLinkForm() {
   // Not authenticated — show login prompt
   if (!authenticated) {
     return (
-      <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8 text-center">
+      <div className="bg-bg-white rounded-2xl border border-border-dim shadow-md p-8 text-center">
         <p className="text-text-secondary mb-6">
           Sign in to your Darkbloom account to link your device.
         </p>
         <button
           onClick={login}
-          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border-[3px] border-ink
-                     hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)] transition-all"
+          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border border-border-dim
+                     hover:opacity-90 transition-all"
         >
           Sign In
         </button>
@@ -130,7 +130,7 @@ export function DeviceLinkForm() {
 
   // Authenticated — show code entry form
   return (
-    <div className="bg-bg-white rounded-2xl border-[3px] border-ink shadow-md p-8">
+    <div className="bg-bg-white rounded-2xl border border-border-dim shadow-md p-8">
       <div className="text-sm text-text-secondary mb-6 text-center">
         Signed in as{" "}
         <span className="font-semibold text-ink">
@@ -156,7 +156,7 @@ export function DeviceLinkForm() {
             placeholder="XXXX-XXXX"
             maxLength={9}
             className="w-full px-4 py-3 text-center text-2xl font-mono tracking-widest
-                       bg-bg-primary border-[3px] border-ink rounded-xl
+                       bg-bg-primary border border-border-dim rounded-xl
                        focus:border-coral outline-none transition-colors
                        placeholder:text-text-tertiary/40"
             autoFocus
@@ -173,10 +173,9 @@ export function DeviceLinkForm() {
         <button
           type="submit"
           disabled={code.replace("-", "").length !== 8 || status === "submitting"}
-          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border-[3px] border-ink
-                     hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_var(--ink)]
-                     transition-all disabled:opacity-40 disabled:cursor-not-allowed
-                     disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+          className="w-full px-6 py-3 bg-coral text-white rounded-xl font-bold border border-border-dim
+                     hover:opacity-90
+                     transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {status === "submitting" ? "Linking..." : "Link Device"}
         </button>

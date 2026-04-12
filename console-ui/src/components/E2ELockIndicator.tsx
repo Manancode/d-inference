@@ -43,7 +43,7 @@ export function E2ELockIndicator({ trust, onOpenExplainer }: E2ELockIndicatorPro
       </button>
 
       {showPopover && (
-        <div className="absolute top-full right-0 mt-1 w-72 rounded-xl bg-bg-white border-[3px] border-ink shadow-lg z-50 fade-in">
+        <div className="absolute top-full right-0 mt-1 w-72 rounded-xl bg-bg-white border border-border-dim shadow-lg z-50 fade-in">
           <div className="px-4 py-3 border-b-2 border-border-dim">
             <div className="flex items-center gap-2">
               <Lock size={14} className="text-teal" />

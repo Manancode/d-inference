@@ -407,20 +407,20 @@ jobs:
           mkdir -p "$DMG_TMP"
           cp -a "$APP_DIR" "$DMG_TMP/"
           ln -s /Applications "$DMG_TMP/Applications"
-          hdiutil create -volname "EigenInference" -srcfolder "$DMG_TMP" \
-            -ov -format UDZO "/tmp/EigenInference.dmg" >/dev/null
+          hdiutil create -volname "Darkbloom" -srcfolder "$DMG_TMP" \
+            -ov -format UDZO "/tmp/Darkbloom.dmg" >/dev/null
           rm -rf "$DMG_TMP"
 
           # Notarize DMG
-          xcrun notarytool submit "/tmp/EigenInference.dmg" \
+          xcrun notarytool submit "/tmp/Darkbloom.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait || true
-          xcrun stapler staple "/tmp/EigenInference.dmg" || true
+          xcrun stapler staple "/tmp/Darkbloom.dmg" || true
 
-          echo "DMG_SIZE=$(du -h /tmp/EigenInference.dmg | cut -f1)" >> $GITHUB_ENV
-          echo "DMG built: $(du -h /tmp/EigenInference.dmg | cut -f1)"
+          echo "DMG_SIZE=$(du -h /tmp/Darkbloom.dmg | cut -f1)" >> $GITHUB_ENV
+          echo "DMG built: $(du -h /tmp/Darkbloom.dmg | cut -f1)"
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -434,14 +434,14 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           # Versioned
-          aws s3 cp /tmp/EigenInference.dmg \
-            "s3://d-inf-app/releases/v${VERSION}/EigenInference.dmg" \
+          aws s3 cp /tmp/Darkbloom.dmg \
+            "s3://d-inf-app/releases/v${VERSION}/Darkbloom.dmg" \
             --endpoint-url "$R2_ENDPOINT"
           # Latest (stable URL for website download button)
-          aws s3 cp /tmp/EigenInference.dmg \
-            "s3://d-inf-app/releases/latest/EigenInference.dmg" \
+          aws s3 cp /tmp/Darkbloom.dmg \
+            "s3://d-inf-app/releases/latest/Darkbloom.dmg" \
             --endpoint-url "$R2_ENDPOINT"
-          echo "DMG uploaded to R2: releases/v${VERSION}/EigenInference.dmg + releases/latest/EigenInference.dmg"
+          echo "DMG uploaded to R2: releases/v${VERSION}/Darkbloom.dmg + releases/latest/Darkbloom.dmg"
 
       # --- Register with coordinator ---
 

@@ -19,8 +19,8 @@ import {
   CreditCard,
 } from "lucide-react";
 
-const API_KEY_STORAGE = "eigeninference_api_key";
-const COORDINATOR_STORAGE = "eigeninference_coordinator_url";
+const API_KEY_STORAGE = "darkbloom_api_key";
+const COORDINATOR_STORAGE = "darkbloom_coordinator_url";
 const DEFAULT_COORDINATOR = "https://api.darkbloom.dev";
 
 function getApiKey() {

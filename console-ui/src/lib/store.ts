@@ -166,7 +166,7 @@ export const useStore = create<AppState>()(
         })),
     }),
     {
-      name: "eigeninference-store",
+      name: "darkbloom-store",
       partialize: (state) => ({
         chats: state.chats.map((c) => ({
           ...c,

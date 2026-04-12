@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { Ticket, X, Check, Loader2 } from "lucide-react";
 import { redeemInviteCode } from "@/lib/api";
 
-const DISMISSED_KEY = "eigeninference_invite_dismissed";
+const DISMISSED_KEY = "darkbloom_invite_dismissed";
 
 export function InviteCodeBanner() {
   const [dismissed, setDismissed] = useState(() => {
@@ -44,7 +44,7 @@ export function InviteCodeBanner() {
 
   return (
     <div className="fixed bottom-24 right-3 sm:right-6 z-40 w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-sm message-animate">
-      <div className="bg-bg-white border-[3px] border-ink rounded-xl shadow-lg overflow-hidden">
+      <div className="bg-bg-white border border-border-dim rounded-xl shadow-lg overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">
           <button
@@ -69,8 +69,8 @@ export function InviteCodeBanner() {
           <div className="px-4 pb-3">
             <button
               onClick={() => setExpanded(true)}
-              className="w-full py-2 rounded-lg bg-gold-light border-2 border-gold text-ink text-xs font-bold font-display
-                         hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] transition-all"
+              className="w-full py-2 rounded-lg bg-gold-light border-2 border-gold text-ink text-xs font-bold
+                         transition-all"
             >
               Claim invite code
             </button>
@@ -99,7 +99,7 @@ export function InviteCodeBanner() {
                 disabled={loading || !code.trim()}
                 className="px-4 py-2 rounded-lg bg-coral border-2 border-ink text-white text-sm font-bold
                            disabled:opacity-40
-                           hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[2px_2px_0_var(--ink)] transition-all"
+                           hover:opacity-90 transition-all"
               >
                 {loading ? <Loader2 size={14} className="animate-spin" /> : "Claim"}
               </button>

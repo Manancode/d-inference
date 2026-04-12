@@ -383,7 +383,7 @@ fi
 # ─────────────────────────────────────────────────────────
 echo ""
 echo "11. Creating DMG..."
-DMG_PATH="$BUILD_DIR/EigenInference-${VERSION}.dmg"
+DMG_PATH="$BUILD_DIR/Darkbloom-${VERSION}.dmg"
 rm -f "$DMG_PATH"
 
 # Create a temporary DMG directory with app + Applications symlink
@@ -393,7 +393,7 @@ mkdir -p "$DMG_TMP"
 cp -a "$APP_DIR" "$DMG_TMP/"
 ln -s /Applications "$DMG_TMP/Applications"
 
-hdiutil create -volname "EigenInference" -srcfolder "$DMG_TMP" \
+hdiutil create -volname "Darkbloom" -srcfolder "$DMG_TMP" \
     -ov -format UDZO "$DMG_PATH" >/dev/null 2>&1
 
 rm -rf "$DMG_TMP"
@@ -416,14 +416,14 @@ if [ "$UPLOAD" = true ] && [ -f "$DMG_PATH" ]; then
         exit 1
     fi
 
-    scp -i "$SSH_KEY" "$DMG_PATH" "$SERVER:/tmp/EigenInference-${VERSION}.dmg"
+    scp -i "$SSH_KEY" "$DMG_PATH" "$SERVER:/tmp/Darkbloom-${VERSION}.dmg"
     ssh -i "$SSH_KEY" "$SERVER" "
-        sudo cp /tmp/EigenInference-${VERSION}.dmg /var/www/html/dl/
-        sudo cp /var/www/html/dl/EigenInference-${VERSION}.dmg /var/www/html/dl/EigenInference-latest.dmg
-        sudo chmod 644 /var/www/html/dl/EigenInference-${VERSION}.dmg /var/www/html/dl/EigenInference-latest.dmg
+        sudo cp /tmp/Darkbloom-${VERSION}.dmg /var/www/html/dl/
+        sudo cp /var/www/html/dl/Darkbloom-${VERSION}.dmg /var/www/html/dl/Darkbloom-latest.dmg
+        sudo chmod 644 /var/www/html/dl/Darkbloom-${VERSION}.dmg /var/www/html/dl/Darkbloom-latest.dmg
     "
-    echo "   ✓ EigenInference-${VERSION}.dmg uploaded"
-    echo "   ✓ EigenInference-latest.dmg updated"
+    echo "   ✓ Darkbloom-${VERSION}.dmg uploaded"
+    echo "   ✓ Darkbloom-latest.dmg updated"
     echo ""
 fi
 

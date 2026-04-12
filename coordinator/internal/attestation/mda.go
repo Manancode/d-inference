@@ -164,7 +164,12 @@ func VerifyMDADeviceAttestation(certChainDER [][]byte) (*MDAResult, error) {
 
 		// Freshness (100.8.11.*)
 		case ext.Id.Equal(OIDFreshnessCode):
-			result.FreshnessCode = ext.Value
+			var raw asn1.RawValue
+			if _, err := asn1.Unmarshal(ext.Value, &raw); err == nil {
+				result.FreshnessCode = raw.Bytes
+			} else {
+				result.FreshnessCode = ext.Value
+			}
 
 		// ACME path OIDs (100.8.13.*) — may also be present
 		case ext.Id.Equal(OIDSIPStatus):

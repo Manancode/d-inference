@@ -19,8 +19,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg-primary">
         <div className="text-center">
-          <h1 className="text-3xl font-display text-ink tracking-tight">
-            Eigen<span className="text-coral">Inference</span>
+          <h1 className="text-3xl text-ink tracking-tight" style={{ fontFamily: "'Louize', Georgia, serif" }}>
+            Darkbloom
           </h1>
           <p className="mt-2 text-sm text-text-tertiary">Loading...</p>
         </div>

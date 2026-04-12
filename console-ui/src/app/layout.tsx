@@ -1,28 +1,9 @@
 import type { Metadata } from "next";
-import { Nunito, Caveat, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { PrivyClientProvider } from "@/components/providers/PrivyClientProvider";
 import { VerificationModeProvider } from "@/lib/verification-mode";
-
-const nunito = Nunito({
-  variable: "--font-nunito",
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
-});
-
-const caveat = Caveat({
-  variable: "--font-caveat",
-  subsets: ["latin"],
-  weight: ["500", "700"],
-});
-
-const jetbrains = JetBrains_Mono({
-  variable: "--font-jetbrains",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
 
 export const metadata: Metadata = {
   title: "Darkbloom — Private AI on Verified Macs",
@@ -40,9 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${nunito.variable} ${caveat.variable} ${jetbrains.variable} font-sans antialiased`}
-      >
+      <body className="font-sans antialiased">
         <ThemeProvider>
           <PrivyClientProvider>
             <VerificationModeProvider>
