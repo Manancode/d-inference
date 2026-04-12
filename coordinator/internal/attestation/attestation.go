@@ -159,7 +159,7 @@ func Verify(signed SignedAttestation) VerificationResult {
 		return result
 	}
 
-	pubKey, err := parseP256PublicKey(pubKeyBytes)
+	pubKey, err := ParseP256PublicKey(pubKeyBytes)
 	if err != nil {
 		result.Error = fmt.Sprintf("invalid public key: %v", err)
 		return result
@@ -247,9 +247,9 @@ func CheckTimestamp(result VerificationResult, maxAge time.Duration) bool {
 	return time.Since(result.Timestamp) <= maxAge
 }
 
-// parseP256PublicKey parses a raw P-256 public key point.
-// Accepts uncompressed format (65 bytes: 0x04 || X || Y).
-func parseP256PublicKey(raw []byte) (*ecdsa.PublicKey, error) {
+// ParseP256PublicKey parses a raw P-256 public key point.
+// Accepts uncompressed format (65 bytes: 0x04 || X || Y) or raw X||Y (64 bytes).
+func ParseP256PublicKey(raw []byte) (*ecdsa.PublicKey, error) {
 	curve := elliptic.P256()
 
 	if len(raw) == 65 && raw[0] == 0x04 {
@@ -323,4 +323,48 @@ func marshalSortedJSON(blob AttestationBlob) ([]byte, error) {
 	}
 
 	return json.Marshal(m)
+}
+
+// VerifyChallengeSignature verifies a P-256 ECDSA signature over challenge
+// data (nonce + timestamp) using the provider's Secure Enclave public key.
+//
+// Parameters:
+//   - sePublicKeyB64: base64-encoded raw P-256 public key (64 or 65 bytes)
+//   - signatureB64: base64-encoded DER-encoded ECDSA signature
+//   - data: the signed data (nonce + timestamp concatenated)
+//
+// Returns nil on success, an error describing the failure otherwise.
+func VerifyChallengeSignature(sePublicKeyB64, signatureB64, data string) error {
+	// Decode public key
+	pubKeyBytes, err := base64.StdEncoding.DecodeString(sePublicKeyB64)
+	if err != nil {
+		return fmt.Errorf("invalid SE public key base64: %w", err)
+	}
+
+	pubKey, err := ParseP256PublicKey(pubKeyBytes)
+	if err != nil {
+		return fmt.Errorf("invalid SE public key: %w", err)
+	}
+
+	// Decode signature
+	sigBytes, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		return fmt.Errorf("invalid signature base64: %w", err)
+	}
+
+	// Hash the challenge data
+	hash := sha256.Sum256([]byte(data))
+
+	// Parse DER-encoded ECDSA signature
+	var sig ecdsaSig
+	if _, err := asn1.Unmarshal(sigBytes, &sig); err != nil {
+		return fmt.Errorf("invalid DER signature: %w", err)
+	}
+
+	// Verify
+	if !ecdsa.Verify(pubKey, hash[:], sig.R, sig.S) {
+		return fmt.Errorf("ECDSA signature verification failed")
+	}
+
+	return nil
 }

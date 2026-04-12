@@ -202,7 +202,7 @@ export default function ChatPage() {
 
   const handleRetry = useCallback(
     (errorMsgId: string) => {
-      if (!activeChat || isStreaming) return;
+      if (!activeChat || isStreaming || !authenticated || !apiKeyReady) return;
       const messages = activeChat.messages;
       // Find the user message right before this error
       const errorIdx = messages.findIndex((m) => m.id === errorMsgId);
@@ -265,7 +265,7 @@ export default function ChatPage() {
         setIsStreaming(false);
       });
     },
-    [activeChat, isStreaming, selectedModel, updateMessage, appendToMessage, appendToThinking, addToast]
+    [activeChat, isStreaming, authenticated, apiKeyReady, selectedModel, updateMessage, appendToMessage, appendToThinking, addToast]
   );
 
   return (

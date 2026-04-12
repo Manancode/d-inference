@@ -1,6 +1,11 @@
 {
   "name": "web",
   "version": "0.1.0",
+  "overrides": {
+    "@solana-program/memo": {
+      "@solana/kit": "$@solana/kit"
+    }
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",

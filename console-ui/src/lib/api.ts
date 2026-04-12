@@ -315,20 +315,12 @@ export async function streamChat(
   });
 
   if (!res.ok) {
-    // If 401, key is stale — auto-regenerate and tell user to retry
+    // If 401, key is stale — clear it so useAuth re-provisions on next render
     if (res.status === 401) {
       localStorage.removeItem("darkbloom_api_key");
-      try {
-        const keyRes = await fetch("/api/auth/keys", {
-          method: "POST",
-          headers: proxyHeaders(),
-        });
-        if (keyRes.ok) {
-          const { api_key } = await keyRes.json();
-          localStorage.setItem("darkbloom_api_key", api_key);
-        }
-      } catch { /* ignore */ }
-      callbacks.onError("Session expired — please resend your message");
+      // Dispatch event so useAuth can re-provision with Privy token
+      window.dispatchEvent(new Event("darkbloom-key-expired"));
+      callbacks.onError("Session expired — please try again");
       return;
     }
     const text = await res.text();
@@ -374,6 +366,7 @@ export async function streamChat(
   // Metrics tracking
   const requestStart = performance.now();
   let firstTokenTime = 0;
+  let lastTokenTime = 0;
   let tokenCount = 0;
 
   // Think-block state machine
@@ -388,7 +381,7 @@ export async function streamChat(
 
   function emitMetrics() {
     if (!firstTokenTime) return;
-    const elapsed = (performance.now() - firstTokenTime) / 1000;
+    const elapsed = ((lastTokenTime || performance.now()) - firstTokenTime) / 1000;
     const tps = elapsed > 0 ? tokenCount / elapsed : 0;
     const ttft = firstTokenTime - requestStart;
     callbacks.onMetrics({ tps, ttft, tokenCount });
@@ -494,7 +487,7 @@ export async function streamChat(
       if (payload === "[DONE]") {
         flushContentAccum();
         emitMetrics();
-        const elapsed = firstTokenTime ? (performance.now() - firstTokenTime) / 1000 : 0;
+        const elapsed = firstTokenTime && lastTokenTime ? (lastTokenTime - firstTokenTime) / 1000 : 0;
         callbacks.onDone(trustMeta, {
           tps: elapsed > 0 ? tokenCount / elapsed : 0,
           ttft: firstTokenTime ? firstTokenTime - requestStart : 0,
@@ -523,7 +516,9 @@ export async function streamChat(
 
         if (reasoning || content) {
           tokenCount++;
-          if (!firstTokenTime) firstTokenTime = performance.now();
+          const now = performance.now();
+          if (!firstTokenTime) firstTokenTime = now;
+          lastTokenTime = now;
 
           if (reasoning) {
             // If we have buffered content that was waiting for think detection,
@@ -550,7 +545,7 @@ export async function streamChat(
   // Stream ended without [DONE]
   flushContentAccum();
   emitMetrics();
-  const elapsed = firstTokenTime ? (performance.now() - firstTokenTime) / 1000 : 0;
+  const elapsed = firstTokenTime && lastTokenTime ? (lastTokenTime - firstTokenTime) / 1000 : 0;
   callbacks.onDone(trustMeta, {
     tps: elapsed > 0 ? tokenCount / elapsed : 0,
     ttft: firstTokenTime ? firstTokenTime - requestStart : 0,

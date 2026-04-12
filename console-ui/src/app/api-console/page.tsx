@@ -42,7 +42,7 @@ const ENDPOINTS = [
     icon: MessageSquare,
     auth: true,
     request: `{
-  "model": "qwen3.5-27b-claude-opus",
+  "model": "qwen3.5-27b-claude-opus-8bit",
   "messages": [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Hello!"}
@@ -53,7 +53,7 @@ const ENDPOINTS = [
     response: `{
   "id": "chatcmpl-...",
   "object": "chat.completion.chunk",
-  "model": "qwen3.5-27b-claude-opus",
+  "model": "qwen3.5-27b-claude-opus-8bit",
   "choices": [{
     "index": 0,
     "delta": {"role": "assistant", "content": "Hello"},
@@ -61,6 +61,37 @@ const ENDPOINTS = [
   }]
 }`,
     notes: "Supports streaming (SSE) and non-streaming responses. All prompts are end-to-end encrypted. Response headers include provider attestation metadata (x-provider-attested, x-provider-trust-level, x-provider-chip).",
+  },
+  {
+    method: "POST",
+    path: "/v1/responses",
+    description: "Create a model response (OpenAI Responses API)",
+    icon: MessageSquare,
+    auth: true,
+    request: `{
+  "model": "qwen3.5-27b-claude-opus-8bit",
+  "input": "Explain how decentralized inference works.",
+  "stream": true,
+  "max_output_tokens": 1024
+}`,
+    response: `{
+  "id": "resp_...",
+  "object": "response",
+  "model": "qwen3.5-27b-claude-opus-8bit",
+  "output": [{
+    "type": "message",
+    "role": "assistant",
+    "content": [{
+      "type": "output_text",
+      "text": "Decentralized inference distributes..."
+    }]
+  }],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 256
+  }
+}`,
+    notes: "OpenAI Responses API format. Accepts 'input' (string or array) instead of 'messages'. Uses input_tokens/output_tokens for usage. Supports streaming. Same routing, encryption, and billing as chat completions.",
   },
   {
     method: "POST",
@@ -114,7 +145,7 @@ language: en (optional)`,
     response: `{
   "data": [
     {
-      "id": "qwen3.5-27b-claude-opus",
+      "id": "qwen3.5-27b-claude-opus-8bit",
       "object": "model",
       "model_type": "chat",
       "quantization": "8bit",
@@ -171,7 +202,7 @@ language: en (optional)`,
     auth: false,
     response: `{
   "prices": [
-    {"model": "qwen3.5-27b-claude-opus", "input_price": 100000, "output_price": 780000, "input_usd": "$0.10", "output_usd": "$0.78"}
+    {"model": "qwen3.5-27b-claude-opus-8bit", "input_price": 100000, "output_price": 780000, "input_usd": "$0.10", "output_usd": "$0.78"}
   ],
   "image_prices": [
     {"model": "flux_2_klein_4b_q8p.ckpt", "price_per_image": 1500, "price_usd": "$0.0015"}
@@ -202,7 +233,7 @@ language: en (optional)`,
   "usage": [
     {
       "request_id": "...",
-      "model": "qwen3.5-27b-claude-opus",
+      "model": "qwen3.5-27b-claude-opus-8bit",
       "prompt_tokens": 150,
       "completion_tokens": 500,
       "cost_micro_usd": 420,
@@ -331,8 +362,15 @@ export default function ApiConsolePage() {
 
   const sdkSetup = [
     {
+      label: "cURL",
+      language: "bash",
+      code: `# No installation needed
+export DARKBLOOM_API_KEY="${k}"
+export DARKBLOOM_BASE_URL="${u}/v1"`,
+    },
+    {
       label: "Python",
-      language: "python",
+      language: "bash",
       code: `pip install openai`,
     },
     {
@@ -341,14 +379,26 @@ export default function ApiConsolePage() {
       code: `npm install openai`,
     },
     {
-      label: "cURL",
+      label: "Vercel AI SDK",
       language: "bash",
-      code: `# No installation needed — use cURL directly
-export DARKBLOOM_API_KEY="${k}"`,
+      code: `npm install ai @ai-sdk/openai-compatible`,
     },
   ];
 
   const chatExample = [
+    {
+      label: "cURL",
+      language: "bash",
+      code: `curl -X POST ${u}/v1/chat/completions \\
+  -H "Authorization: Bearer ${k}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "mlx-community/gemma-4-26b-a4b-it-8bit",
+    "messages": [{"role": "user", "content": "Explain quantum computing"}],
+    "stream": true,
+    "max_tokens": 1024
+  }'`,
+    },
     {
       label: "Python",
       language: "python",
@@ -359,9 +409,8 @@ client = OpenAI(
     api_key="${k}",
 )
 
-# Streaming chat completion
 stream = client.chat.completions.create(
-    model="qwen3.5-27b-claude-opus",
+    model="mlx-community/gemma-4-26b-a4b-it-8bit",
     messages=[{"role": "user", "content": "Explain quantum computing"}],
     stream=True,
     max_tokens=1024,
@@ -382,9 +431,8 @@ const client = new OpenAI({
   apiKey: "${k}",
 });
 
-// Streaming chat completion
 const stream = await client.chat.completions.create({
-  model: "qwen3.5-27b-claude-opus",
+  model: "mlx-community/gemma-4-26b-a4b-it-8bit",
   messages: [{ role: "user", content: "Explain quantum computing" }],
   stream: true,
   max_tokens: 1024,
@@ -396,17 +444,33 @@ for await (const chunk of stream) {
 }`,
     },
     {
-      label: "cURL",
-      language: "bash",
-      code: `curl -X POST ${u}/v1/chat/completions \\
-  -H "Authorization: Bearer ${k}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "qwen3.5-27b-claude-opus",
-    "messages": [{"role": "user", "content": "Explain quantum computing"}],
-    "stream": true,
-    "max_tokens": 1024
-  }'`,
+      label: "Vercel AI SDK",
+      language: "typescript",
+      code: `import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText, streamText } from "ai";
+
+const darkbloom = createOpenAICompatible({
+  name: "darkbloom",
+  baseURL: "${u}/v1",
+  apiKey: "${k}",
+});
+
+// Streaming response
+const { textStream } = streamText({
+  model: darkbloom.chatModel("mlx-community/gemma-4-26b-a4b-it-8bit"),
+  prompt: "Explain quantum computing",
+});
+
+for await (const text of textStream) {
+  process.stdout.write(text);
+}
+
+// Single response
+const { text } = await generateText({
+  model: darkbloom.chatModel("mlx-community/gemma-4-26b-a4b-it-8bit"),
+  prompt: "Write a haiku about Apple Silicon",
+});
+console.log(text);`,
     },
   ];
 
@@ -505,6 +569,30 @@ for model in models.data:
             </p>
           </div>
 
+          {/* Endpoint Reference — first */}
+          <section>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Endpoint Reference</h2>
+            <p className="text-sm text-text-secondary mb-4">
+              Expand each endpoint to see request/response format and notes.
+            </p>
+            <div className="rounded-xl bg-bg-secondary shadow-sm overflow-hidden">
+              {ENDPOINTS.map((ep) => (
+                <EndpointRow key={ep.path + ep.method} {...ep} />
+              ))}
+            </div>
+          </section>
+
+          {/* Base URL */}
+          <section>
+            <div className="rounded-xl bg-bg-secondary shadow-sm p-5">
+              <h3 className="text-sm font-semibold text-text-primary mb-2">Base URL</h3>
+              <p className="text-sm font-mono text-accent-brand">{coordinatorUrl}/v1</p>
+              <p className="text-xs text-text-tertiary mt-2">
+                All endpoints are relative to this base URL. Provider attestation and pricing endpoints are publicly accessible without authentication.
+              </p>
+            </div>
+          </section>
+
           {/* API Key Management */}
           <section>
             <h2 className="text-lg font-semibold text-text-primary mb-4">API Key</h2>
@@ -550,9 +638,49 @@ for model in models.data:
           <section>
             <h2 className="text-lg font-semibold text-text-primary mb-2">Quick Start</h2>
             <p className="text-sm text-text-secondary mb-4">
-              Install the OpenAI SDK for your language. The Darkbloom API is fully OpenAI-compatible — just change the base URL.
+              Install the OpenAI SDK or Vercel AI SDK. The Darkbloom API is fully OpenAI-compatible — just change the base URL.
             </p>
             <CodeExample examples={sdkSetup} />
+          </section>
+
+          {/* Available Models */}
+          <section>
+            <h2 className="text-lg font-semibold text-text-primary mb-2">Available Models</h2>
+            <div className="rounded-xl bg-bg-secondary shadow-sm overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border-dim">
+                    <th className="text-left text-xs text-text-tertiary font-medium px-4 py-3">Model ID</th>
+                    <th className="text-left text-xs text-text-tertiary font-medium px-4 py-3">Type</th>
+                    <th className="text-left text-xs text-text-tertiary font-medium px-4 py-3">Architecture</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { id: "mlx-community/gemma-4-26b-a4b-it-8bit", type: "text", arch: "26B MoE, 4B active — recommended" },
+                    { id: "qwen3.5-27b-claude-opus-8bit", type: "text", arch: "27B dense, Claude Opus distilled" },
+                    { id: "mlx-community/Qwen3.5-122B-A10B-8bit", type: "text", arch: "122B MoE, 10B active" },
+                    { id: "mlx-community/MiniMax-M2.5-8bit", type: "text", arch: "239B MoE, 11B active" },
+                    { id: "CohereLabs/cohere-transcribe-03-2026", type: "stt", arch: "2B conformer" },
+                  ].map((m) => (
+                    <tr key={m.id} className="border-b border-border-dim/50 last:border-0">
+                      <td className="px-4 py-2.5 text-sm font-mono text-text-primary">{m.id}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-xs font-mono px-2 py-0.5 rounded ${
+                          m.type === "text" ? "bg-accent-brand/10 text-accent-brand" :
+                          m.type === "image" ? "bg-purple/10 text-purple" :
+                          "bg-accent-green/10 text-accent-green"
+                        }`}>{m.type}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-text-tertiary">{m.arch}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-text-tertiary mt-2">
+              Model availability depends on online providers. Check <code className="text-accent-brand">/v1/models</code> for real-time availability.
+            </p>
           </section>
 
           {/* Chat Completions */}
@@ -591,29 +719,8 @@ for model in models.data:
             <CodeExample examples={modelsExample} />
           </section>
 
-          {/* Endpoint Reference */}
-          <section>
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Endpoint Reference</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              Expand each endpoint to see request/response format and notes.
-            </p>
-            <div className="rounded-xl bg-bg-secondary shadow-sm overflow-hidden">
-              {ENDPOINTS.map((ep) => (
-                <EndpointRow key={ep.path + ep.method} {...ep} />
-              ))}
-            </div>
-          </section>
-
-          {/* Base URL */}
-          <section className="pb-8">
-            <div className="rounded-xl bg-bg-secondary shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-text-primary mb-2">Base URL</h3>
-              <p className="text-sm font-mono text-accent-brand">{coordinatorUrl}/v1</p>
-              <p className="text-xs text-text-tertiary mt-2">
-                All endpoints are relative to this base URL. Provider attestation and pricing endpoints are publicly accessible without authentication.
-              </p>
-            </div>
-          </section>
+          {/* Bottom spacer */}
+          <div className="pb-8" />
         </div>
       </div>
     </div>

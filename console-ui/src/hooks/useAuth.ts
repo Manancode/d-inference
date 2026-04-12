@@ -56,13 +56,47 @@ export function useAuth() {
         .then((data) => {
           if (data.api_key) {
             localStorage.setItem(API_KEY_STORAGE, data.api_key);
+            setApiKeyReady(true);
+          } else {
+            console.warn("[useAuth] Key provisioning returned no api_key:", data);
+            setApiKeyReady(false);
           }
-          setApiKeyReady(true);
         })
-        .catch(() => {
-          setApiKeyReady(true);
+        .catch((err) => {
+          console.warn("[useAuth] Key provisioning failed:", err);
+          setApiKeyReady(false);
         });
     });
+  }, [authenticated, getAccessToken]);
+
+  // Re-provision API key when it expires (401 from streamChat)
+  useEffect(() => {
+    if (!authenticated) return;
+    const handleExpired = () => {
+      setApiKeyReady(false);
+      getAccessToken().then((token) => {
+        if (!token) return;
+        fetch("/api/auth/keys", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.api_key) {
+              localStorage.setItem(API_KEY_STORAGE, data.api_key);
+              setApiKeyReady(true);
+            } else {
+              setApiKeyReady(false);
+            }
+          })
+          .catch(() => setApiKeyReady(false));
+      });
+    };
+    window.addEventListener("darkbloom-key-expired", handleExpired);
+    return () => window.removeEventListener("darkbloom-key-expired", handleExpired);
   }, [authenticated, getAccessToken]);
 
   // Reset when logged out

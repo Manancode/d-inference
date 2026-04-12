@@ -79,6 +79,7 @@ test-ledger/
 
 # Internal docs (contain infra details, not for public repo)
 docs/coordinator-deploy-runbook.md
+docs/.private/
 
 # Rust cross-language test build artifacts
 coordinator/internal/e2e/testdata/decrypt/target/

@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Server,
   ArrowRight,
+  Mail,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -281,7 +282,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
 }
 
 export default function ProvidersPage() {
-  const { walletAddress } = useAuth();
+  const { ready, authenticated, login, walletAddress } = useAuth();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -329,6 +330,34 @@ export default function ProvidersPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {/* Sign-in prompt for unauthenticated users */}
+      {!authenticated && (
+        <div className="rounded-xl bg-bg-secondary shadow-sm p-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary mb-0.5">
+                Sign in to view your provider earnings and set up a node
+              </h3>
+              <p className="text-sm text-text-secondary">
+                Link your account to track your provider status, earnings, and manage your node.
+              </p>
+            </div>
+            <button
+              onClick={login}
+              disabled={!ready}
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg
+                         bg-coral text-white font-medium text-sm
+                         hover:opacity-90
+                         disabled:opacity-40 disabled:cursor-not-allowed
+                         transition-all shrink-0"
+            >
+              <Mail size={14} />
+              {!ready ? "Loading..." : "Sign In"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* My provider dashboard */}
       {myProvider && (
         <div className="rounded-xl bg-accent-brand/5 shadow-sm p-6">

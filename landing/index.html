@@ -3,11 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Darkbloom — An Eigen Labs Research Initiative</title>
-  <meta name="description" content="Decentralized AI inference on hardware-attested Apple Silicon. End-to-end encrypted. The node operator never sees your data.">
+  <title>Darkbloom — Private AI Inference on Apple Silicon | Eigen Labs</title>
+  <meta name="description" content="Darkbloom is a decentralized inference network that runs on idle Apple Silicon machines. Every node is hardware-verified and every prompt is end-to-end encrypted. OpenAI-compatible API. 50% cheaper than centralized alternatives.">
+  <meta name="keywords" content="Darkbloom, Eigen Labs, decentralized AI, private inference, Apple Silicon, end-to-end encryption, OpenAI compatible, Mac GPU compute, AI inference, hardware verification">
+  <meta name="author" content="Eigen Labs">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://darkbloom.dev">
+
+  <!-- Open Graph -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Darkbloom — Eigen Labs">
-  <meta property="og:description" content="The first decentralized inference network where every node is hardware-attested and every prompt is end-to-end encrypted.">
+  <meta property="og:site_name" content="Darkbloom">
+  <meta property="og:title" content="Darkbloom — Private AI Inference on Apple Silicon">
+  <meta property="og:description" content="Decentralized inference on hardware-verified Apple Silicon. End-to-end encrypted. The node operator never sees your data. OpenAI-compatible — change one line.">
+  <meta property="og:url" content="https://darkbloom.dev">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@eigen_labs">
+  <meta name="twitter:title" content="Darkbloom — Private AI Inference on Apple Silicon">
+  <meta name="twitter:description" content="Decentralized inference on hardware-verified Apple Silicon. End-to-end encrypted. OpenAI-compatible.">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 221 253'><path d='M126.46 126.46H94.85V189.67H63.22V126.44V0H0V126.44V189.67V252.89V252.91H63.22V252.89H94.85V252.91H126.46V252.89H189.69V189.67H126.46V126.46Z' fill='%231A0C6D'/><path d='M221.31 0H189.7V63.22H221.31V0Z' fill='%231A0C6D'/><path d='M158.08 0H126.46V0.01H96.13V31.62H126.46V126.44H158.08V126.43H189.69V63.2H158.08V0Z' fill='%231A0C6D'/></svg>">
+
+  <!-- Structured Data (AEO) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Darkbloom",
+    "description": "Decentralized AI inference network that runs on idle Apple Silicon machines. Every node is hardware-verified and every prompt is end-to-end encrypted.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS",
+    "url": "https://darkbloom.dev",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "description": "Pay per token, no subscriptions or minimums"
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "Eigen Labs",
+      "url": "https://www.eigenlabs.org",
+      "sameAs": [
+        "https://x.com/eigen_labs",
+        "https://www.linkedin.com/company/eigenlabsorg",
+        "https://github.com/Layr-Labs"
+      ]
+    }
+  }
+  </script>
 
   <style>
     /* ==================== BRAND FONTS (EigenCloud Brand Book v1.0) ==================== */
@@ -193,7 +239,7 @@
       font-weight: 400;
       color: var(--eigen-blue);
       letter-spacing: 0.02em;
-      margin-bottom: 32px;
+      margin-bottom: 14px;
       opacity: 0;
       animation: slideUp 0.5s ease 0.2s forwards;
     }
@@ -218,6 +264,7 @@
       line-height: 1.6;
       letter-spacing: 0.02em;
       margin-bottom: 40px;
+      text-align: justify;
       opacity: 0;
       animation: slideUp 0.5s ease 0.5s forwards;
     }
@@ -316,6 +363,7 @@
       line-height: 1.5;
       letter-spacing: 0.02em;
       max-width: 560px;
+      text-align: justify;
     }
 
     .narrative .dim {
@@ -868,9 +916,35 @@
     }
     footer .fl a:hover { color: var(--black); }
 
+    /* ==================== LOGO STRIP ==================== */
+    .logo-strip {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      padding: 20px 0;
+      margin: 8px 0 16px;
+    }
+    .logo-strip img, .logo-strip svg {
+      height: 20px;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+    .logo-strip img:hover, .logo-strip svg:hover {
+      opacity: 1;
+    }
+    .logo-strip .strip-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.02em;
+      color: var(--grey-02);
+      flex-basis: 100%;
+      margin-bottom: -8px;
+    }
+
     /* ==================== RESPONSIVE ==================== */
     @media (max-width: 768px) {
-      .hero { padding: 150px 0 60px; }
+      .hero { padding: 170px 0 40px; }
       section { padding: 56px 0; }
       .card-grid, .stat-grid, .cresults { grid-template-columns: 1fr; }
       .feat-grid { grid-template-columns: 1fr; }
@@ -878,8 +952,13 @@
       .mitem { flex-direction: column; align-items: flex-start; gap: 8px; }
       header nav { display: none; }
       .eigen-block { padding: 40px 28px; }
-      .hero .container { grid-template-columns: 1fr !important; }
-      .hero-illustration { display: none; }
+      .hero .container { display: flex !important; flex-direction: column; }
+      .hero .container > div:first-child { display: contents; }
+      .hero-label { display: none; }
+      .hero h1 { order: 2; margin-bottom: 0; }
+      .hero-illustration { order: 3; width: 100%; max-width: 240px; margin: 10px auto; height: auto; }
+      .hero .lead { order: 4; margin-bottom: 0; }
+      .hero .ctas, .ctas { order: 5; margin-top: 0; }
     }
   </style>
 </head>
@@ -895,15 +974,14 @@
         <path d="M221.31 0H189.7V63.22H221.31V0Z" fill="currentColor"/>
         <path d="M158.08 0H126.46V0.01H96.13V31.62H126.46V126.44H158.08V126.43H189.69V63.2H158.08V0Z" fill="currentColor"/>
       </svg>
-      <span class="logo-wordmark">Eigen</span>
-      <span class="logo-project">Darkbloom</span>
+      <span class="logo-wordmark">Darkbloom</span>
     </a>
     <nav>
-      <a href="#thesis">Thesis</a>
-      <a href="#security">Security</a>
-      <a href="#api">API</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#nodes">Run a Node</a>
+      <a href="#thesis">Motivation</a>
+      <a href="#security">Approach</a>
+      <a href="#api">Implementation</a>
+      <a href="#pricing">Results</a>
+      <a href="#nodes">Operator Economics</a>
     </nav>
   </div>
 </header>
@@ -920,28 +998,112 @@
     <div class="container" style="display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: center;">
       <div>
         <div class="hero-label">Eigen Labs Research</div>
-        <h1>Private AI inference on verified hardware</h1>
-        <p class="lead">Darkbloom routes your prompts through hardware-attested Apple Silicon machines. End-to-end encrypted. The operator never sees your data. OpenAI-compatible — change one line.</p>
+        <h1 style="font-family: var(--font-logo); font-weight: 400;">Private inference on idle Macs</h1>
+        <p class="lead">We present Darkbloom, a decentralized inference network. AI compute today flows through three layers of markup — GPU manufacturers to hyperscalers to API providers to end users. Meanwhile, <strong>over 100 million Apple Silicon machines</strong> sit idle for most of each day. We built a network that connects them directly to demand. Operators cannot observe inference data. The API is <strong>OpenAI-compatible</strong>. Our measurements show <strong>up to 70% lower costs</strong> compared to centralized alternatives. Operators retain <strong>95% of revenue</strong>.</p>
         <div class="ctas">
-          <a href="#api" class="btn btn-primary">Start Building ↗</a>
-          <a href="#paper" class="btn btn-outline">Read the Paper ↗</a>
+          <a href="https://console.darkbloom.dev" class="btn btn-primary" target="_blank">Use Darkbloom ↗</a>
+          <a href="https://console.darkbloom.dev/earn" class="btn btn-outline" target="_blank">Start Earning ↗</a>
+          <a href="https://github.com/Layr-Labs/d-inference/blob/master/papers/dginf-private-inference.pdf" class="btn btn-outline" target="_blank">Read the Paper ↗</a>
         </div>
       </div>
-      <!-- Brand illustration: Grid blocks (per brand illustration system — "Rectangles" primitive) -->
-      <svg class="hero-illustration" width="280" height="280" viewBox="0 0 280 280" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity: 0; animation: slideUp 0.8s ease 0.8s forwards;">
-        <rect x="0" y="0" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="100" y="0" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="200" y="0" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="0" y="100" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="100" y="100" width="80" height="80" fill="var(--eigen-blue)" opacity="0.3"/>
-        <rect x="200" y="100" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="0" y="200" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="100" y="200" width="80" height="80" fill="var(--eigen-blue)"/>
-        <rect x="200" y="200" width="40" height="40" fill="var(--eigen-blue)"/>
-        <rect x="240" y="200" width="40" height="40" fill="var(--light-blue)"/>
-        <rect x="200" y="240" width="40" height="40" fill="var(--light-blue)"/>
-        <rect x="240" y="240" width="40" height="40" fill="var(--eigen-blue)" opacity="0.15"/>
+      <!-- Architecture flow diagram -->
+      <svg class="hero-illustration" width="320" height="280" viewBox="0 0 320 280" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity: 0; animation: slideUp 0.8s ease 0.8s forwards;">
+        <!-- User / App -->
+        <rect x="60" y="8" width="200" height="44" rx="10" fill="white" stroke="#D8DCE5" stroke-width="1.2"/>
+        <text x="160" y="35" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:14px;font-weight:600;fill:#000">User / App</text>
+
+        <!-- Arrow: encrypted -->
+        <line x1="160" y1="52" x2="160" y2="82" stroke="#1A0C6D" stroke-width="1.2"/>
+        <polygon points="156,79 160,87 164,79" fill="#1A0C6D"/>
+        <rect x="170" y="58" width="74" height="20" rx="10" fill="rgba(26,12,109,0.06)"/>
+        <text x="207" y="72" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:10px;fill:#1A0C6D">encrypted</text>
+
+        <!-- Darkbloom coordinator (with Eigen symbol inside) -->
+        <rect x="60" y="88" width="200" height="56" rx="10" fill="white" stroke="#D8DCE5" stroke-width="1.2"/>
+        <!-- Eigen symbol inside box, centered above text -->
+        <g transform="translate(155,97) scale(0.045)">
+          <path d="M126.46 126.46H94.85V189.67H63.22V126.44V0H0V126.44V189.67V252.89V252.91H63.22V252.89H94.85V252.91H126.46V252.89H189.69V189.67H126.46V126.46Z" fill="#1A0C6D"/>
+          <path d="M221.31 0H189.7V63.22H221.31V0Z" fill="#1A0C6D"/>
+          <path d="M158.08 0H126.46V0.01H96.13V31.62H126.46V126.44H158.08V126.43H189.69V63.2H158.08V0Z" fill="#1A0C6D"/>
+        </g>
+        <text x="160" y="124" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:14px;font-weight:600;fill:#000">Coordinator</text>
+
+        <!-- Trunk from coordinator to branch point -->
+        <line x1="160" y1="144" x2="160" y2="172" stroke="#1A0C6D" stroke-width="1.2"/>
+
+        <!-- "routes" label -->
+        <rect x="170" y="148" width="56" height="20" rx="10" fill="rgba(26,12,109,0.06)"/>
+        <text x="198" y="162" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:10px;fill:#1A0C6D">routes</text>
+
+        <!-- Branch: left -->
+        <path d="M160,172 L56,172 L56,204" fill="none" stroke="#1A0C6D" stroke-width="1.2"/>
+        <polygon points="52,201 56,209 60,201" fill="#1A0C6D"/>
+        <!-- Branch: center -->
+        <line x1="160" y1="172" x2="160" y2="204" stroke="#1A0C6D" stroke-width="1.2"/>
+        <polygon points="156,201 160,209 164,201" fill="#1A0C6D"/>
+        <!-- Branch: right -->
+        <path d="M160,172 L264,172 L264,204" fill="none" stroke="#1A0C6D" stroke-width="1.2"/>
+        <polygon points="260,201 264,209 268,201" fill="#1A0C6D"/>
+
+        <!-- Mac Studio (with Apple logo inside) -->
+        <rect x="12" y="210" width="88" height="58" rx="10" fill="white" stroke="#1A0C6D" stroke-width="1.5"/>
+        <g transform="translate(49,215) scale(0.35)">
+          <path d="M15.57 3.32C16.5 2.21 17.13.67 16.96 0c-1.5.06-3.31 1-4.38 2.25-.96 1.11-1.8 2.88-1.57 4.58 1.67.13 3.38-.85 4.56-3.51zM16.92 7.47c-2.66-.16-4.92 1.51-6.19 1.51s-3.22-1.43-5.3-1.39C2.7 7.63.19 9.22-1.21 11.66c-2.83 4.91-.73 12.18 2.03 16.16 1.35 1.95 2.96 4.14 5.08 4.06 2.03-.08 2.8-1.31 5.26-1.31s3.15 1.31 5.3 1.27c2.19-.04 3.59-1.99 4.94-3.95 1.55-2.25 2.19-4.43 2.23-4.55-.04-.04-4.27-1.63-4.31-6.48-.04-4.06 3.31-6.01 3.47-6.09-1.91-2.8-4.86-3.11-5.87-3.26z" fill="#D8DCE5"/>
+        </g>
+        <text x="56" y="242" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:11px;font-weight:600;fill:#000">Mac Studio</text>
+        <text x="56" y="257" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#1A0C6D">&#x2713; verified</text>
+
+        <!-- MacBook Pro (with Apple logo inside) -->
+        <rect x="116" y="210" width="88" height="58" rx="10" fill="white" stroke="#1A0C6D" stroke-width="1.5"/>
+        <g transform="translate(153,215) scale(0.35)">
+          <path d="M15.57 3.32C16.5 2.21 17.13.67 16.96 0c-1.5.06-3.31 1-4.38 2.25-.96 1.11-1.8 2.88-1.57 4.58 1.67.13 3.38-.85 4.56-3.51zM16.92 7.47c-2.66-.16-4.92 1.51-6.19 1.51s-3.22-1.43-5.3-1.39C2.7 7.63.19 9.22-1.21 11.66c-2.83 4.91-.73 12.18 2.03 16.16 1.35 1.95 2.96 4.14 5.08 4.06 2.03-.08 2.8-1.31 5.26-1.31s3.15 1.31 5.3 1.27c2.19-.04 3.59-1.99 4.94-3.95 1.55-2.25 2.19-4.43 2.23-4.55-.04-.04-4.27-1.63-4.31-6.48-.04-4.06 3.31-6.01 3.47-6.09-1.91-2.8-4.86-3.11-5.87-3.26z" fill="#D8DCE5"/>
+        </g>
+        <text x="160" y="242" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:11px;font-weight:600;fill:#000">MacBook Pro</text>
+        <text x="160" y="257" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#1A0C6D">&#x2713; verified</text>
+
+        <!-- Mac Mini (with Apple logo inside) -->
+        <rect x="220" y="210" width="88" height="58" rx="10" fill="white" stroke="#1A0C6D" stroke-width="1.5"/>
+        <g transform="translate(257,215) scale(0.35)">
+          <path d="M15.57 3.32C16.5 2.21 17.13.67 16.96 0c-1.5.06-3.31 1-4.38 2.25-.96 1.11-1.8 2.88-1.57 4.58 1.67.13 3.38-.85 4.56-3.51zM16.92 7.47c-2.66-.16-4.92 1.51-6.19 1.51s-3.22-1.43-5.3-1.39C2.7 7.63.19 9.22-1.21 11.66c-2.83 4.91-.73 12.18 2.03 16.16 1.35 1.95 2.96 4.14 5.08 4.06 2.03-.08 2.8-1.31 5.26-1.31s3.15 1.31 5.3 1.27c2.19-.04 3.59-1.99 4.94-3.95 1.55-2.25 2.19-4.43 2.23-4.55-.04-.04-4.27-1.63-4.31-6.48-.04-4.06 3.31-6.01 3.47-6.09-1.91-2.8-4.86-3.11-5.87-3.26z" fill="#D8DCE5"/>
+        </g>
+        <text x="264" y="242" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:11px;font-weight:600;fill:#000">Mac Mini</text>
+        <text x="264" y="257" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#1A0C6D">&#x2713; verified</text>
+
+        <!-- Response: Mac Studio → Coordinator → Your app -->
+        <path d="M12,239 L6,239 L6,30" fill="none" stroke="#95BFFF" stroke-width="1" stroke-dasharray="4,3"/>
+        <line x1="6" y1="116" x2="56" y2="116" stroke="#95BFFF" stroke-width="1" stroke-dasharray="4,3"/>
+        <polygon points="53,113 58,116 53,119" fill="#95BFFF"/>
+        <circle cx="6" cy="116" r="2.5" fill="#95BFFF"/>
+        <line x1="6" y1="30" x2="56" y2="30" stroke="#95BFFF" stroke-width="1" stroke-dasharray="4,3"/>
+        <polygon points="53,27 58,30 53,33" fill="#95BFFF"/>
+        <circle cx="6" cy="30" r="2.5" fill="#95BFFF"/>
+        <text x="6" y="180" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#95BFFF" transform="rotate(-90,6,180)">response</text>
       </svg>
+    </div>
+  </section>
+
+  <div class="container"><div class="rule"></div></div>
+
+  <!-- ============ WHAT THIS ENABLES ============ -->
+  <section>
+    <div class="container">
+      <div class="rv">
+        <div class="sec-label">01 — What this enables</div>
+      </div>
+      <div class="card-grid rv">
+        <div class="card">
+          <div class="card-label">For users</div>
+          <h3>Inference at half the cost</h3>
+          <p>Idle hardware has near-zero marginal cost. That saving passes through to price. OpenAI-compatible API for chat, image generation, and speech-to-text. Every request is end-to-end encrypted.</p>
+          <a href="https://console.darkbloom.dev" target="_blank" class="btn btn-primary" style="margin-top:20px;">Open Console ↗</a>
+        </div>
+        <div class="card">
+          <div class="card-label">For hardware owners</div>
+          <h3>Earn USD from idle Apple Silicon</h3>
+          <p>Your Mac already has the hardware. Operators keep 95% of inference revenue. Electricity cost on Apple Silicon runs $0.01–0.03 per hour depending on workload. The rest is profit.</p>
+          <a href="https://console.darkbloom.dev/earn" target="_blank" class="btn btn-primary" style="margin-top:20px;">Start Earning ↗</a>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -951,16 +1113,37 @@
   <section id="thesis">
     <div class="container" style="max-width: 680px;">
       <div class="rv">
-        <div class="sec-label">01 — The Problem</div>
+        <div class="sec-label">02 — Motivation</div>
         <div class="narrative">
-          <span class="dim">Mac Studios are backordered for months. M4 Maxes are sold out. The demand is AI inference.</span><br><br>
-          At the same time, millions of Apple Silicon machines are running nothing. Laptops closed overnight. Desktops idle between meetings. Studios serving as Slack terminals.<br><br>
-          <strong>The supply exists. It's just asleep.</strong>
+          <span class="dim">The AI compute market has three layers of margin.</span><br><br>
+          NVIDIA sells GPUs to hyperscalers. AWS, Google, Azure, and CoreWeave mark them up and rent capacity to AI companies. AI companies mark them up again and charge end users per token. Each layer takes a cut. End users pay multiples of what the silicon actually costs to run.
+        </div>
+        <div class="logo-strip">
+          <span class="strip-label">Current supply chain</span>
+          <img src="assets/logos/nvidia.svg" alt="NVIDIA" height="18">
+          <span style="font-size:16px;color:var(--grey-01);">→</span>
+          <img src="assets/logos/aws.svg" alt="AWS" height="20">
+          <img src="assets/logos/google-cloud.svg" alt="Google Cloud" height="18">
+          <img src="assets/logos/azure.svg" alt="Azure" height="20">
+          <img src="assets/logos/coreweave.svg" alt="CoreWeave" height="14">
+          <span style="font-size:16px;color:var(--grey-01);">→</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--grey-02);">API providers</span>
+          <span style="font-size:16px;color:var(--grey-01);">→</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--grey-02);">End users</span>
+        </div>
+        <div class="narrative">
+          This concentrates both wealth and access. A small number of companies control the supply. Everyone else rents.<br><br>
+          Meanwhile, Apple has shipped over 100 million machines with serious ML hardware. Unified memory architectures. 273 to 819 GB/s memory bandwidth. Neural Engines. Machines capable of running 235-billion-parameter models. Most sit idle 18 or more hours a day. Their owners earn nothing from this compute.<br><br>
+          <strong>That is not a technology problem. It is a marketplace problem.</strong><br><br>
+          <span class="dim">The pattern is familiar. Airbnb connected idle rooms to travelers. Uber connected idle cars to riders. Rooftop solar turned idle rooftops into energy assets. In each case, distributed idle capacity undercut centralized incumbents on price because the marginal cost was near zero.</span><br><br>
+          Darkbloom does this for AI compute. Idle Macs serve inference. Users pay less because there is no hyperscaler in the middle. Operators earn from hardware they already own. Unlike those other networks, the operator cannot see the user's data.
         </div>
       </div>
       <div class="stat-grid rv">
-        <div class="stat-cell"><div class="stat-num">100M+</div><div class="stat-label">Apple Silicon machines worldwide</div></div>
-        <div class="stat-cell"><div class="stat-num">Months</div><div class="stat-label">backorder on Mac Studios</div></div>
+        <div class="stat-cell"><div class="stat-num">100M+</div><div class="stat-label">Apple Silicon machines shipped since 2020</div></div>
+        <div class="stat-cell"><div class="stat-num">3x+</div><div class="stat-label">markup from silicon to end-user API price</div></div>
+        <div class="stat-cell"><div class="stat-num">18hrs</div><div class="stat-label">average daily idle time per machine</div></div>
+        <div class="stat-cell"><div class="stat-num">95%</div><div class="stat-label">of revenue goes to the hardware owner</div></div>
       </div>
     </div>
   </section>
@@ -971,11 +1154,12 @@
   <section>
     <div class="container" style="max-width: 680px;">
       <div class="rv">
-        <div class="sec-label">02 — The Trust Problem</div>
+        <div class="sec-label">03 — The Challenge</div>
         <div class="narrative">
-          <span class="dim">Other decentralized compute networks connect buyers and sellers. That's the easy part.</span><br><br>
-          The hard part: you're sending prompts to a machine you don't own, operated by someone you've never met. Your company's IP. Your users' data. Your competitive advantage — on a stranger's laptop.<br><br>
-          <strong>Without verifiable privacy, decentralized inference is a non-starter.</strong>
+          <span class="dim">Other decentralized compute networks connect buyers and sellers. That is the easy part.</span><br><br>
+          The hard part is trust. You are sending prompts to a machine you do not own, operated by someone you have never met. Your company's internal data. Your users' conversations. Your competitive advantage, running on hardware in someone else's house.<br><br>
+          No enterprise will do this without guarantees stronger than a terms-of-service document.<br><br>
+          <strong>Without verifiable privacy, decentralized inference does not work.</strong>
         </div>
       </div>
     </div>
@@ -987,37 +1171,70 @@
   <section id="security">
     <div class="container">
       <div class="rv">
-        <div class="sec-label">03 — The Architecture</div>
-        <h2>Verifiable privacy, not promised privacy</h2>
-        <p class="sec-desc">Four independent layers. Each one is verifiable. Together they make it cryptographically impossible for a node operator to access your data.</p>
+        <div class="sec-label">04 — Our Approach</div>
+        <h2>Access path elimination</h2>
+        <p class="sec-desc">We eliminate every software path through which an operator could observe inference data. Four independent layers, each independently verifiable.</p>
       </div>
       <div class="card-grid rv">
         <div class="card">
           <div class="card-label">Encryption</div>
-          <h3>End-to-end encrypted</h3>
-          <p>Your prompt is encrypted with the node's X25519 public key before it leaves your machine. NaCl box. The coordinator routes traffic but cannot read it.</p>
+          <h3>Encrypted end-to-end</h3>
+          <p>Requests are encrypted on the user's device before transmission. The coordinator routes ciphertext. Only the target node's hardware-bound key can decrypt.</p>
         </div>
         <div class="card">
           <div class="card-label">Hardware</div>
-          <h3>Secure Enclave attested</h3>
-          <p>Each node holds a P-256 key pair generated inside Apple's tamper-resistant Secure Enclave. The attestation chain traces back to Apple's Enterprise CA.</p>
+          <h3>Hardware-verified</h3>
+          <p>Each node holds a key generated inside Apple's tamper-resistant secure hardware. The attestation chain traces back to Apple's root certificate authority.</p>
         </div>
         <div class="card">
           <div class="card-label">Runtime</div>
-          <h3>Hardened process</h3>
-          <p>PT_DENY_ATTACH, binary self-hash, SIP enforcement, Hypervisor.framework stage-2 page tables. The operator cannot attach to or inspect the inference process.</p>
+          <h3>Hardened runtime</h3>
+          <p>The inference process is locked at the OS level. Debugger attachment is blocked. Memory inspection is blocked. The operator cannot extract data from a running process.</p>
         </div>
         <div class="card">
           <div class="card-label">Output</div>
           <h3>Traceable to hardware</h3>
-          <p>Every response is signed and traceable to the specific verified machine that produced it. The attestation is public — you can verify it yourself.</p>
+          <p>Every response is signed by the specific machine that produced it. The full attestation chain is published. Anyone can verify it independently.</p>
         </div>
+      </div>
+
+      <!-- Access path elimination diagram -->
+      <div class="rv" style="margin-top:48px;">
+        <svg width="100%" viewBox="0 0 600 310" fill="none" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;margin:0 auto;display:block;">
+          <!-- Layer 5 (outermost): E2E Encryption -->
+          <rect x="0" y="0" width="600" height="310" rx="16" fill="#1A0C6D" opacity="0.04" stroke="#1A0C6D" stroke-width="1" stroke-opacity="0.12"/>
+          <text x="20" y="26" style="font-family:'ABC Repro Mono',monospace;font-size:11px;fill:#1A0C6D;opacity:0.6">E2E Encryption</text>
+          <text x="580" y="26" text-anchor="end" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#ACB1BC">encrypted before it leaves your device</text>
+
+          <!-- Layer 4: OS Integrity -->
+          <rect x="20" y="40" width="560" height="250" rx="14" fill="#1A0C6D" opacity="0.04" stroke="#1A0C6D" stroke-width="1" stroke-opacity="0.12"/>
+          <text x="40" y="64" style="font-family:'ABC Repro Mono',monospace;font-size:11px;fill:#1A0C6D;opacity:0.6">OS Integrity</text>
+          <text x="560" y="64" text-anchor="end" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#ACB1BC">SIP enforced · signed system volume · binary self-hash</text>
+
+          <!-- Layer 3: Memory Isolation -->
+          <rect x="44" y="78" width="512" height="192" rx="12" fill="#1A0C6D" opacity="0.04" stroke="#1A0C6D" stroke-width="1" stroke-opacity="0.12"/>
+          <text x="64" y="102" style="font-family:'ABC Repro Mono',monospace;font-size:11px;fill:#1A0C6D;opacity:0.6">Memory Isolation</text>
+          <text x="536" y="102" text-anchor="end" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#ACB1BC">Hypervisor.framework · Stage 2 page tables</text>
+
+          <!-- Layer 2: Hardened Process -->
+          <rect x="68" y="116" width="464" height="134" rx="10" fill="#1A0C6D" opacity="0.04" stroke="#1A0C6D" stroke-width="1" stroke-opacity="0.12"/>
+          <text x="88" y="140" style="font-family:'ABC Repro Mono',monospace;font-size:11px;fill:#1A0C6D;opacity:0.6">Hardened Process</text>
+          <text x="512" y="140" text-anchor="end" style="font-family:'ABC Repro Mono',monospace;font-size:9px;fill:#ACB1BC">debugger blocked · no shell access</text>
+
+          <!-- Layer 1 (innermost): Your inference data -->
+          <rect x="96" y="156" width="408" height="74" rx="8" fill="white" stroke="#1A0C6D" stroke-width="1.5"/>
+          <text x="300" y="188" text-anchor="middle" style="font-family:'ABC Repro',sans-serif;font-size:15px;font-weight:600;fill:#1A0C6D">Your inference data</text>
+          <text x="300" y="210" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:10px;fill:#ACB1BC">prompts · responses · model state</text>
+
+          <!-- Operator label (outside) -->
+          <text x="300" y="302" text-anchor="middle" style="font-family:'ABC Repro Mono',monospace;font-size:10px;fill:#ACB1BC">↑ operator is here — every path inward is eliminated</text>
+        </svg>
       </div>
 
       <!-- Eigen Blue showcase block — brand element -->
       <div class="eigen-block rv">
         <h3>The operator runs your inference. They cannot see your data.</h3>
-        <p>Prompts are encrypted before they leave your machine. The coordinator routes traffic it cannot read. The provider processes tokens it cannot extract. The entire attestation chain is public — verify it yourself.</p>
+        <p>Prompts are encrypted before they leave your machine. The coordinator routes traffic it cannot read. The provider decrypts inside a hardened process it cannot inspect. The attestation chain is public.</p>
         <a href="#paper" class="btn-white">Read the paper ↗</a>
       </div>
     </div>
@@ -1029,9 +1246,9 @@
   <section id="api">
     <div class="container">
       <div class="rv">
-        <div class="sec-label">04 — For Developers</div>
-        <h2>OpenAI-compatible</h2>
-        <p class="sec-desc">Swap your base URL. The rest of your code stays the same — streaming, function calling, all of it.</p>
+        <div class="sec-label">05 — Implementation</div>
+        <h2>OpenAI-compatible API</h2>
+        <p class="sec-desc">Change the base URL. Everything else works. Streaming, function calling, all existing SDKs.</p>
       </div>
       <div class="code-block rv">
         <div class="code-bar">
@@ -1041,12 +1258,12 @@
         <pre><code><span class="kw">from</span> openai <span class="kw">import</span> OpenAI
 
 client = OpenAI(
-    base_url=<span class="str">"https://api.darkbloom.ai/v1"</span>,
+    base_url=<span class="str">"https://api.darkbloom.dev/v1"</span>,
     api_key=<span class="str">"your-api-key"</span>
 )
 
 response = client.chat.completions.create(
-    model=<span class="str">"qwen3-30b-a3b"</span>,
+    model=<span class="str">"mlx-community/gemma-4-26b-a4b-it-8bit"</span>,
     messages=[{<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"Hello!"</span>}],
     stream=<span class="kw">True</span>
 )
@@ -1069,15 +1286,15 @@ response = client.chat.completions.create(
   <section id="pricing">
     <div class="container">
       <div class="rv">
-        <div class="sec-label">05 — Pricing</div>
-        <h2>Cheaper than centralized</h2>
-        <p class="sec-desc">No subscriptions, no minimums. Pay per token. Idle consumer hardware has near-zero marginal cost — the savings pass through to you.</p>
+        <div class="sec-label">06 — Results</div>
+        <h2>Cost comparison</h2>
+        <p class="sec-desc">Idle hardware has near-zero marginal cost, so the savings pass through. No subscriptions or minimums. Per-token pricing compared against OpenRouter equivalents.</p>
       </div>
-      <div class="price-hero rv"><div class="price-big">50%</div><div class="price-sub">cheaper than OpenRouter, every model</div></div>
       <div class="rv" style="overflow-x:auto;">
         <table class="ptable">
           <thead><tr><th>Model</th><th>Input</th><th>Output</th><th>OpenRouter</th><th>Savings</th></tr></thead>
           <tbody>
+            <tr><td class="mc">Gemma 4 26B<small>4B active, fast multimodal MoE</small></td><td class="op">$0.03</td><td class="op">$0.20</td><td class="cp">$0.40</td><td><span class="stag">50%</span></td></tr>
             <tr><td class="mc">Qwen3.5 27B<small>Dense, frontier reasoning</small></td><td class="op">$0.10</td><td class="op">$0.78</td><td class="cp">$1.56</td><td><span class="stag">50%</span></td></tr>
             <tr><td class="mc">Qwen3.5 122B MoE<small>10B active, best quality</small></td><td class="op">$0.13</td><td class="op">$1.04</td><td class="cp">$2.08</td><td><span class="stag">50%</span></td></tr>
             <tr><td class="mc">MiniMax M2.5 239B<small>11B active, SOTA coding</small></td><td class="op">$0.06</td><td class="op">$0.50</td><td class="cp">$1.00</td><td><span class="stag">50%</span></td></tr>
@@ -1099,9 +1316,9 @@ response = client.chat.completions.create(
   <section id="nodes">
     <div class="container">
       <div class="rv">
-        <div class="sec-label">06 — Run a Node</div>
-        <h2>Earn from idle hardware</h2>
-        <p class="sec-desc">If your Mac is on and you're not using it, it can serve inference and earn. You keep 95% of revenue. Electricity on Apple Silicon is negligible.</p>
+        <div class="sec-label">07 — Operator Economics</div>
+        <h2>Operator economics</h2>
+        <p class="sec-desc">Operators contribute idle Apple Silicon and earn USD. 95% of inference revenue goes to the operator. The only variable cost is electricity.</p>
       </div>
       <div class="stat-grid rv">
         <div class="stat-cell"><div class="stat-num">95%</div><div class="stat-label">revenue goes to you</div></div>
@@ -1109,28 +1326,28 @@ response = client.chat.completions.create(
       </div>
       <div class="install-box rv" style="margin-top:24px;">
         <div class="install-tabs">
-          <button class="on" id="tab-a" onclick="swTab('a')">Mac App</button>
-          <button id="tab-c" onclick="swTab('c')">CLI</button>
+          <button class="on" id="tab-c" onclick="swTab('c')">CLI</button>
+          <button id="tab-a" onclick="swTab('a')">Mac App</button>
         </div>
-        <div id="panel-a" class="ipanel">
-          <h4>Native macOS Menu Bar App</h4>
-          <p class="desc">One-click install. Runs in your menu bar.</p>
-          <a href="https://pub-3d1cb668259340eeb2276e1d375c846d.r2.dev/releases/latest/Darkbloom.dmg" class="btn btn-primary" style="width:100%;justify-content:center;">Download for macOS ↗</a>
-          <div class="imeta"><span>Apple Silicon only</span><span>macOS 14+</span><span>Includes CLI + backend</span></div>
-        </div>
-        <div id="panel-c" class="ipanel" style="display:none;">
+        <div id="panel-c" class="ipanel">
           <h4>Install via Terminal</h4>
           <p class="desc">Downloads the provider binary and configures a launchd service.</p>
           <div class="code-block"><div class="code-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="code-lang">terminal</span></div><pre><code><span style="color:rgba(255,255,255,0.25);user-select:none;">$ </span>curl -fsSL https://api.darkbloom.dev/install.sh | bash</code></pre></div>
           <div class="imeta" style="margin-top:14px;"><span>No dependencies</span><span>Auto-updates</span><span>Runs as launchd service</span></div>
+        </div>
+        <div id="panel-a" class="ipanel" style="display:none;">
+          <h4>Native macOS Menu Bar App <span class="stag" style="margin-left:8px;">In Development</span></h4>
+          <p class="desc">One-click install. Runs in your menu bar. Currently in active development — use the CLI for now.</p>
+          <div style="width:100%;padding:14px;text-align:center;border-radius:var(--radius-sm);background:var(--off-white);color:var(--grey-03);font-family:var(--font-mono);font-size:13px;border:1px solid var(--grey-01);">Coming soon</div>
+          <div class="imeta"><span>Apple Silicon only</span><span>macOS 14+</span><span>Includes CLI + backend</span></div>
         </div>
       </div>
       <script>function swTab(t){document.getElementById('tab-a').classList.toggle('on',t==='a');document.getElementById('tab-c').classList.toggle('on',t==='c');document.getElementById('panel-a').style.display=t==='a'?'block':'none';document.getElementById('panel-c').style.display=t==='c'?'block':'none';}</script>
 
       <!-- Earnings Calculator -->
       <div class="calc-box rv">
-        <h3>Earnings calculator</h3>
-        <p class="calc-desc">Select your hardware.</p>
+        <h3>Earnings estimate</h3>
+        <p class="calc-desc">Select hardware to model projected operator earnings.</p>
         <div class="csec"><label class="clabel">Machine</label><div class="pills" id="mac-sel"></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
           <div class="csec"><label class="clabel">Chip</label><div class="pills" id="chip-sel"></div></div>
@@ -1145,10 +1362,11 @@ response = client.chat.completions.create(
       </div>
 
       <!-- Paper CTA -->
-      <a href="#" class="paper-cta rv" id="paper">
-        <div class="paper-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--eigen-blue)" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
-        <div><h4>Read the research paper</h4><p>Architecture, threat model, and security proofs for the Darkbloom verification stack.</p></div>
-      </a>
+      <div class="eigen-block rv" id="paper" style="margin-top: 48px;">
+        <h3>Read the research paper</h3>
+        <p>Architecture specification, threat model, security analysis, and economic model for hardware-verified private inference on distributed Apple Silicon.</p>
+        <a href="https://github.com/Layr-Labs/d-inference/blob/master/papers/dginf-private-inference.pdf" class="btn-white" target="_blank">Download PDF ↗</a>
+      </div>
     </div>
   </section>
 
@@ -1163,12 +1381,11 @@ response = client.chat.completions.create(
         <p class="sec-desc">Curated for quality. Only models worth paying for.</p>
       </div>
       <div class="mlist rv">
-        <div class="mitem"><div><div class="mname">Qwen3.5 27B</div><div class="mdesc">Dense, frontier-quality reasoning</div></div><span class="mtag mt-text">text</span></div>
-        <div class="mitem"><div><div class="mname">Qwen3.5 122B MoE <span class="info-tip" data-tip="May not be available currently — requires a high-RAM node to host. Waiting for providers with 128GB+ machines to join the network.">ⓘ</span></div><div class="mdesc">10B active — best quality per token</div></div><span class="mtag mt-text">text</span></div>
-        <div class="mitem"><div><div class="mname">MiniMax M2.5 239B <span class="info-tip" data-tip="May not be available currently — requires a high-RAM node to host. Waiting for providers with 256GB+ machines to join the network.">ⓘ</span></div><div class="mdesc">SOTA coding, 100 tok/s on Mac Studio</div></div><span class="mtag mt-text">text</span></div>
-        <div class="mitem"><div><div class="mname">Gemma 3 27B</div><div class="mdesc">Google's open model — strong multilingual and reasoning</div></div><span class="mtag mt-text">text</span></div>
-        <div class="mitem"><div><div class="mname">FLUX.2 Klein</div><div class="mdesc">4B and 9B — Metal-accelerated diffusion</div></div><span class="mtag mt-image">image</span></div>
-        <div class="mitem"><div><div class="mname">Cohere Transcribe</div><div class="mdesc">2B conformer — best-in-class STT</div></div><span class="mtag mt-audio">audio</span></div>
+        <div class="mitem"><div><div class="mname">Gemma 4 26B</div><div class="mdesc">Google's latest — fast multimodal MoE, 4B active params</div></div><span class="mtag mt-text">text</span></div>
+        <div class="mitem"><div><div class="mname">Qwen3.5 27B</div><div class="mdesc">Dense, frontier-quality reasoning (Claude Opus distilled)</div></div><span class="mtag mt-text">text</span></div>
+        <div class="mitem"><div><div class="mname">Qwen3.5 122B MoE <span class="info-tip" data-tip="Requires a high-RAM node (128GB+). Availability depends on provider hardware.">ⓘ</span></div><div class="mdesc">10B active — best quality per token</div></div><span class="mtag mt-text">text</span></div>
+        <div class="mitem"><div><div class="mname">MiniMax M2.5 239B <span class="info-tip" data-tip="Requires a high-RAM node (256GB+). Availability depends on provider hardware.">ⓘ</span></div><div class="mdesc">SOTA coding, 11B active, 100 tok/s on Mac Studio</div></div><span class="mtag mt-text">text</span></div>
+        <div class="mitem"><div><div class="mname">Cohere Transcribe</div><div class="mdesc">2B conformer — best-in-class speech-to-text</div></div><span class="mtag mt-audio">audio</span></div>
       </div>
     </div>
   </section>
@@ -1181,9 +1398,11 @@ response = client.chat.completions.create(
     <div class="fi">
       <span class="copy">Darkbloom · Eigen Labs · 2026</span>
       <div class="fl">
-        <a href="#paper">Paper</a>
-        <a href="#api">Docs</a>
-        <a href="https://github.com/Layr-Labs/d-inference">GitHub</a>
+        <a href="https://github.com/Layr-Labs/d-inference/blob/master/papers/dginf-private-inference.pdf" target="_blank">Paper</a>
+        <a href="https://console.darkbloom.dev" target="_blank">Console</a>
+        <a href="https://github.com/Layr-Labs/d-inference" target="_blank">GitHub</a>
+        <a href="https://x.com/eigen_labs" target="_blank">X</a>
+        <a href="https://www.linkedin.com/company/eigenlabsorg" target="_blank">LinkedIn</a>
       </div>
     </div>
   </div>

@@ -2,6 +2,8 @@
 
 import { useState, useMemo } from "react";
 import { TopBar } from "@/components/TopBar";
+import { useAuth } from "@/hooks/useAuth";
+import Link from "next/link";
 import {
   Cpu,
   Zap,
@@ -12,6 +14,9 @@ import {
   ParkingCircle,
   Info,
   Crown,
+  ArrowRight,
+  Mail,
+  Terminal,
 } from "lucide-react";
 
 /* ─── Hardware database ─── */
@@ -292,6 +297,8 @@ function PillButton({
 /* ─── Page component ─── */
 
 export default function EarnPage() {
+  const { ready, authenticated, login } = useAuth();
+
   // Default: MacBook Pro -> M4 Max -> 48GB
   const [selectedMacType, setSelectedMacType] = useState("MacBook Pro");
   const [selectedChip, setSelectedChip] = useState("M4 Max");
@@ -416,6 +423,64 @@ export default function EarnPage() {
               Estimate how much your Apple Silicon Mac can earn serving inference
               on the Darkbloom network.
             </p>
+          </div>
+
+          {/* Setup Provider CTA */}
+          <div className="rounded-xl bg-bg-secondary p-6 mb-6">
+            {!authenticated ? (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-accent-brand/10 flex items-center justify-center shrink-0">
+                    <Terminal size={20} className="text-accent-brand" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary mb-0.5">
+                      Ready to start earning?
+                    </h3>
+                    <p className="text-sm text-text-secondary">
+                      Sign in to set up your provider node and start earning from your Mac.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={login}
+                  disabled={!ready}
+                  className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg
+                             bg-coral text-white font-medium text-sm
+                             hover:opacity-90
+                             disabled:opacity-40 disabled:cursor-not-allowed
+                             transition-all shrink-0"
+                >
+                  <Mail size={14} />
+                  {!ready ? "Loading..." : "Sign In"}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-accent-green/10 flex items-center justify-center shrink-0">
+                    <Cpu size={20} className="text-accent-green" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary mb-0.5">
+                      Turn your Mac into a provider
+                    </h3>
+                    <p className="text-sm text-text-secondary">
+                      Set up your Apple Silicon Mac to serve inference and earn from the Darkbloom network.
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href="/providers/setup"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg
+                             bg-accent-brand text-white font-medium text-sm
+                             hover:bg-accent-brand-hover
+                             transition-colors shrink-0"
+                >
+                  Setup Provider <ArrowRight size={14} />
+                </Link>
+              </div>
+            )}
           </div>
 
           {/* Hardware selector */}

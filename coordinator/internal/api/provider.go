@@ -426,15 +426,31 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 		return
 	}
 
-	// Verify the signature: for now, we verify that the provider sent back
-	// the correct nonce and a non-empty signature. Full cryptographic
-	// verification of the NaCl signature would require the NaCl signing
-	// key (currently only X25519 encryption keys are exchanged). The key
-	// possession is proven by the provider's ability to receive the challenge
-	// on the authenticated WebSocket and echo back the correct nonce.
+	// Verify the signature cryptographically using the provider's Secure
+	// Enclave P-256 public key. The provider signs SHA-256(nonce + timestamp)
+	// with its SE key via eigeninference-enclave CLI.
 	if resp.Signature == "" {
 		s.handleChallengeFailure(providerID, "empty signature")
 		return
+	}
+
+	// If the provider has an attested SE public key, verify the signature.
+	// Providers without attestation (TrustNone / Open Mode) skip crypto
+	// verification — their trust is already "none".
+	if provider.AttestationResult != nil && provider.AttestationResult.PublicKey != "" {
+		challengeData := pc.nonce + pc.timestamp
+		if err := attestation.VerifyChallengeSignature(
+			provider.AttestationResult.PublicKey,
+			resp.Signature,
+			challengeData,
+		); err != nil {
+			s.logger.Error("challenge signature verification failed",
+				"provider_id", providerID,
+				"error", err,
+			)
+			s.handleChallengeFailure(providerID, "signature verification failed: "+err.Error())
+			return
+		}
 	}
 
 	// Verify fresh SIP status. If the provider reports SIP disabled,
