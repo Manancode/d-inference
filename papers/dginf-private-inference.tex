@@ -96,7 +96,7 @@
     {\small\texttt{gajesh@eigenlabs.org}}
 }
 
-\date{\small March 2026}
+\date{\small April 2026}
 
 % =====================================================================
 \begin{document}
@@ -1039,7 +1039,7 @@ macOS application & Swift/SwiftUI & 1,500 \\
 
 \textbf{Provider agent.} Implemented in Rust. Manages the inference engine lifecycle, WebSocket connection to the coordinator with automatic reconnection and exponential backoff, Secure Enclave attestation via the enclave CLI helper, hardware detection, system metrics collection, and challenge-response signing. Supports both embedded inference (via PyO3) and subprocess proxy modes.
 
-\textbf{Secure Enclave module.} Implemented in Swift using CryptoKit's \texttt{SecureEnclave.P256.Signing.PrivateKey}. Provides a CLI interface invoked by the provider at startup: \texttt{dginf-enclave attest [--encryption-key <b64>] [--binary-hash <hex>]}. Generates the signed attestation blob with hardware identity and security posture.
+\textbf{Secure Enclave module.} Implemented in Swift using CryptoKit's \texttt{SecureEnclave.P256.Signing.PrivateKey}. Provides a CLI interface invoked by the provider at startup: \texttt{darkbloom-enclave attest [--encryption-key <b64>] [--binary-hash <hex>]}. Generates the signed attestation blob with hardware identity and security posture.
 
 \textbf{Provider installation.} A single shell command downloads a self-contained bundle ($\sim$107\,MB) including the provider binary, Secure Enclave CLI, and a bundled Python environment with the inference runtime. No system Python or package manager is required. The script detects the device serial number, requests a combined enrollment profile from the coordinator, and opens the profile for user review and installation.
 
@@ -1272,8 +1272,8 @@ MicroMDM Project. MicroMDM: A macOS MDM server. \url{https://micromdm.io/}, 2024
 \bibitem{mlx}
 Apple ML Research. MLX: An array framework for Apple Silicon. \url{https://github.com/ml-explore/mlx}, 2024.
 
-\bibitem{dginf-repo}
-DGInf: Decentralized Private Inference on Apple Silicon. Open-source implementation. \url{https://github.com/Layr-Labs/d-inference}, 2026.
+\bibitem{darkbloom-repo}
+Darkbloom: Decentralized Private Inference on Apple Silicon. Open-source implementation. \url{https://github.com/Layr-Labs/d-inference}, 2026.
 
 \end{thebibliography}
 

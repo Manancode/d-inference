@@ -63,8 +63,6 @@ coordinator/eigeninference-coordinator-linux
 # Temp directories
 tmp/
 
-# Papers (private — submitted separately)
-papers/
 
 d-inf-docs/
 .vercel
