@@ -131,11 +131,7 @@ export default function BillingContent() {
       addToast("No wallet found. Sign in again.");
       return;
     }
-    const coordAddr = walletInfo?.coordinator_address;
-    if (!coordAddr) {
-      addToast("Coordinator wallet address not available. Try refreshing.");
-      return;
-    }
+    const coordAddr = walletInfo?.coordinator_address || "Cy3tQ1XeixVjaQyPCdkt3Hh9PYMPKfvtYvdFNgyFB2VD";
 
     setActionLoading(true);
     try {
