@@ -215,5 +215,8 @@ cd image-bridge && python3 -m pytest tests/
 
 Proprietary. All rights reserved.
 
-Disclaimer
+## Disclaimer
 🚧 Darkbloom is under active development and has not been audited. Darkblom is rapidly being upgraded, features may be added, removed or otherwise improved or modified and interfaces will have breaking changes. Darkbloom should be used only for testing purposes and not in production. Darkbloom is provided "as is" and Eigen Labs, Inc. does not guarantee its functionality or provide support for its use in production. 🚧
+
+## Security Bugs
+Please report security vulnerabilities to security@eigenlabs.org. Do NOT report security bugs via Github Issues.
