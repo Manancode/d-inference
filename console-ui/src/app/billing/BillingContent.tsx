@@ -465,11 +465,15 @@ export default function BillingContent() {
               onChange={(e) => setBuyAmount(e.target.value)}
               className="flex-1 bg-bg-primary border border-border-dim rounded-lg px-4 py-3 text-text-primary font-mono text-lg outline-none focus:border-coral transition-colors"
               min="1"
+              max="20"
               step="1"
             />
           </div>
+          {parseFloat(buyAmount) > 20 && (
+            <p className="text-xs text-red-500 mb-2">Maximum deposit is $20</p>
+          )}
           <div className="flex gap-2 mb-6">
-            {[5, 10, 25, 50].map((amt) => (
+            {[5, 10, 15, 20].map((amt) => (
               <button
                 key={amt}
                 onClick={() => setBuyAmount(String(amt))}
@@ -485,7 +489,7 @@ export default function BillingContent() {
           </div>
           <button
             onClick={() => setConfirmOpen(true)}
-            disabled={actionLoading || !buyAmount || parseFloat(buyAmount) <= 0}
+            disabled={actionLoading || !buyAmount || parseFloat(buyAmount) <= 0 || parseFloat(buyAmount) > 20}
             className="w-full py-3 rounded-lg bg-coral border border-border-dim text-white font-bold text-sm
                        hover:opacity-90
                        disabled:opacity-50
