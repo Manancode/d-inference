@@ -2,7 +2,7 @@ version: 2
 updates:
 
   - package-ecosystem: "gomod"
-    directory: "/"
+    directory: "/coordinator"
     schedule:
       interval: "daily"
       time: "08:00"
@@ -31,8 +31,8 @@ updates:
           - "patch"
 
   # Group Security Updates
-  - package-ecosystem: "npm" # same for both npm & yarn
-    directory: "/"
+  - package-ecosystem: "npm"
+    directory: "/console-ui"
     schedule:
       interval: "daily"
       time: "08:00"

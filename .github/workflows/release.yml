@@ -16,7 +16,7 @@ jobs:
     name: Build, Sign, Upload, Register
     runs-on: macos-26-xlarge  # Apple Silicon, 16 cores
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # --- Import signing certificate ---
 
@@ -80,9 +80,9 @@ jobs:
       - name: Test provider
         run: cd provider && cargo test -- --skip proxy::tests --skip server::tests
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: '1.23'
+          go-version-file: coordinator/go.mod
 
       - name: Test coordinator
         run: cd coordinator && go test -race ./...
@@ -527,7 +527,7 @@ jobs:
       # --- GitHub Release ---
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             /tmp/eigeninference-bundle-macos-arm64.tar.gz
