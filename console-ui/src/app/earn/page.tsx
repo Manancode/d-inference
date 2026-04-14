@@ -158,16 +158,16 @@ function calculateModelEarnings(
     const batchedTokPerSec = singleTokPerSec * batchSize * batchEff;
     decodeTokPerSec = batchedTokPerSec;
     const tokPerHour = batchedTokPerSec * 3600;
-    revenuePerHour = (tokPerHour / 1_000_000) * (outputPriceMicro / 1_000_000) * 0.95;
+    revenuePerHour = (tokPerHour / 1_000_000) * (outputPriceMicro / 1_000_000);
   } else if (model.type === "image") {
     const scaled = model.baseImagesPerHour! * (config.bandwidthGBs / model.referenceBandwidth!);
     scaledImagesPerHour = scaled;
-    revenuePerHour = scaled * (model.imagePriceMicro! / 1_000_000) * 0.95;
+    revenuePerHour = scaled * (model.imagePriceMicro! / 1_000_000);
     throughputLabel = `${Math.round(scaled).toLocaleString()} images/hr`;
   } else {
     const scaled = model.baseAudioMinPerHour! * (config.bandwidthGBs / 100);
     scaledAudioMinPerHour = scaled;
-    revenuePerHour = scaled * (model.pricePerMinMicro! / 1_000_000) * 0.95;
+    revenuePerHour = scaled * (model.pricePerMinMicro! / 1_000_000);
     throughputLabel = `${Math.round(scaled).toLocaleString()} audio-min/hr`;
   }
 
@@ -811,10 +811,16 @@ export default function EarnPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-text-tertiary mb-0.5">
+                <p className="text-xs text-text-tertiary mb-0.5 flex items-center gap-1">
                   Provider share
+                  <span className="relative group">
+                    <Info size={12} className="text-text-tertiary cursor-help" />
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-48 px-2 py-1 text-[10px] text-text-secondary bg-bg-tertiary border border-border-primary rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      Payouts are currently processed manually. Automatic payouts coming soon.
+                    </span>
+                  </span>
                 </p>
-                <p className="text-sm font-mono text-text-primary">95%</p>
+                <p className="text-sm font-mono text-text-primary">100%</p>
               </div>
             </div>
           </div>
@@ -833,7 +839,7 @@ export default function EarnPage() {
                   <p>
                     revenue/hr = {Math.round(result.scaledAudioMinPerHour!).toLocaleString()} min * $
                     {(result.catalogModel.pricePerMinMicro! / 1_000_000).toFixed(4)}
-                    /min * 0.95 = {fmtUSD(result.revenuePerHour, 4)}
+                    /min = {fmtUSD(result.revenuePerHour, 4)}
                   </p>
                   <p>
                     marginal_watts = {selectedConfig.inferWatts}W (inference) - {selectedConfig.idleWatts}W (idle) = {result.marginalWatts}W
@@ -856,7 +862,7 @@ export default function EarnPage() {
                   <p>
                     revenue/hr = {Math.round(result.scaledImagesPerHour!)} images/hr * $
                     {(result.catalogModel.imagePriceMicro! / 1_000_000).toFixed(4)}
-                    /image * 0.95 = {fmtUSD(result.revenuePerHour, 4)}
+                    /image = {fmtUSD(result.revenuePerHour, 4)}
                   </p>
                   <p>
                     marginal_watts = {selectedConfig.inferWatts}W (inference) - {selectedConfig.idleWatts}W (idle) = {result.marginalWatts}W
@@ -888,7 +894,7 @@ export default function EarnPage() {
                   </p>
                   <p>
                     revenue/hr = ({((result.decodeTokPerSec ?? 0) * 3600).toLocaleString(undefined, { maximumFractionDigits: 0 })} / 1M) * $
-                    {((result.outputPriceMicro ?? 0) / 1_000_000).toFixed(6)} * 0.95 = {fmtUSD(result.revenuePerHour, 4)}
+                    {((result.outputPriceMicro ?? 0) / 1_000_000).toFixed(6)} = {fmtUSD(result.revenuePerHour, 4)}
                   </p>
                   <p>
                     marginal_watts = {selectedConfig.inferWatts}W (inference) - {selectedConfig.idleWatts}W (idle) = {result.marginalWatts}W

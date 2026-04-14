@@ -1100,7 +1100,7 @@
         <div class="card">
           <div class="card-label">For hardware owners</div>
           <h3>Earn USD from idle Apple Silicon</h3>
-          <p>Your Mac already has the hardware. Operators keep 95% of inference revenue. Electricity cost on Apple Silicon runs $0.01–0.03 per hour depending on workload. The rest is profit.</p>
+          <p>Your Mac already has the hardware. Operators keep 100% of inference revenue. Electricity cost on Apple Silicon runs $0.01–0.03 per hour depending on workload. The rest is profit.</p>
           <a href="https://console.darkbloom.dev/earn" target="_blank" class="btn btn-primary" style="margin-top:20px;">Start Earning ↗</a>
         </div>
       </div>
@@ -1143,7 +1143,7 @@
         <div class="stat-cell"><div class="stat-num">100M+</div><div class="stat-label">Apple Silicon machines shipped since 2020</div></div>
         <div class="stat-cell"><div class="stat-num">3x+</div><div class="stat-label">markup from silicon to end-user API price</div></div>
         <div class="stat-cell"><div class="stat-num">18hrs</div><div class="stat-label">average daily idle time per machine</div></div>
-        <div class="stat-cell"><div class="stat-num">95%</div><div class="stat-label">of revenue goes to the hardware owner</div></div>
+        <div class="stat-cell"><div class="stat-num">100%</div><div class="stat-label">of revenue goes to the hardware owner</div></div>
       </div>
     </div>
   </section>
@@ -1305,7 +1305,7 @@ response = client.chat.completions.create(
       <div class="pmini-grid rv">
         <div class="pmini"><h4>Image Generation</h4><div class="val">$0.0015</div><div class="unit">per image</div><div class="vs">Together.ai: $0.003</div></div>
         <div class="pmini"><h4>Speech-to-Text</h4><div class="val">$0.001</div><div class="unit">per audio minute</div><div class="vs">AssemblyAI: $0.002</div></div>
-        <div class="pmini"><h4>Platform Fee</h4><div class="val" style="color:var(--black);">5%</div><div class="unit">operators keep 95%</div><div class="vs" style="text-decoration:none;color:var(--eigen-blue);">transparent</div></div>
+        <div class="pmini"><h4>Platform Fee</h4><div class="val" style="color:var(--black);">0%</div><div class="unit">operators keep 100%</div><div class="vs" style="text-decoration:none;color:var(--eigen-blue);">transparent</div></div>
       </div>
     </div>
   </section>
@@ -1318,10 +1318,10 @@ response = client.chat.completions.create(
       <div class="rv">
         <div class="sec-label">07 — Operator Economics</div>
         <h2>Operator economics</h2>
-        <p class="sec-desc">Operators contribute idle Apple Silicon and earn USD. 95% of inference revenue goes to the operator. The only variable cost is electricity.</p>
+        <p class="sec-desc">Operators contribute idle Apple Silicon and earn USD. 100% of inference revenue goes to the operator. The only variable cost is electricity.</p>
       </div>
       <div class="stat-grid rv">
-        <div class="stat-cell"><div class="stat-num">95%</div><div class="stat-label">revenue goes to you</div></div>
+        <div class="stat-cell"><div class="stat-num">100%</div><div class="stat-label">revenue goes to you</div></div>
         <div class="stat-cell"><div class="stat-num">~90%</div><div class="stat-label">profit margin</div></div>
       </div>
       <div class="install-box rv" style="margin-top:24px;">
@@ -1420,7 +1420,7 @@ response = client.chat.completions.create(
   const fc=(n,d)=>new Intl.NumberFormat(lc,{style:'currency',currency:'USD',minimumFractionDigits:d??2,maximumFractionDigits:d??2}).format(n);
   const fw=n=>new Intl.NumberFormat(lc,{style:'currency',currency:'USD',minimumFractionDigits:0,maximumFractionDigits:0}).format(n);
   const gmt=()=>[...new Set(C.map(c=>c.t))],gch=t=>[...new Set(C.filter(c=>c.t===t).map(c=>c.c))],gcf=(t,c)=>C.find(x=>x.t===t&&x.c===c);
-  function calc(m,cf,r,h){let rph;if(m.y==='text'){const fr=r-m.sg,ba=Math.max(1,Math.min(16,Math.floor(fr/2))),be=ba<=4?.8:ba<=8?.85:.9,tp=(cf.b/m.ag)*.6*ba*be;rph=(tp*3600/1e6)*(m.op/1e6)*.95;}else{rph=m.bp*(cf.b/m.rb)*(m.pm/1e6)*.95;}const mw=cf.f-cf.i,eph=(mw/1000)*ec;return{n:m.n,mo:(rph-eph)*h*30,yr:((rph-eph)*h*30)*12,mr:rph*h*30,me:eph*h*30};}
+  function calc(m,cf,r,h){let rph;if(m.y==='text'){const fr=r-m.sg,ba=Math.max(1,Math.min(16,Math.floor(fr/2))),be=ba<=4?.8:ba<=8?.85:.9,tp=(cf.b/m.ag)*.6*ba*be;rph=(tp*3600/1e6)*(m.op/1e6);}else{rph=m.bp*(cf.b/m.rb)*(m.pm/1e6);}const mw=cf.f-cf.i,eph=(mw/1000)*ec;return{n:m.n,mo:(rph-eph)*h*30,yr:((rph-eph)*h*30)*12,mr:rph*h*30,me:eph*h*30};}
   function pill(l,a,fn){const b=document.createElement('button');b.textContent=l;Object.assign(b.style,{padding:'7px 14px',borderRadius:'4px',fontSize:'12px',fontWeight:a?'500':'400',fontFamily:'var(--font-mono)',cursor:'pointer',transition:'all .15s',border:'1px solid',outline:'none',letterSpacing:'0.02em',background:a?'var(--black)':'var(--white)',color:a?'var(--white)':'var(--grey-03)',borderColor:a?'var(--black)':'var(--grey-01)'});b.onmouseenter=()=>{if(!a)b.style.borderColor='var(--grey-03)';};b.onmouseleave=()=>{if(!a)b.style.borderColor='var(--grey-01)';};b.onclick=fn;return b;}
   function render(){const cf=gcf(s.t,s.c);if(!cf)return;if(!cf.r.includes(s.r))s.r=cf.r[cf.r.length-1];
     const ms=document.getElementById('mac-sel');ms.innerHTML='';gmt().forEach(t=>ms.appendChild(pill(t,s.t===t,()=>{s.t=t;s.c=gch(t).pop();render();})));
@@ -1433,7 +1433,7 @@ response = client.chat.completions.create(
     document.getElementById('res-grid').style.gridTemplateColumns=(bt&&bi)?'1fr 1fr':'1fr';}
   document.getElementById('hrs-slider').addEventListener('input',e=>{s.h=+e.target.value;document.getElementById('hrs-val').textContent=s.h;render();});
   document.querySelectorAll('.op,.cp').forEach(el=>{const m=el.textContent.trim().match(/^\$?([\d.]+)$/);if(m)el.textContent=fc(+m[1]);});
-  document.querySelectorAll('.pmini .val').forEach(el=>{const r=el.textContent.trim();if(r==='5%')return;const m=r.match(/^\$?([\d.]+)$/);if(m)el.textContent=fc(+m[1],4);});
+  document.querySelectorAll('.pmini .val').forEach(el=>{const r=el.textContent.trim();if(r==='0%')return;const m=r.match(/^\$?([\d.]+)$/);if(m)el.textContent=fc(+m[1],4);});
   document.querySelectorAll('.vs').forEach(el=>{const m=el.textContent.trim().match(/([\w.]+):\s*\$?([\d.]+)/);if(m)el.textContent=m[1]+': '+fc(+m[2],4);});
   render();
 })();

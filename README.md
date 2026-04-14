@@ -178,7 +178,7 @@ Attestation data is publicly verifiable at `GET /v1/providers/attestation`.
 | Image (FLUX.2 Klein 4B) | $0.0015 / image |
 | Audio (Cohere Transcribe) | $0.001 / minute |
 
-5% platform fee. Providers keep 95%.
+0% platform fee. Providers keep 100%.
 
 ## Architecture
 
