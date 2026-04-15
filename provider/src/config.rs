@@ -20,6 +20,10 @@ fn default_idle_timeout_mins() -> u64 {
     60
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProviderConfig {
     pub provider: ProviderSettings,
@@ -33,6 +37,8 @@ pub struct ProviderConfig {
 pub struct ProviderSettings {
     pub name: String,
     pub memory_reserve_gb: u64,
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +74,7 @@ impl ProviderConfig {
             provider: ProviderSettings {
                 name,
                 memory_reserve_gb: 4,
+                auto_update: true,
             },
             backend: BackendSettings {
                 port: 8100,
@@ -378,6 +385,7 @@ heartbeat_interval_secs = 30
             provider: ProviderSettings {
                 name: "test-provider".to_string(),
                 memory_reserve_gb: 8,
+                auto_update: true,
             },
             backend: BackendSettings {
                 port: 9000,
@@ -396,5 +404,58 @@ heartbeat_interval_secs = 30
         save(&path, &config).unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(config, loaded);
+    }
+
+    #[test]
+    fn test_auto_update_defaults_to_true() {
+        let hw = sample_hardware();
+        let config = ProviderConfig::default_for_hardware(&hw);
+        assert!(config.provider.auto_update);
+    }
+
+    #[test]
+    fn test_auto_update_persists_through_save_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("provider.toml");
+
+        let hw = sample_hardware();
+        let mut config = ProviderConfig::default_for_hardware(&hw);
+        assert!(config.provider.auto_update);
+
+        // Disable and save
+        config.provider.auto_update = false;
+        save(&path, &config).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(!loaded.provider.auto_update);
+
+        // Re-enable and save
+        let mut config2 = loaded;
+        config2.provider.auto_update = true;
+        save(&path, &config2).unwrap();
+        let loaded2 = load(&path).unwrap();
+        assert!(loaded2.provider.auto_update);
+    }
+
+    #[test]
+    fn test_auto_update_backward_compat_missing_field() {
+        // Old config files won't have auto_update — should default to true
+        let toml_str = r#"
+[provider]
+name = "old-provider"
+memory_reserve_gb = 4
+
+[backend]
+port = 8100
+continuous_batching = true
+
+[coordinator]
+url = "ws://localhost:8080/ws/provider"
+heartbeat_interval_secs = 30
+"#;
+        let config: ProviderConfig = toml::from_str(toml_str).unwrap();
+        assert!(
+            config.provider.auto_update,
+            "missing field should default to true"
+        );
     }
 }

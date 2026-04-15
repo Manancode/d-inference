@@ -1496,6 +1496,13 @@ enum Command {
 
     /// Unlink this machine from your account
     Logout,
+
+    /// Enable or disable automatic updates (e.g. `darkbloom autoupdate enable`)
+    #[command(name = "autoupdate")]
+    AutoUpdate {
+        /// "enable" or "disable"
+        action: String,
+    },
 }
 
 fn setup_logging(verbose: bool) {
@@ -1600,6 +1607,7 @@ async fn main() -> Result<()> {
         Command::Update { coordinator, force } => cmd_update(coordinator, force).await,
         Command::Login { coordinator } => cmd_login(coordinator).await,
         Command::Logout => cmd_logout().await,
+        Command::AutoUpdate { action } => cmd_autoupdate(&action).await,
     }
 }
 
@@ -2916,8 +2924,10 @@ async fn cmd_serve(
 
     // =========================================================================
     // Auto-update: periodically check for new versions and self-update.
+    // CLI --no-auto-update overrides config; config default is true.
     // =========================================================================
-    if auto_update && !local {
+    let auto_update_enabled = auto_update && cfg.provider.auto_update;
+    if auto_update_enabled && !local {
         let update_coordinator = coordinator_http_base.clone();
         tokio::spawn(async move {
             // Wait 5 minutes before the first check so startup completes cleanly.
@@ -6410,6 +6420,67 @@ async fn cmd_logout() -> Result<()> {
     delete_auth_token()?;
     println!("Logged out. This machine is no longer linked to an account.");
     println!("Provider earnings will use the local wallet until you log in again.");
+    Ok(())
+}
+
+async fn cmd_autoupdate(action: &str) -> Result<()> {
+    let config_path = config::default_config_path()?;
+    let mut cfg = if config_path.exists() {
+        config::load(&config_path)?
+    } else {
+        let hw = crate::hardware::detect()?;
+        config::ProviderConfig::default_for_hardware(&hw)
+    };
+
+    match action {
+        "enable" => {
+            cfg.provider.auto_update = true;
+            config::save(&config_path, &cfg)?;
+            println!("Auto-update enabled.");
+            println!(
+                "The provider will check for updates every 30 minutes and install them automatically."
+            );
+
+            // If the service is running, restart it so the setting takes effect.
+            if service::is_loaded() {
+                println!("Restarting provider to apply...");
+                let uid = unsafe { libc::getuid() };
+                let target = format!("gui/{uid}/io.darkbloom.provider");
+                let _ = std::process::Command::new("launchctl")
+                    .args(["kickstart", "-k", &target])
+                    .output();
+                println!("Provider restarted.");
+            }
+        }
+        "disable" => {
+            cfg.provider.auto_update = false;
+            config::save(&config_path, &cfg)?;
+            println!("Auto-update disabled.");
+            println!("Run `darkbloom update` to manually check for updates.");
+
+            if service::is_loaded() {
+                println!("Restarting provider to apply...");
+                let uid = unsafe { libc::getuid() };
+                let target = format!("gui/{uid}/io.darkbloom.provider");
+                let _ = std::process::Command::new("launchctl")
+                    .args(["kickstart", "-k", &target])
+                    .output();
+                println!("Provider restarted.");
+            }
+        }
+        "status" => {
+            let enabled = cfg.provider.auto_update;
+            println!(
+                "Auto-update: {}",
+                if enabled { "enabled" } else { "disabled" }
+            );
+        }
+        _ => {
+            println!("Usage: darkbloom autoupdate <enable|disable|status>");
+            std::process::exit(1);
+        }
+    }
+
     Ok(())
 }
 
