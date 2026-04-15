@@ -446,27 +446,31 @@ type BillingSession struct {
 // ProviderRecord is the persistent representation of a provider for storage.
 // Transient fields (WebSocket conn, pending requests, system metrics) are NOT persisted.
 type ProviderRecord struct {
-	ID                    string          `json:"id"`
-	Hardware              json.RawMessage `json:"hardware"`
-	Models                json.RawMessage `json:"models"`
-	Backend               string          `json:"backend"`
-	TrustLevel            string          `json:"trust_level"`
-	Attested              bool            `json:"attested"`
-	AttestationResult     json.RawMessage `json:"attestation_result,omitempty"`
-	SEPublicKey           string          `json:"se_public_key,omitempty"`
-	SerialNumber          string          `json:"serial_number,omitempty"`
-	MDAVerified           bool            `json:"mda_verified"`
-	MDACertChain          json.RawMessage `json:"mda_cert_chain,omitempty"`
-	ACMEVerified          bool            `json:"acme_verified"`
-	Version               string          `json:"version,omitempty"`
-	RuntimeVerified       bool            `json:"runtime_verified"`
-	PythonHash            string          `json:"python_hash,omitempty"`
-	RuntimeHash           string          `json:"runtime_hash,omitempty"`
-	LastChallengeVerified *time.Time      `json:"last_challenge_verified,omitempty"`
-	FailedChallenges      int             `json:"failed_challenges"`
-	AccountID             string          `json:"account_id,omitempty"`
-	RegisteredAt          time.Time       `json:"registered_at"`
-	LastSeen              time.Time       `json:"last_seen"`
+	ID                         string          `json:"id"`
+	Hardware                   json.RawMessage `json:"hardware"`
+	Models                     json.RawMessage `json:"models"`
+	Backend                    string          `json:"backend"`
+	TrustLevel                 string          `json:"trust_level"`
+	Attested                   bool            `json:"attested"`
+	AttestationResult          json.RawMessage `json:"attestation_result,omitempty"`
+	SEPublicKey                string          `json:"se_public_key,omitempty"`
+	SerialNumber               string          `json:"serial_number,omitempty"`
+	MDAVerified                bool            `json:"mda_verified"`
+	MDACertChain               json.RawMessage `json:"mda_cert_chain,omitempty"`
+	ACMEVerified               bool            `json:"acme_verified"`
+	Version                    string          `json:"version,omitempty"`
+	RuntimeVerified            bool            `json:"runtime_verified"`
+	PythonHash                 string          `json:"python_hash,omitempty"`
+	RuntimeHash                string          `json:"runtime_hash,omitempty"`
+	LastChallengeVerified      *time.Time      `json:"last_challenge_verified,omitempty"`
+	FailedChallenges           int             `json:"failed_challenges"`
+	AccountID                  string          `json:"account_id,omitempty"`
+	LifetimeRequestsServed     int64           `json:"lifetime_requests_served"`
+	LifetimeTokensGenerated    int64           `json:"lifetime_tokens_generated"`
+	LastSessionRequestsServed  int64           `json:"last_session_requests_served"`
+	LastSessionTokensGenerated int64           `json:"last_session_tokens_generated"`
+	RegisteredAt               time.Time       `json:"registered_at"`
+	LastSeen                   time.Time       `json:"last_seen"`
 }
 
 // ReputationRecord is the persistent representation of a provider's reputation.

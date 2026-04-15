@@ -11,6 +11,7 @@ import (
 
 	"github.com/eigeninference/coordinator/internal/attestation"
 	"github.com/eigeninference/coordinator/internal/protocol"
+	"github.com/eigeninference/coordinator/internal/store"
 )
 
 func testLogger() *slog.Logger {
@@ -91,6 +92,61 @@ func TestHeartbeat(t *testing.T) {
 	}
 	if p.Stats.TokensGenerated != 1000 {
 		t.Errorf("tokens_generated = %d, want 1000", p.Stats.TokensGenerated)
+	}
+}
+
+func TestHeartbeatAccumulatesAcrossRestarts(t *testing.T) {
+	reg := New(testLogger())
+	msg := testRegisterMessage()
+	p := reg.Register("p1", nil, msg)
+
+	reg.RestoreProviderState(p, &store.ProviderRecord{
+		ID:                         "persisted-p1",
+		TrustLevel:                 string(TrustHardware),
+		Attested:                   true,
+		LifetimeRequestsServed:     100,
+		LifetimeTokensGenerated:    2000,
+		LastSessionRequestsServed:  100,
+		LastSessionTokensGenerated: 2000,
+	})
+
+	reg.Heartbeat("p1", &protocol.HeartbeatMessage{
+		Type:   protocol.TypeHeartbeat,
+		Status: "idle",
+		Stats:  protocol.HeartbeatStats{RequestsServed: 100, TokensGenerated: 2000},
+	})
+
+	if p.Stats.RequestsServed != 100 {
+		t.Fatalf("requests_served after coordinator restart = %d, want 100", p.Stats.RequestsServed)
+	}
+	if p.Stats.TokensGenerated != 2000 {
+		t.Fatalf("tokens_generated after coordinator restart = %d, want 2000", p.Stats.TokensGenerated)
+	}
+
+	reg.Heartbeat("p1", &protocol.HeartbeatMessage{
+		Type:   protocol.TypeHeartbeat,
+		Status: "idle",
+		Stats:  protocol.HeartbeatStats{RequestsServed: 105, TokensGenerated: 2300},
+	})
+
+	if p.Stats.RequestsServed != 105 {
+		t.Fatalf("requests_served after new work = %d, want 105", p.Stats.RequestsServed)
+	}
+	if p.Stats.TokensGenerated != 2300 {
+		t.Fatalf("tokens_generated after new work = %d, want 2300", p.Stats.TokensGenerated)
+	}
+
+	reg.Heartbeat("p1", &protocol.HeartbeatMessage{
+		Type:   protocol.TypeHeartbeat,
+		Status: "idle",
+		Stats:  protocol.HeartbeatStats{RequestsServed: 2, TokensGenerated: 40},
+	})
+
+	if p.Stats.RequestsServed != 107 {
+		t.Fatalf("requests_served after provider restart = %d, want 107", p.Stats.RequestsServed)
+	}
+	if p.Stats.TokensGenerated != 2340 {
+		t.Fatalf("tokens_generated after provider restart = %d, want 2340", p.Stats.TokensGenerated)
 	}
 }
 

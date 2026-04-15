@@ -103,7 +103,8 @@ type Provider struct {
 	Status            ProviderStatus
 	Conn              *websocket.Conn
 	LastHeartbeat     time.Time
-	Stats             protocol.HeartbeatStats
+	Stats             protocol.HeartbeatStats // lifetime counters shown to users
+	lastSessionStats  protocol.HeartbeatStats // raw counters from the current provider process
 
 	// Account linkage (set when provider authenticates via device auth token)
 	AccountID string // internal account ID (from device auth flow)
@@ -352,6 +353,17 @@ func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) 
 		p.AccountID = rec.AccountID
 	}
 
+	// Restore lifetime counters and the last raw session counters so future
+	// heartbeats can merge cleanly after coordinator or provider restarts.
+	p.Stats = protocol.HeartbeatStats{
+		RequestsServed:  rec.LifetimeRequestsServed,
+		TokensGenerated: rec.LifetimeTokensGenerated,
+	}
+	p.lastSessionStats = protocol.HeartbeatStats{
+		RequestsServed:  rec.LastSessionRequestsServed,
+		TokensGenerated: rec.LastSessionTokensGenerated,
+	}
+
 	// Restore reputation from store
 	if r.store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -417,27 +429,31 @@ func (r *Registry) persistProvider(p *Provider) {
 		}
 
 		rec := store.ProviderRecord{
-			ID:                    p.ID,
-			Hardware:              hardwareJSON,
-			Models:                modelsJSON,
-			Backend:               p.Backend,
-			TrustLevel:            string(p.TrustLevel),
-			Attested:              p.Attested,
-			AttestationResult:     attestJSON,
-			SEPublicKey:           seKey,
-			SerialNumber:          serial,
-			MDAVerified:           p.MDAVerified,
-			MDACertChain:          mdaCertJSON,
-			ACMEVerified:          p.ACMEVerified,
-			Version:               p.Version,
-			RuntimeVerified:       p.RuntimeVerified,
-			PythonHash:            p.PythonHash,
-			RuntimeHash:           p.RuntimeHash,
-			LastChallengeVerified: lastChallenge,
-			FailedChallenges:      p.FailedChallenges,
-			AccountID:             p.AccountID,
-			RegisteredAt:          time.Now(),
-			LastSeen:              time.Now(),
+			ID:                         p.ID,
+			Hardware:                   hardwareJSON,
+			Models:                     modelsJSON,
+			Backend:                    p.Backend,
+			TrustLevel:                 string(p.TrustLevel),
+			Attested:                   p.Attested,
+			AttestationResult:          attestJSON,
+			SEPublicKey:                seKey,
+			SerialNumber:               serial,
+			MDAVerified:                p.MDAVerified,
+			MDACertChain:               mdaCertJSON,
+			ACMEVerified:               p.ACMEVerified,
+			Version:                    p.Version,
+			RuntimeVerified:            p.RuntimeVerified,
+			PythonHash:                 p.PythonHash,
+			RuntimeHash:                p.RuntimeHash,
+			LastChallengeVerified:      lastChallenge,
+			FailedChallenges:           p.FailedChallenges,
+			AccountID:                  p.AccountID,
+			LifetimeRequestsServed:     p.Stats.RequestsServed,
+			LifetimeTokensGenerated:    p.Stats.TokensGenerated,
+			LastSessionRequestsServed:  p.lastSessionStats.RequestsServed,
+			LastSessionTokensGenerated: p.lastSessionStats.TokensGenerated,
+			RegisteredAt:               time.Now(),
+			LastSeen:                   time.Now(),
 		}
 		p.mu.Unlock()
 
@@ -682,7 +698,9 @@ func (r *Registry) Heartbeat(id string, msg *protocol.HeartbeatMessage) {
 
 	p.mu.Lock()
 	p.LastHeartbeat = time.Now()
-	p.Stats = msg.Stats
+	p.Stats.RequestsServed += cumulativeDelta(p.lastSessionStats.RequestsServed, msg.Stats.RequestsServed)
+	p.Stats.TokensGenerated += cumulativeDelta(p.lastSessionStats.TokensGenerated, msg.Stats.TokensGenerated)
+	p.lastSessionStats = msg.Stats
 	p.SystemMetrics = msg.SystemMetrics
 	// Update backend capacity from heartbeat (nil-safe for old providers).
 	if msg.BackendCapacity != nil {
@@ -707,10 +725,23 @@ func (r *Registry) Heartbeat(id string, msg *protocol.HeartbeatMessage) {
 	}
 	p.mu.Unlock()
 
+	r.PersistProvider(p)
+
 	// Heartbeats can make a recovered slot routable again (for example after a
 	// crash auto-restart). Drain matching queues using the canonical scheduler
 	// rather than the legacy direct queue assignment path.
 	r.drainQueuedRequestsForModels(providerModelIDs(p))
+}
+
+func cumulativeDelta(previous, current int64) int64 {
+	if current <= 0 {
+		return 0
+	}
+	if current >= previous {
+		return current - previous
+	}
+	// The provider process restarted and reset its in-memory counters.
+	return current
 }
 
 // Disconnect removes a provider from the registry and cleans up pending requests.

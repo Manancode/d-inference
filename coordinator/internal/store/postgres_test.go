@@ -213,3 +213,46 @@ func TestPostgresStoreImplementsInterface(t *testing.T) {
 
 	var _ Store = s
 }
+
+func TestPostgresProviderRecordStatsPersisted(t *testing.T) {
+	s := testPostgresStore(t)
+
+	rec := ProviderRecord{
+		ID:                         "provider-1",
+		Hardware:                   []byte(`{"chip":"M4 Max"}`),
+		Models:                     []byte(`["model-a"]`),
+		Backend:                    "vllm_mlx",
+		TrustLevel:                 "hardware",
+		Attested:                   true,
+		SEPublicKey:                "se-key",
+		SerialNumber:               "serial-1",
+		LifetimeRequestsServed:     42,
+		LifetimeTokensGenerated:    1234,
+		LastSessionRequestsServed:  7,
+		LastSessionTokensGenerated: 222,
+		RegisteredAt:               time.Now(),
+		LastSeen:                   time.Now(),
+	}
+
+	if err := s.UpsertProvider(context.Background(), rec); err != nil {
+		t.Fatalf("UpsertProvider: %v", err)
+	}
+
+	got, err := s.GetProviderRecord(context.Background(), "provider-1")
+	if err != nil {
+		t.Fatalf("GetProviderRecord: %v", err)
+	}
+
+	if got.LifetimeRequestsServed != rec.LifetimeRequestsServed {
+		t.Errorf("lifetime_requests_served = %d, want %d", got.LifetimeRequestsServed, rec.LifetimeRequestsServed)
+	}
+	if got.LifetimeTokensGenerated != rec.LifetimeTokensGenerated {
+		t.Errorf("lifetime_tokens_generated = %d, want %d", got.LifetimeTokensGenerated, rec.LifetimeTokensGenerated)
+	}
+	if got.LastSessionRequestsServed != rec.LastSessionRequestsServed {
+		t.Errorf("last_session_requests_served = %d, want %d", got.LastSessionRequestsServed, rec.LastSessionRequestsServed)
+	}
+	if got.LastSessionTokensGenerated != rec.LastSessionTokensGenerated {
+		t.Errorf("last_session_tokens_generated = %d, want %d", got.LastSessionTokensGenerated, rec.LastSessionTokensGenerated)
+	}
+}
