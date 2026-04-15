@@ -1,20 +1,19 @@
 //! omlx inference backend integration.
 //!
-//! omlx is an alternative MLX-based inference engine for Apple Silicon that
-//! serves multiple models from a directory simultaneously with continuous
-//! batching and tiered KV caching. It exposes an OpenAI-compatible HTTP API.
+//! omlx is a Python-based MLX inference engine for Apple Silicon that serves
+//! multiple models from a directory simultaneously with continuous batching
+//! and tiered KV caching. It exposes an OpenAI-compatible HTTP API.
+//! Install with: `pip install omlx` or `brew install omlx`.
 //!
 //! Unlike vllm-mlx (one process per model), omlx is a single server that
 //! manages a whole model directory:
 //!
 //!   omlx serve --model-dir <dir>
 //!
-//! The port defaults to 8000 and can be overridden via the `OMLX_PORT`
-//! environment variable or (if supported) a `--port` CLI flag.
+//! The port defaults to 8000 and is overridden via the `OMLX_PORT` env var.
 //!
-//! The `model_dir` should be organized as `<owner>/<model-name>/` subdirectories
-//! (two-level layout, same as the HuggingFace hub `models--<org>--<name>/` cache
-//! unpacked structure, or a flat directory of model folders).
+//! The `model_dir` should contain model subdirectories in a flat or two-level
+//! `<owner>/<model-name>/` layout.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -81,7 +80,7 @@ impl Backend for OmlxBackend {
 
         if !binary_exists("omlx") {
             anyhow::bail!(
-                "omlx binary not found on PATH. Install it from https://github.com/jundot/omlx"
+                "omlx not found on PATH. Install it with: pip install omlx  (or: brew install omlx)"
             );
         }
 

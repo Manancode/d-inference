@@ -3781,7 +3781,7 @@ fn spawn_inference_backend(
     model: &str,
     port: u16,
 ) -> std::io::Result<u32> {
-    // omlx is a standalone binary, not a Python module.
+    // omlx is a pip-installed CLI script, not a python -m module.
     if module == "omlx.server" {
         let mut child = tokio::process::Command::new("omlx")
             .args(["serve", model, "--port", &port.to_string()])
