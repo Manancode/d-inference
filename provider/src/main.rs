@@ -1367,12 +1367,12 @@ enum Command {
         #[arg(long)]
         all_models: bool,
 
-        /// Image model to serve (e.g. "flux-klein-4b")
-        #[arg(long)]
+        /// Image model to serve — currently disabled
+        #[arg(long, hide = true)]
         image_model: Option<String>,
 
-        /// Path to the image model directory for gRPCServerCLI
-        #[arg(long)]
+        /// Path to the image model directory — currently disabled
+        #[arg(long, hide = true)]
         image_model_path: Option<String>,
 
         /// Minutes of inactivity before backend shuts down to free GPU memory (0 = never)
@@ -1450,12 +1450,12 @@ enum Command {
         #[arg(long)]
         model: Option<String>,
 
-        /// Image model to serve (e.g. "flux-klein-4b")
-        #[arg(long)]
+        /// Image model to serve — currently disabled
+        #[arg(long, hide = true)]
         image_model: Option<String>,
 
-        /// Path to the image model directory for gRPCServerCLI
-        #[arg(long)]
+        /// Path to the image model directory — currently disabled
+        #[arg(long, hide = true)]
         image_model_path: Option<String>,
 
         /// Minutes of inactivity before backend shuts down to free GPU memory (0 = never)
@@ -1551,19 +1551,8 @@ async fn main() -> Result<()> {
             idle_timeout,
             no_auto_update,
         } => {
-            // CLI flags override env vars for image model
-            if let Some(ref im) = image_model {
-                // SAFETY: single-threaded at this point, before tokio runtime starts
-                unsafe {
-                    std::env::set_var("EIGENINFERENCE_IMAGE_MODEL", im);
-                    std::env::set_var("EIGENINFERENCE_IMAGE_MODEL_ID", im);
-                }
-            }
-            if let Some(ref imp) = image_model_path {
-                unsafe {
-                    std::env::set_var("EIGENINFERENCE_IMAGE_MODEL_PATH", imp);
-                }
-            }
+            // Image generation disabled — ignore image_model/image_model_path args
+            let _ = (&image_model, &image_model_path);
             cmd_serve(
                 local,
                 coordinator,
@@ -1593,14 +1582,9 @@ async fn main() -> Result<()> {
             image_model_path,
             idle_timeout,
         } => {
-            cmd_start(
-                coordinator,
-                model,
-                image_model,
-                image_model_path,
-                idle_timeout,
-            )
-            .await
+            // Image generation disabled — pass None for image args
+            let _ = (&image_model, &image_model_path);
+            cmd_start(coordinator, model, None, None, idle_timeout).await
         }
         Command::Stop => cmd_stop().await,
         Command::Logs { lines, watch } => cmd_logs(lines, watch).await,
@@ -2417,41 +2401,13 @@ async fn cmd_serve(
         }
     };
 
-    // Image model env vars (needed for both advertising and backend startup)
+    // Image generation disabled — ignore image env vars entirely.
+    // Keep variables defined as empty so downstream code compiles without changes.
     let image_port = stt_port + 1;
-    let image_model = std::env::var("EIGENINFERENCE_IMAGE_MODEL").unwrap_or_default();
-    let image_model_id =
-        std::env::var("EIGENINFERENCE_IMAGE_MODEL_ID").unwrap_or_else(|_| image_model.clone());
-    let image_model_path_raw = std::env::var("EIGENINFERENCE_IMAGE_MODEL_PATH").unwrap_or_default();
-    // Auto-resolve image model path from model ID if not explicitly set.
-    // gRPCServerCLI needs the directory containing the .ckpt files.
-    let image_model_path = if image_model_path_raw.is_empty() && !image_model.is_empty() {
-        models::resolve_local_path(&image_model)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default()
-    } else {
-        image_model_path_raw
-    };
-
-    // STT model is advertised AFTER backend health check (see below).
-    // Do not advertise before confirming the backend is actually running.
-
-    // Advertise image model if configured (backend starts later)
-    let mut image_weight_hash_computed: Option<String> = None;
-    if !image_model.is_empty() && !image_model_id.is_empty() {
-        let image_weight_hash = models::compute_weight_hash(&image_model_id);
-        image_weight_hash_computed = image_weight_hash.clone();
-        advertised_models.push(models::ModelInfo {
-            id: image_model_id.clone(),
-            model_type: Some("image".to_string()),
-            parameters: None,
-            quantization: None,
-            size_bytes: 0,
-            estimated_memory_gb: 8.0,
-            weight_hash: image_weight_hash,
-        });
-        tracing::info!("Advertising image model: {image_model_id}");
-    }
+    let image_model = String::new();
+    let image_model_id = String::new();
+    let image_model_path = String::new();
+    let image_weight_hash_computed: Option<String> = None;
 
     // Set up coordinator state. The actual connection is spawned AFTER backends
     // are loaded so we don't advertise models before we can serve them.
@@ -2897,7 +2853,7 @@ async fn cmd_serve(
             }
         }
     } else {
-        tracing::info!("No image model configured (set EIGENINFERENCE_IMAGE_MODEL to enable)");
+        // Image generation disabled — suppress log message
         false
     };
 
