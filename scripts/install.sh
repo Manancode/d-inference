@@ -94,13 +94,20 @@ echo ""
 echo "  Hash verified ✓"
 
 echo "  Installing binaries..."
-tar xzf /tmp/eigeninference-bundle.tar.gz -C "$BIN_DIR"
-chmod +x "$BIN_DIR/darkbloom" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" "$BIN_DIR/ffmpeg" "$BIN_DIR/stt_server.py" 2>/dev/null || true
-# Move image bridge to the expected location
+tar xzf /tmp/eigeninference-bundle.tar.gz -C "$INSTALL_DIR"
+
+# Migrate older flat bundle layouts into the current install structure.
+[ -f "$INSTALL_DIR/darkbloom" ] && mv -f "$INSTALL_DIR/darkbloom" "$BIN_DIR/darkbloom"
+[ -f "$INSTALL_DIR/eigeninference-enclave" ] && mv -f "$INSTALL_DIR/eigeninference-enclave" "$BIN_DIR/eigeninference-enclave"
+[ -f "$INSTALL_DIR/gRPCServerCLI" ] && mv -f "$INSTALL_DIR/gRPCServerCLI" "$BIN_DIR/gRPCServerCLI"
+[ -f "$INSTALL_DIR/ffmpeg" ] && mv -f "$INSTALL_DIR/ffmpeg" "$BIN_DIR/ffmpeg"
+[ -f "$INSTALL_DIR/stt_server.py" ] && mv -f "$INSTALL_DIR/stt_server.py" "$BIN_DIR/stt_server.py"
 if [ -d "$BIN_DIR/image-bridge" ]; then
     rm -rf "$INSTALL_DIR/image-bridge"
     mv "$BIN_DIR/image-bridge" "$INSTALL_DIR/image-bridge"
 fi
+
+chmod +x "$BIN_DIR/darkbloom" "$BIN_DIR/eigeninference-enclave" "$BIN_DIR/gRPCServerCLI" "$BIN_DIR/ffmpeg" "$BIN_DIR/stt_server.py" 2>/dev/null || true
 rm -f /tmp/eigeninference-bundle.tar.gz
 
 # Verify image pipeline components
@@ -162,7 +169,7 @@ for OLD_DIR in "$HOME/.dginf" "$HOME/.eigeninference"; do
     if [ -d "$OLD_DIR" ] && [ ! -L "$OLD_DIR" ]; then
         echo ""
         echo "  Migrating from $OLD_DIR..."
-        for f in enclave_key.data enclave_e2e_ka.data wallet_key; do
+        for f in enclave_key.data wallet_key; do
             [ -f "$OLD_DIR/$f" ] && cp -n "$OLD_DIR/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
         done
         if [ -d "$OLD_DIR/python" ] && [ ! -d "$INSTALL_DIR/python" ]; then

@@ -1,24 +1,20 @@
 //! NaCl Box encryption primitives for the Darkbloom provider.
 //!
-//! Uses NaCl crypto_box (X25519 + XSalsa20-Poly1305) for cross-language
-//! compatibility with PyNaCl on the consumer side.
+//! Uses NaCl crypto_box (X25519 + XSalsa20-Poly1305) for wire compatibility
+//! with the coordinator.
 //!
-//! The provider's X25519 key pair is derived from the Secure Enclave at
-//! startup via `eigeninference-enclave derive-e2e-key`. The private key exists only
-//! in process memory and is never written to disk. The derivation is
-//! deterministic (same SE chip = same X25519 key), so the public key is
-//! stable across restarts.
-//!
-//! Fallback: if the Secure Enclave is unavailable, the key is loaded from
-//! ~/.darkbloom/node_key (32 bytes, 0600 perms).
+//! The provider's long-term X25519 key is loaded inside the signed provider
+//! process from a non-exportable Secure Enclave P-256 keychain item. The
+//! plaintext X25519 secret only exists in process memory; disk only holds an
+//! ECIES-wrapped blob that requires the Secure Enclave private key to unwrap.
+//! Text mode intentionally refuses any plaintext file-based fallback because
+//! that would break the privacy boundary.
 
 use anyhow::{Context, Result};
 use crypto_box::{
     PublicKey, SalsaBox, SecretKey,
     aead::{Aead, AeadCore, OsRng},
 };
-use std::path::Path;
-
 /// A provider's long-lived X25519 key pair used for E2E encryption.
 pub struct NodeKeyPair {
     secret: SecretKey,
@@ -42,122 +38,48 @@ impl NodeKeyPair {
         Self { secret, public }
     }
 
-    /// Derive the E2E key pair from the Secure Enclave, falling back to file.
+    /// Load the privacy-preserving text E2E key pair.
     ///
-    /// Primary path: calls `eigeninference-enclave derive-e2e-key` which performs ECDH
-    /// inside the SE hardware and returns a deterministic X25519 key. The
-    /// private key never touches disk.
-    ///
-    /// Fallback: loads from `~/.darkbloom/node_key` if the SE is unavailable.
-    pub fn load_or_generate(path: &Path) -> Result<Self> {
-        match Self::from_secure_enclave() {
-            Ok(kp) => {
-                tracing::info!("E2E key derived from Secure Enclave (never on disk)");
-                // Remove any legacy file-based key so it can't be extracted
-                if path.exists() {
-                    let _ = std::fs::remove_file(path);
-                    tracing::info!("Removed legacy E2E key file: {}", path.display());
-                }
-                Ok(kp)
-            }
-            Err(e) => {
-                tracing::warn!("SE E2E key derivation failed ({e}), falling back to file");
-                if path.exists() {
-                    Self::load(path)
-                } else {
-                    let kp = Self::generate();
-                    kp.save(path)?;
-                    Ok(kp)
-                }
-            }
-        }
-    }
-
-    fn from_secure_enclave() -> Result<Self> {
-        let enclave_bin = enclave_binary_path();
-        if !enclave_bin.exists() {
-            anyhow::bail!(
-                "eigeninference-enclave not found at {}",
-                enclave_bin.display()
-            );
-        }
-
-        let output = std::process::Command::new(&enclave_bin)
-            .args(["derive-e2e-key"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .context("failed to run eigeninference-enclave derive-e2e-key")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "eigeninference-enclave derive-e2e-key failed: {}",
-                stderr.trim()
-            );
-        }
-
-        let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("failed to parse derive-e2e-key JSON")?;
-
-        let private_key_b64 = json["private_key"]
-            .as_str()
-            .context("missing 'private_key' in derive-e2e-key output")?;
-
-        use base64::Engine;
-        let key_bytes = base64::engine::general_purpose::STANDARD
-            .decode(private_key_b64)
-            .context("invalid base64 in derived key")?;
-
-        if key_bytes.len() != 32 {
-            anyhow::bail!("derived key is {} bytes, expected 32", key_bytes.len());
-        }
-
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&key_bytes);
-        let secret = SecretKey::from(arr);
-        let public = secret.public_key().clone();
-        Ok(Self { secret, public })
-    }
-
-    /// Load a key pair from a raw 32-byte secret key file.
-    fn load(path: &Path) -> Result<Self> {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("failed to read key from {}", path.display()))?;
-        if bytes.len() != 32 {
-            anyhow::bail!(
-                "invalid key file {}: expected 32 bytes, got {}",
-                path.display(),
-                bytes.len()
-            );
-        }
-        let mut key_bytes = [0u8; 32];
-        key_bytes.copy_from_slice(&bytes);
-        let secret = SecretKey::from(key_bytes);
-        let public = secret.public_key().clone();
-        Ok(Self { secret, public })
-    }
-
-    /// Save the secret key to disk with restrictive permissions (0600).
-    fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-        }
-
-        let secret_bytes = self.secret.to_bytes();
-        std::fs::write(path, secret_bytes)
-            .with_context(|| format!("failed to write key to {}", path.display()))?;
-
-        #[cfg(unix)]
+    /// The root key lives as a non-exportable Secure Enclave keychain item.
+    /// We unwrap the X25519 secret inside this process from the persisted
+    /// Secure Enclave-backed sealed blob and refuse any plaintext disk key
+    /// fallback, because that would let the machine owner recover it.
+    pub fn load_or_generate() -> Result<Self> {
+        #[cfg(target_os = "macos")]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(path, perms)
-                .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+            let secret_bytes = crate::secure_enclave_key::load_or_create_x25519_secret()
+                .context("failed to load Secure Enclave-backed E2E key")?;
+            let secret = SecretKey::from(secret_bytes);
+            let public = secret.public_key().clone();
+            purge_legacy_e2e_files();
+            Ok(Self { secret, public })
         }
 
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        {
+            anyhow::bail!("text E2E keys require macOS Secure Enclave support");
+        }
+    }
+
+    /// Load the existing privacy-preserving text E2E key pair without mutating
+    /// any on-disk or keychain state.
+    pub fn load_existing() -> Result<Option<Self>> {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(secret_bytes) = crate::secure_enclave_key::load_existing_x25519_secret()
+                .context("failed to inspect Secure Enclave-backed E2E key")?
+            else {
+                return Ok(None);
+            };
+            let secret = SecretKey::from(secret_bytes);
+            let public = secret.public_key().clone();
+            Ok(Some(Self { secret, public }))
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            anyhow::bail!("text E2E keys require macOS Secure Enclave support");
+        }
     }
 
     /// Return the public key as a base64-encoded string.
@@ -211,34 +133,55 @@ impl NodeKeyPair {
     }
 }
 
-/// Return the default path for the node key file: ~/.darkbloom/node_key
-pub fn default_key_path() -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir().context("could not determine home directory")?;
-    Ok(home.join(".darkbloom").join("node_key"))
+pub fn delete_persistent_key() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    crate::secure_enclave_key::delete_persistent_key()?;
+
+    purge_legacy_e2e_files();
+    Ok(())
 }
 
-fn enclave_binary_path() -> std::path::PathBuf {
-    let eigeninference_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".darkbloom");
+pub fn legacy_node_key_paths() -> Vec<std::path::PathBuf> {
+    legacy_secret_paths("node_key")
+}
 
-    let bin_path = eigeninference_dir.join("bin/eigeninference-enclave");
-    if bin_path.exists() {
-        return bin_path;
+pub fn legacy_enclave_e2e_key_paths() -> Vec<std::path::PathBuf> {
+    legacy_secret_paths("enclave_e2e_ka.data")
+}
+
+fn purge_legacy_e2e_files() {
+    for path in [
+        legacy_node_key_paths(),
+        legacy_enclave_e2e_key_paths(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|path| path.exists())
+    {
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::info!("Removed legacy E2E secret file: {}", path.display()),
+            Err(err) => tracing::warn!(
+                "Failed to remove legacy E2E secret file {}: {err}",
+                path.display()
+            ),
+        }
     }
+}
 
-    let legacy_path = eigeninference_dir.join("eigeninference-enclave");
-    if legacy_path.exists() {
-        return legacy_path;
-    }
-
-    bin_path
+fn legacy_secret_paths(file_name: &str) -> Vec<std::path::PathBuf> {
+    dirs::home_dir()
+        .map(|home| {
+            [".darkbloom", ".dginf", ".eigeninference"]
+                .into_iter()
+                .map(|dir| home.join(dir).join(file_name))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn test_generate_key_pair() {
@@ -248,74 +191,6 @@ mod tests {
 
         // Base64 of 32 bytes should be 44 chars (with padding)
         assert_eq!(pk_b64.len(), 44);
-    }
-
-    #[test]
-    fn test_save_and_load() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("node_key");
-
-        let kp = NodeKeyPair::generate();
-        kp.save(&path).unwrap();
-
-        assert!(path.exists());
-
-        // Check permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let meta = std::fs::metadata(&path).unwrap();
-            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
-        }
-
-        let loaded = NodeKeyPair::load(&path).unwrap();
-        assert_eq!(
-            kp.public_key_base64(),
-            loaded.public_key_base64(),
-            "loaded key should match saved key"
-        );
-    }
-
-    #[test]
-    fn test_load_or_generate_creates_new() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("node_key");
-
-        assert!(!path.exists());
-        let kp = NodeKeyPair::load_or_generate(&path).unwrap();
-        assert!(path.exists());
-
-        // Load again should return the same key
-        let kp2 = NodeKeyPair::load_or_generate(&path).unwrap();
-        assert_eq!(kp.public_key_base64(), kp2.public_key_base64());
-    }
-
-    #[test]
-    fn test_load_or_generate_loads_existing() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("node_key");
-
-        let kp1 = NodeKeyPair::generate();
-        kp1.save(&path).unwrap();
-
-        let kp2 = NodeKeyPair::load_or_generate(&path).unwrap();
-        assert_eq!(kp1.public_key_base64(), kp2.public_key_base64());
-    }
-
-    #[test]
-    fn test_load_invalid_file() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("bad_key");
-        std::fs::write(&path, b"too short").unwrap();
-
-        let result = NodeKeyPair::load(&path);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("expected 32 bytes")
-        );
     }
 
     #[test]

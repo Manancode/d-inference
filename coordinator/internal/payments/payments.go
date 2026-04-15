@@ -12,7 +12,7 @@
 // to USDC's 6-decimal on-chain representation.
 //
 // The Ledger wraps a Store for balance persistence and adds in-memory tracking
-// of per-consumer usage history and pending provider payouts.
+// of per-consumer usage history.
 package payments
 
 import (
@@ -23,15 +23,8 @@ import (
 	"github.com/eigeninference/coordinator/internal/store"
 )
 
-// Payout represents a pending payment obligation to a provider.
-type Payout struct {
-	ProviderAddress string    `json:"provider_address"`
-	AmountMicroUSD  int64     `json:"amount_micro_usd"`
-	Model           string    `json:"model"`
-	JobID           string    `json:"job_id"`
-	Timestamp       time.Time `json:"timestamp"`
-	Settled         bool      `json:"settled"`
-}
+// Payout is the persisted provider wallet payout record.
+type Payout = store.ProviderPayout
 
 // UsageEntry records a single inference charge for usage history.
 type UsageEntry struct {
@@ -51,17 +44,13 @@ type Ledger struct {
 
 	// in-memory usage log per consumer (keyed by consumer ID)
 	usage map[string][]UsageEntry
-
-	// pending payouts to providers (settled on-chain when ready)
-	pendingPayouts []Payout
 }
 
 // NewLedger creates a new Ledger backed by the given Store.
 func NewLedger(s store.Store) *Ledger {
 	return &Ledger{
-		store:          s,
-		usage:          make(map[string][]UsageEntry),
-		pendingPayouts: make([]Payout, 0),
+		store: s,
+		usage: make(map[string][]UsageEntry),
 	}
 }
 
@@ -87,14 +76,8 @@ func (l *Ledger) LedgerHistory(consumerID string) []store.LedgerEntry {
 }
 
 // CreditProvider records a pending payout to a provider.
-func (l *Ledger) CreditProvider(providerAddr string, amountMicroUSD int64, model, jobID string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// Credit provider balance in the store
-	_ = l.store.Credit(providerAddr, amountMicroUSD, store.LedgerPayout, jobID)
-
-	l.pendingPayouts = append(l.pendingPayouts, Payout{
+func (l *Ledger) CreditProvider(providerAddr string, amountMicroUSD int64, model, jobID string) error {
+	return l.store.CreditProviderWallet(&store.ProviderPayout{
 		ProviderAddress: providerAddr,
 		AmountMicroUSD:  amountMicroUSD,
 		Model:           model,
@@ -127,11 +110,13 @@ func (l *Ledger) Usage(consumerID string) []UsageEntry {
 
 // PendingPayouts returns a copy of all unsettled payouts.
 func (l *Ledger) PendingPayouts() []Payout {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+	payouts, err := l.store.ListProviderPayouts()
+	if err != nil {
+		return []Payout{}
+	}
 
 	var out []Payout
-	for _, p := range l.pendingPayouts {
+	for _, p := range payouts {
 		if !p.Settled {
 			out = append(out, p)
 		}
@@ -144,25 +129,24 @@ func (l *Ledger) PendingPayouts() []Payout {
 
 // AllPayouts returns a copy of all payouts (settled and unsettled).
 func (l *Ledger) AllPayouts() []Payout {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	out := make([]Payout, len(l.pendingPayouts))
-	copy(out, l.pendingPayouts)
-	return out
+	payouts, err := l.store.ListProviderPayouts()
+	if err != nil {
+		return []Payout{}
+	}
+	return payouts
 }
 
 // SettlePayout marks the payout at the given index as settled.
 func (l *Ledger) SettlePayout(index int) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if index < 0 || index >= len(l.pendingPayouts) {
-		return fmt.Errorf("payout index %d out of range (have %d payouts)", index, len(l.pendingPayouts))
+	payouts, err := l.store.ListProviderPayouts()
+	if err != nil {
+		return fmt.Errorf("list payouts: %w", err)
 	}
-	if l.pendingPayouts[index].Settled {
+	if index < 0 || index >= len(payouts) {
+		return fmt.Errorf("payout index %d out of range (have %d payouts)", index, len(payouts))
+	}
+	if payouts[index].Settled {
 		return fmt.Errorf("payout at index %d is already settled", index)
 	}
-	l.pendingPayouts[index].Settled = true
-	return nil
+	return l.store.SettleProviderPayout(payouts[index].ID)
 }

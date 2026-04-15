@@ -76,7 +76,7 @@ app/EigenInference/   Swift — macOS menu bar app (SwiftUI)
 enclave/              Swift — Secure Enclave attestation CLI helper
 ├── Sources/
 │   ├── EigenInferenceEnclave/     Library (P-256 key gen, attestation blob, FFI bridge for Rust)
-│   └── EigenInferenceEnclaveCLI/  CLI tool (attest, sign, derive-e2e-key, info, wallet-address)
+│   └── EigenInferenceEnclaveCLI/  CLI tool (attest, sign, info, wallet-address)
 ├── Tests/EigenInferenceEnclaveTests/
 └── include/eigeninference_enclave.h
 

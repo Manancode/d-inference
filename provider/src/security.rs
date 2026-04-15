@@ -28,7 +28,7 @@ use std::process::Command;
 ///
 /// Must be called early in process startup, before any sensitive data
 /// is loaded.
-pub fn deny_debugger_attachment() {
+pub fn deny_debugger_attachment() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         // PT_DENY_ATTACH = 31 on macOS
@@ -37,16 +37,19 @@ pub fn deny_debugger_attachment() {
             unsafe { libc::ptrace(PT_DENY_ATTACH, 0, std::ptr::null_mut::<libc::c_char>(), 0) };
         if result == 0 {
             tracing::info!("Anti-debug: PT_DENY_ATTACH enabled — debugger attachment blocked");
+            return Ok(());
         } else {
-            // This can fail if a debugger is already attached (e.g., during development)
             let err = std::io::Error::last_os_error();
-            tracing::warn!("Anti-debug: PT_DENY_ATTACH failed (debugger attached?): {err}");
+            return Err(format!(
+                "PT_DENY_ATTACH failed; refusing to continue without anti-debug protection: {err}"
+            ));
         }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         tracing::debug!("Anti-debug: PT_DENY_ATTACH not available on this platform");
+        Ok(())
     }
 }
 

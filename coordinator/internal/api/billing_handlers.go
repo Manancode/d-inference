@@ -967,7 +967,7 @@ func (s *Server) handleMockDeposit(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleNodeEarnings handles GET /v1/provider/node-earnings?provider_key=<key>&limit=50.
-// Returns per-node earnings for a specific provider identified by its X25519 public key.
+// Returns recent per-node earnings history plus lifetime aggregates for the node.
 func (s *Server) handleNodeEarnings(w http.ResponseWriter, r *http.Request) {
 	providerKey := r.URL.Query().Get("provider_key")
 	if providerKey == "" {
@@ -992,22 +992,27 @@ func (s *Server) handleNodeEarnings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var totalMicroUSD int64
-	for _, e := range earnings {
-		totalMicroUSD += e.AmountMicroUSD
+	summary, err := s.store.GetProviderEarningsSummary(providerKey)
+	if err != nil {
+		s.logger.Error("get provider earnings summary failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to fetch earnings summary"))
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"provider_key":    providerKey,
 		"earnings":        earnings,
-		"total_micro_usd": totalMicroUSD,
-		"total_usd":       fmt.Sprintf("%.6f", float64(totalMicroUSD)/1_000_000),
-		"count":           len(earnings),
+		"total_micro_usd": summary.TotalMicroUSD,
+		"total_usd":       fmt.Sprintf("%.6f", float64(summary.TotalMicroUSD)/1_000_000),
+		"count":           summary.Count,
+		"recent_count":    len(earnings),
+		"history_limit":   limit,
 	})
 }
 
 // handleAccountEarnings handles GET /v1/provider/account-earnings?limit=50.
-// Returns all earnings across all provider nodes for the authenticated account.
+// Returns recent earnings history, lifetime aggregates, and current account balance
+// for the authenticated provider account.
 func (s *Server) handleAccountEarnings(w http.ResponseWriter, r *http.Request) {
 	accountID := s.resolveAccountID(r)
 
@@ -1028,16 +1033,24 @@ func (s *Server) handleAccountEarnings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var totalMicroUSD int64
-	for _, e := range earnings {
-		totalMicroUSD += e.AmountMicroUSD
+	summary, err := s.store.GetAccountEarningsSummary(accountID)
+	if err != nil {
+		s.logger.Error("get account earnings summary failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to fetch earnings summary"))
+		return
 	}
 
+	availableBalance := s.store.GetBalance(accountID)
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"account_id":      accountID,
-		"earnings":        earnings,
-		"total_micro_usd": totalMicroUSD,
-		"total_usd":       fmt.Sprintf("%.6f", float64(totalMicroUSD)/1_000_000),
-		"count":           len(earnings),
+		"account_id":                  accountID,
+		"earnings":                    earnings,
+		"total_micro_usd":             summary.TotalMicroUSD,
+		"total_usd":                   fmt.Sprintf("%.6f", float64(summary.TotalMicroUSD)/1_000_000),
+		"count":                       summary.Count,
+		"recent_count":                len(earnings),
+		"history_limit":               limit,
+		"available_balance_micro_usd": availableBalance,
+		"available_balance_usd":       fmt.Sprintf("%.6f", float64(availableBalance)/1_000_000),
 	})
 }

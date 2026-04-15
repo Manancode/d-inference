@@ -83,7 +83,7 @@ app/EigenInference/            SwiftUI macOS menu bar app
 
 enclave/              Swift Secure Enclave helper + bridge binary
 ├── Sources/EigenInferenceEnclave/      enclave key + attestation library + FFI bridge
-├── Sources/EigenInferenceEnclaveCLI/   `eigeninference-enclave` CLI (attest, sign, derive-e2e-key, info)
+├── Sources/EigenInferenceEnclaveCLI/   `eigeninference-enclave` CLI (attest, sign, info)
 ├── Tests/EigenInferenceEnclaveTests/
 └── include/eigeninference_enclave.h
 

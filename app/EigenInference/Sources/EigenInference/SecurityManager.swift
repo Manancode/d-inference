@@ -134,13 +134,13 @@ final class SecurityManager: ObservableObject {
     }
 
     /// Check if the E2E encryption key is available.
-    /// With SE-derived keys, check for the KeyAgreement handle file.
-    /// Falls back to checking the legacy node_key file.
+    /// This exercises the real provider key path rather than inferring from
+    /// file presence, so it catches keychain/entitlement failures too.
     private func checkNodeKey() async -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let seKeyPath = "\(home)/.darkbloom/enclave_e2e_ka.data"
-        let legacyKeyPath = "\(home)/.darkbloom/node_key"
-        return FileManager.default.fileExists(atPath: seKeyPath) ||
-               FileManager.default.fileExists(atPath: legacyKeyPath)
+        guard CLIRunner.resolveBinaryPath() != nil else {
+            return false
+        }
+        let result = try? await CLIRunner.run(["key-status"])
+        return result?.success == true
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "darkbloom"
-version = "0.3.8"
+version = "0.3.9"
 edition = "2024"
 description = "EigenInference provider agent for Apple Silicon Macs"
 
@@ -34,6 +34,8 @@ tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 # macOS Keychain / Security.framework
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+security-framework-sys = "2"
+core-foundation = "0.10"
 futures-util = "0.3"
 
 # HTTP server (local mode)

@@ -35,6 +35,8 @@ mod protocol;
 mod proxy;
 mod scheduling;
 mod security;
+#[cfg(target_os = "macos")]
+mod secure_enclave_key;
 mod server;
 mod service;
 mod wallet;
@@ -1415,6 +1417,9 @@ enum Command {
     /// Show hardware and connection status
     Status,
 
+    /// Report the existing private text E2E key public key
+    KeyStatus,
+
     /// List, download, or remove models
     Models {
         /// Action: list (default), download, or remove
@@ -1534,6 +1539,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Init => cmd_init().await,
+        Command::KeyStatus => cmd_key_status().await,
         Command::Install {
             coordinator,
             profile_url,
@@ -1676,11 +1682,18 @@ async fn cmd_init() -> Result<()> {
     }
 
     // Generate or load the E2E encryption key pair
-    let key_path = crypto::default_key_path()?;
-    let kp = crypto::NodeKeyPair::load_or_generate(&key_path)?;
-    tracing::info!("Node key loaded from {}", key_path.display());
+    let kp = crypto::NodeKeyPair::load_or_generate()?;
+    tracing::info!("E2E key loaded from Secure Enclave-backed keychain item");
     println!("Public key: {}", kp.public_key_base64());
 
+    Ok(())
+}
+
+async fn cmd_key_status() -> Result<()> {
+    let Some(kp) = crypto::NodeKeyPair::load_existing()? else {
+        anyhow::bail!("text E2E key not provisioned");
+    };
+    println!("Public key: {}", kp.public_key_base64());
     Ok(())
 }
 
@@ -1710,10 +1723,9 @@ async fn cmd_install(
         let cfg = config::ProviderConfig::default_for_hardware(&hw);
         config::save(&config_path, &cfg)?;
     }
-    let key_path = crypto::default_key_path()?;
-    let _kp = crypto::NodeKeyPair::load_or_generate(&key_path)?;
+    let _kp = crypto::NodeKeyPair::load_or_generate()?;
     println!("  ✓ Config: {}", config_path.display());
-    println!("  ✓ Node key: {}", key_path.display());
+    println!("  ✓ E2E key: Secure Enclave-backed");
     println!();
 
     // Step 3: MDM enrollment (skip if already enrolled)
@@ -2171,8 +2183,7 @@ async fn cmd_serve(
     }
 
     // Load or generate E2E encryption key pair
-    let key_path = crypto::default_key_path()?;
-    let node_keypair = std::sync::Arc::new(crypto::NodeKeyPair::load_or_generate(&key_path)?);
+    let node_keypair = std::sync::Arc::new(crypto::NodeKeyPair::load_or_generate()?);
     tracing::info!(
         "E2E encryption key loaded (public: {})",
         node_keypair.public_key_base64()
@@ -2193,6 +2204,11 @@ async fn cmd_serve(
     } else {
         tracing::info!("Idle GPU timeout: disabled (backend stays running)");
     }
+
+    let text_backend_mode = preferred_text_backend_mode(local);
+    let using_inprocess = matches!(text_backend_mode, TextBackendMode::InProcess);
+    let text_backend_name = backend_name_for_mode(text_backend_mode);
+    tracing::info!("Text backend mode: {}", text_backend_name);
 
     // Determine text models to serve (vmlm-mlx backends).
     // Filter out image (.ckpt) and transcription models — they have their own backends.
@@ -2229,6 +2245,9 @@ async fn cmd_serve(
         selected_models.len(),
         selected_models
     );
+    if !selected_models.is_empty() {
+        validate_private_text_runtime(local)?;
+    }
 
     // Build backend slots: one vllm-mlx process per model on sequential ports.
     // Shared state struct for per-slot health monitoring and lifecycle management.
@@ -2250,8 +2269,12 @@ async fn cmd_serve(
                 model_path: String::new(), // resolved later during backend startup
                 port,
                 pid: None,
-                backend_url: format!("http://127.0.0.1:{}", port),
-                healthy: false,
+                backend_url: if using_inprocess {
+                    format!("inprocess://{}", model_id)
+                } else {
+                    format!("http://127.0.0.1:{}", port)
+                },
+                healthy: using_inprocess,
             }
         })
         .collect();
@@ -2283,28 +2306,30 @@ async fn cmd_serve(
         }
     }
 
-    // Kill any existing processes on our backend ports to avoid EADDRINUSE
-    for slot in &backend_slots {
-        if let Ok(output) = std::process::Command::new("lsof")
-            .args(["-ti", &format!(":{}", slot.port)])
-            .output()
-        {
-            let pids = String::from_utf8_lossy(&output.stdout);
-            for pid in pids.split_whitespace() {
-                if let Ok(pid_num) = pid.parse::<u32>() {
-                    if pid_num != std::process::id() {
-                        tracing::info!(
-                            "Killing existing process on port {}: PID {}",
-                            slot.port,
-                            pid_num
-                        );
-                        let _ = std::process::Command::new("kill").arg(pid).output();
+    // Kill any existing subprocess backends on our backend ports to avoid EADDRINUSE.
+    if !using_inprocess {
+        for slot in &backend_slots {
+            if let Ok(output) = std::process::Command::new("lsof")
+                .args(["-ti", &format!(":{}", slot.port)])
+                .output()
+            {
+                let pids = String::from_utf8_lossy(&output.stdout);
+                for pid in pids.split_whitespace() {
+                    if let Ok(pid_num) = pid.parse::<u32>() {
+                        if pid_num != std::process::id() {
+                            tracing::info!(
+                                "Killing existing process on port {}: PID {}",
+                                slot.port,
+                                pid_num
+                            );
+                            let _ = std::process::Command::new("kill").arg(pid).output();
+                        }
                     }
                 }
             }
         }
     }
-    if !backend_slots.is_empty() {
+    if !backend_slots.is_empty() && !using_inprocess {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
@@ -2440,7 +2465,7 @@ async fn cmd_serve(
         let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(64);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let backend_name = "vllm_mlx";
+        let backend_name = text_backend_name;
 
         let public_key_b64 = node_keypair.public_key_base64();
 
@@ -2599,6 +2624,7 @@ async fn cmd_serve(
             backend_name.to_string(),
             std::time::Duration::from_secs(cfg.coordinator.heartbeat_interval_secs),
             Some(public_key_b64),
+            node_keypair.clone(),
         )
         .with_attestation(attestation)
         .with_wallet_address(
@@ -2644,15 +2670,23 @@ async fn cmd_serve(
     // This ensures we never advertise models we can't actually serve yet.
     // =========================================================================
 
-    // Resolve model ID to local path on disk so the backend loads from disk
-    // Spawn one vllm-mlx backend per selected model on sequential ports.
-    let backend_module = preferred_inference_backend_module();
-    let backend_name = backend_name_for_module(backend_module);
+    // Resolve model ID to local path on disk so the backend loads from disk.
+    // Start either one in-process engine or one subprocess backend per model.
+    let _backend_name = text_backend_name;
 
     // Fetch template hashes from manifest once (not per model)
     let manifest_template_hashes = fetch_runtime_manifest(&coordinator_http_base)
         .map(|(_, _, th)| th)
         .unwrap_or_default();
+
+    #[cfg(feature = "python")]
+    let inprocess_engines: Option<SharedInprocessEngineMap> = if using_inprocess {
+        Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )))
+    } else {
+        None
+    };
 
     for slot in &mut backend_slots {
         let model_path = models::resolve_local_path(&slot.model_id)
@@ -2674,49 +2708,75 @@ async fn cmd_serve(
 
         ensure_chat_template(&model_path, &manifest_template_hashes);
 
-        match spawn_inference_backend(&python_cmd, backend_module, &model_path, slot.port) {
-            Ok(pid) => {
-                slot.pid = Some(pid);
-                tracing::info!(
-                    "{} started (PID: {}) on port {}",
-                    backend_module,
-                    pid,
-                    slot.port
-                );
-            }
-            Err(e) => {
-                tracing::error!("Failed to start backend for {}: {e}", slot.model_id);
+        match text_backend_mode {
+            TextBackendMode::InProcess => {
+                #[cfg(feature = "python")]
+                {
+                    let Some(ref engines) = inprocess_engines else {
+                        tracing::error!(
+                            "In-process backend requested for {} but python feature is unavailable",
+                            slot.model_id
+                        );
+                        slot.healthy = false;
+                        continue;
+                    };
+
+                    match get_or_load_inprocess_engine(engines, &slot.model_id, &model_path).await {
+                        Ok(_) => {
+                            slot.healthy = true;
+                            tracing::info!("In-process engine ready for {}", slot.model_id);
+                        }
+                        Err(e) => {
+                            slot.healthy = false;
+                            tracing::error!(
+                                "Failed to load in-process engine for {}: {e}",
+                                slot.model_id
+                            );
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "python"))]
+                {
+                    tracing::error!(
+                        "In-process backend requested for {} but python feature is unavailable",
+                        slot.model_id
+                    );
+                    slot.healthy = false;
+                }
             }
         }
     }
 
-    // Wait for all backends to become healthy
-    for slot in &mut backend_slots {
-        if slot.pid.is_none() {
-            continue;
-        }
-        tracing::info!("Waiting for {} to load...", slot.model_id);
-        let mut ready = false;
-        for i in 0..150 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if backend::check_model_loaded(&slot.backend_url).await {
-                tracing::info!(
-                    "{} ready after {}s on port {}",
-                    slot.model_id,
-                    (i + 1) * 2,
-                    slot.port
-                );
-                ready = true;
-                break;
+    // Wait for all subprocess backends to become healthy.
+    if !using_inprocess {
+        for slot in &mut backend_slots {
+            if slot.pid.is_none() {
+                continue;
             }
+            tracing::info!("Waiting for {} to load...", slot.model_id);
+            let mut ready = false;
+            for i in 0..150 {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if backend::check_model_loaded(&slot.backend_url).await {
+                    tracing::info!(
+                        "{} ready after {}s on port {}",
+                        slot.model_id,
+                        (i + 1) * 2,
+                        slot.port
+                    );
+                    ready = true;
+                    break;
+                }
+            }
+            if !ready {
+                tracing::error!(
+                    "Backend for {} failed to become healthy after 300s",
+                    slot.model_id
+                );
+            }
+            slot.healthy = ready;
         }
-        if !ready {
-            tracing::error!(
-                "Backend for {} failed to become healthy after 300s",
-                slot.model_id
-            );
-        }
-        slot.healthy = ready;
     }
 
     // Build model→URL lookup for request routing
@@ -2730,15 +2790,6 @@ async fn cmd_serve(
         .map(|s| s.backend_url.clone())
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", be_port));
     let backend_url = backend_url_str.clone();
-    // Primary model path for backwards compat (idle reload of primary model).
-    let primary_model_path = if !model.is_empty() {
-        models::resolve_local_path(&model)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| model.clone())
-    } else {
-        String::new()
-    };
-
     // Shared per-slot state for health monitoring, capacity polling, and the event loop.
     // The health monitor reads port/PID/model_path and updates healthy/pid.
     // The event loop reads healthy to know which slots can serve, and updates pid on reload.
@@ -2860,7 +2911,8 @@ async fn cmd_serve(
     // Security hardening: prevent debugger attachment AFTER all subprocesses
     // are spawned. PT_DENY_ATTACH poisons mach_task_self_ in the process
     // memory, which causes child Python processes to crash with SIGBUS.
-    security::deny_debugger_attachment();
+    security::deny_debugger_attachment()
+        .map_err(|err| anyhow::anyhow!("security hardening failed: {err}"))?;
 
     // =========================================================================
     // Phase 3: Connect to coordinator NOW that all backends are loaded.
@@ -2929,170 +2981,176 @@ async fn cmd_serve(
         let provider_stats = provider_stats_opt.unwrap();
         let coordinator_handle = coordinator_handle.unwrap();
 
-        let backend_name = "vllm_mlx";
+        let backend_name = text_backend_name;
 
         // Spawn backend capacity polling task — periodically polls each
         // vllm-mlx backend's /v1/status endpoint to collect live capacity data
         // (running requests, token counts, GPU memory). This data is included
         // in heartbeats so the coordinator can make informed routing decisions.
-        if let Some(cap_arc) = backend_capacity_opt {
-            let poll_shared_slots = shared_slots.clone();
-            let total_mem_gb = hw.memory_gb as f64;
-            let poll_backend_running = backend_running_flag_opt
-                .as_ref()
-                .expect("backend_running_flag must be set in non-local mode")
-                .clone();
-            tokio::spawn(async move {
-                let mut poll_interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                loop {
-                    poll_interval.tick().await;
-                    let mut slots = Vec::new();
-                    let mut gpu_active = 0.0_f64;
-                    let mut gpu_peak = 0.0_f64;
-                    let mut gpu_cache = 0.0_f64;
-                    let slot_snapshots: Vec<(String, u16, bool)> = {
-                        let slots = poll_shared_slots.lock().unwrap();
-                        slots
-                            .iter()
-                            .map(|s| (s.model_id.clone(), s.port, s.restarting))
-                            .collect()
-                    };
-                    for (model_id, port, restarting) in &slot_snapshots {
-                        if *restarting {
-                            slots.push(protocol::BackendSlotCapacity {
-                                model: model_id.clone(),
-                                state: "reloading".to_string(),
-                                num_running: 0,
-                                num_waiting: 0,
-                                active_tokens: 0,
-                                max_tokens_potential: 0,
-                            });
-                            continue;
-                        }
-
-                        let url = format!("http://127.0.0.1:{port}");
-                        match hardware::poll_backend_status(&url).await {
-                            Some(status) => {
-                                // Use GPU memory from any slot (Metal memory is shared)
-                                // Take the max across slots to avoid double-counting.
-                                if status.gpu_memory_active_gb > gpu_active {
-                                    gpu_active = status.gpu_memory_active_gb;
-                                }
-                                if status.gpu_memory_peak_gb > gpu_peak {
-                                    gpu_peak = status.gpu_memory_peak_gb;
-                                }
-                                if status.gpu_memory_cache_gb > gpu_cache {
-                                    gpu_cache = status.gpu_memory_cache_gb;
-                                }
+        if !using_inprocess {
+            if let Some(cap_arc) = backend_capacity_opt {
+                let poll_shared_slots = shared_slots.clone();
+                let total_mem_gb = hw.memory_gb as f64;
+                let poll_backend_running = backend_running_flag_opt
+                    .as_ref()
+                    .expect("backend_running_flag must be set in non-local mode")
+                    .clone();
+                tokio::spawn(async move {
+                    let mut poll_interval =
+                        tokio::time::interval(std::time::Duration::from_secs(5));
+                    poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        poll_interval.tick().await;
+                        let mut slots = Vec::new();
+                        let mut gpu_active = 0.0_f64;
+                        let mut gpu_peak = 0.0_f64;
+                        let mut gpu_cache = 0.0_f64;
+                        let slot_snapshots: Vec<(String, u16, bool)> = {
+                            let slots = poll_shared_slots.lock().unwrap();
+                            slots
+                                .iter()
+                                .map(|s| (s.model_id.clone(), s.port, s.restarting))
+                                .collect()
+                        };
+                        for (model_id, port, restarting) in &slot_snapshots {
+                            if *restarting {
                                 slots.push(protocol::BackendSlotCapacity {
                                     model: model_id.clone(),
-                                    state: "running".to_string(),
-                                    num_running: status.num_running,
-                                    num_waiting: status.num_waiting,
-                                    active_tokens: status.active_tokens,
-                                    max_tokens_potential: status.max_tokens_potential,
-                                });
-                            }
-                            None => {
-                                // Backend unreachable — use the tri-state flag
-                                // to distinguish intentional idle-shutdown from crash.
-                                let flag_val =
-                                    poll_backend_running.load(std::sync::atomic::Ordering::Relaxed);
-                                let state = match flag_val {
-                                    BACKEND_IDLE_SHUTDOWN => "idle_shutdown",
-                                    // BACKEND_RUNNING (should be up but isn't) or BACKEND_CRASHED
-                                    _ => "crashed",
-                                };
-                                slots.push(protocol::BackendSlotCapacity {
-                                    model: model_id.clone(),
-                                    state: state.to_string(),
+                                    state: "reloading".to_string(),
                                     num_running: 0,
                                     num_waiting: 0,
                                     active_tokens: 0,
                                     max_tokens_potential: 0,
                                 });
+                                continue;
+                            }
+
+                            let url = format!("http://127.0.0.1:{port}");
+                            match hardware::poll_backend_status(&url).await {
+                                Some(status) => {
+                                    // Use GPU memory from any slot (Metal memory is shared)
+                                    // Take the max across slots to avoid double-counting.
+                                    if status.gpu_memory_active_gb > gpu_active {
+                                        gpu_active = status.gpu_memory_active_gb;
+                                    }
+                                    if status.gpu_memory_peak_gb > gpu_peak {
+                                        gpu_peak = status.gpu_memory_peak_gb;
+                                    }
+                                    if status.gpu_memory_cache_gb > gpu_cache {
+                                        gpu_cache = status.gpu_memory_cache_gb;
+                                    }
+                                    slots.push(protocol::BackendSlotCapacity {
+                                        model: model_id.clone(),
+                                        state: "running".to_string(),
+                                        num_running: status.num_running,
+                                        num_waiting: status.num_waiting,
+                                        active_tokens: status.active_tokens,
+                                        max_tokens_potential: status.max_tokens_potential,
+                                    });
+                                }
+                                None => {
+                                    // Backend unreachable — use the tri-state flag
+                                    // to distinguish intentional idle-shutdown from crash.
+                                    let flag_val = poll_backend_running
+                                        .load(std::sync::atomic::Ordering::Relaxed);
+                                    let state = match flag_val {
+                                        BACKEND_IDLE_SHUTDOWN => "idle_shutdown",
+                                        // BACKEND_RUNNING (should be up but isn't) or BACKEND_CRASHED
+                                        _ => "crashed",
+                                    };
+                                    slots.push(protocol::BackendSlotCapacity {
+                                        model: model_id.clone(),
+                                        state: state.to_string(),
+                                        num_running: 0,
+                                        num_waiting: 0,
+                                        active_tokens: 0,
+                                        max_tokens_potential: 0,
+                                    });
+                                }
                             }
                         }
+                        let capacity = protocol::BackendCapacity {
+                            slots,
+                            gpu_memory_active_gb: gpu_active,
+                            gpu_memory_peak_gb: gpu_peak,
+                            gpu_memory_cache_gb: gpu_cache,
+                            total_memory_gb: total_mem_gb,
+                        };
+                        *cap_arc.lock().unwrap() = Some(capacity);
                     }
-                    let capacity = protocol::BackendCapacity {
-                        slots,
-                        gpu_memory_active_gb: gpu_active,
-                        gpu_memory_peak_gb: gpu_peak,
-                        gpu_memory_cache_gb: gpu_cache,
-                        total_memory_gb: total_mem_gb,
-                    };
-                    *cap_arc.lock().unwrap() = Some(capacity);
-                }
-            });
+                });
+            }
         }
 
         // Spawn per-slot backend health monitor — detects crashes and auto-restarts
         // each backend independently. Only monitors text backends (vllm-mlx slots);
         // image-only providers don't have text backends to health-check.
-        let has_text_backends = !backend_slots.is_empty();
-        let health_shared_slots = shared_slots.clone();
-        let health_python = python_cmd.clone();
-        let health_backend = backend_name.to_string();
-        let health_backend_running = backend_running_flag_opt
-            .as_ref()
-            .expect("backend_running_flag must be set in non-local mode")
-            .clone();
-        tokio::spawn(async move {
-            if !has_text_backends {
-                // No text backends to monitor — sleep forever.
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        if !using_inprocess {
+            let has_text_backends = !backend_slots.is_empty();
+            let health_shared_slots = shared_slots.clone();
+            let health_python = python_cmd.clone();
+            let health_backend = backend_name.to_string();
+            let health_backend_running = backend_running_flag_opt
+                .as_ref()
+                .expect("backend_running_flag must be set in non-local mode")
+                .clone();
+            tokio::spawn(async move {
+                if !has_text_backends {
+                    // No text backends to monitor — sleep forever.
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    }
                 }
-            }
 
-            // Track consecutive failures per slot (indexed by position in shared_slots).
-            let slot_count = health_shared_slots.lock().unwrap().len();
-            let mut consecutive_failures: Vec<u32> = vec![0; slot_count];
+                // Track consecutive failures per slot (indexed by position in shared_slots).
+                let slot_count = health_shared_slots.lock().unwrap().len();
+                let mut consecutive_failures: Vec<u32> = vec![0; slot_count];
 
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
-            loop {
-                interval.tick().await;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
 
-                // Snapshot current slot state (hold the lock briefly).
-                let slot_snapshots: Vec<(String, String, u16, Option<u32>)> = {
-                    let slots = health_shared_slots.lock().unwrap();
-                    slots
-                        .iter()
-                        .map(|s| (s.model_id.clone(), s.model_path.clone(), s.port, s.pid))
-                        .collect()
-                };
+                    // Snapshot current slot state (hold the lock briefly).
+                    let slot_snapshots: Vec<(String, String, u16, Option<u32>)> = {
+                        let slots = health_shared_slots.lock().unwrap();
+                        slots
+                            .iter()
+                            .map(|s| (s.model_id.clone(), s.model_path.clone(), s.port, s.pid))
+                            .collect()
+                    };
 
-                let mut any_crashed = false;
-                for (idx, (model_id, model_path, port, pid)) in slot_snapshots.iter().enumerate() {
-                    let health_url = format!("http://127.0.0.1:{}", port);
-                    if backend::check_health(&health_url).await {
-                        if consecutive_failures[idx] > 0 {
-                            tracing::info!(
-                                "Backend for {} recovered after {} failed health checks",
+                    let mut any_crashed = false;
+                    for (idx, (model_id, model_path, port, pid)) in
+                        slot_snapshots.iter().enumerate()
+                    {
+                        let health_url = format!("http://127.0.0.1:{}", port);
+                        if backend::check_health(&health_url).await {
+                            if consecutive_failures[idx] > 0 {
+                                tracing::info!(
+                                    "Backend for {} recovered after {} failed health checks",
+                                    model_id,
+                                    consecutive_failures[idx]
+                                );
+                                consecutive_failures[idx] = 0;
+                                // Mark slot healthy again.
+                                let mut slots = health_shared_slots.lock().unwrap();
+                                if let Some(slot) = slots.get_mut(idx) {
+                                    slot.healthy = true;
+                                }
+                            }
+                        } else {
+                            consecutive_failures[idx] += 1;
+                            tracing::warn!(
+                                "Backend health check failed for {} on port {} ({} consecutive)",
                                 model_id,
+                                port,
                                 consecutive_failures[idx]
                             );
-                            consecutive_failures[idx] = 0;
-                            // Mark slot healthy again.
-                            let mut slots = health_shared_slots.lock().unwrap();
-                            if let Some(slot) = slots.get_mut(idx) {
-                                slot.healthy = true;
-                            }
-                        }
-                    } else {
-                        consecutive_failures[idx] += 1;
-                        tracing::warn!(
-                            "Backend health check failed for {} on port {} ({} consecutive)",
-                            model_id,
-                            port,
-                            consecutive_failures[idx]
-                        );
                         // 5 consecutive failures (75 seconds) before restart.
                         // Higher threshold than single-backend (was 3) because
                         // the Python GIL can block /health during long generations,
                         // and we don't want to kill a busy-but-healthy backend.
-                        if consecutive_failures[idx] >= 5 {
+                            if consecutive_failures[idx] >= 5 {
                             // Check if another task (event loop) is already restarting this slot.
                             let already_restarting = {
                                 let slots = health_shared_slots.lock().unwrap();
@@ -3167,28 +3225,29 @@ async fn cmd_serve(
                                     }
                                 }
                             }
+                            }
+                        }
+                    }
+
+                    // Update the global backend_running flag based on whether ALL
+                    // slots are healthy. This preserves the existing tri-state
+                    // semantics for capacity polling.
+                    if any_crashed {
+                        health_backend_running
+                            .store(BACKEND_CRASHED, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        let all_healthy = {
+                            let slots = health_shared_slots.lock().unwrap();
+                            slots.iter().all(|s| s.healthy)
+                        };
+                        if all_healthy {
+                            health_backend_running
+                                .store(BACKEND_RUNNING, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
                 }
-
-                // Update the global backend_running flag based on whether ALL
-                // slots are healthy. This preserves the existing tri-state
-                // semantics for capacity polling.
-                if any_crashed {
-                    health_backend_running
-                        .store(BACKEND_CRASHED, std::sync::atomic::Ordering::Relaxed);
-                } else {
-                    let all_healthy = {
-                        let slots = health_shared_slots.lock().unwrap();
-                        slots.iter().all(|s| s.healthy)
-                    };
-                    if all_healthy {
-                        health_backend_running
-                            .store(BACKEND_RUNNING, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-            }
-        });
+            });
+        }
 
         // Process coordinator events
         let proxy_backend_url = backend_url.clone();
@@ -3211,15 +3270,6 @@ async fn cmd_serve(
             .collect();
         // For idle reload: re-hash weights after reloading to detect tampering
         let rehash_handle = rehash_model_hash_opt.clone();
-        // For backwards compat (idle reload of primary model).
-        // These are mutable so the reload path can update them to match
-        // the *requested* model when it differs from the last-served one.
-        let mut idle_model_id = model.clone();
-        let mut idle_model = model_to_path
-            .get(&model)
-            .cloned()
-            .unwrap_or_else(|| model.clone());
-        let mut idle_be_port = be_port;
         // Collect PIDs for per-process shutdown
         let backend_pids: Vec<(String, Option<u32>)> = backend_slots
             .iter()
@@ -3227,18 +3277,13 @@ async fn cmd_serve(
             .collect();
 
         #[cfg(feature = "python")]
-        let shared_engine: Option<
-            std::sync::Arc<tokio::sync::Mutex<inference::InProcessEngine>>,
-        > = if is_inprocess {
-            let mut engine = inference::InProcessEngine::new(model.clone());
-            if let Err(e) = engine.load() {
-                tracing::error!("Failed to load in-process engine for event loop: {e}");
-                anyhow::bail!("In-process engine load failed: {e}");
-            }
-            Some(std::sync::Arc::new(tokio::sync::Mutex::new(engine)))
+        let inprocess_engines = if is_inprocess {
+            inprocess_engines.clone()
         } else {
             None
         };
+        #[cfg(feature = "python")]
+        let event_inprocess_engines = inprocess_engines.clone();
 
         let event_backend_running =
             backend_running_flag_opt.expect("backend_running_flag must be set in non-local mode");
@@ -3335,73 +3380,158 @@ async fn cmd_serve(
                                         .map(|s| (s.model_id.clone(), s.model_path.clone(), s.port, s.pid, s.healthy, s.restarting))
                                 };
 
+                                let mut inprocess_engine = None;
                                 if let Some((slot_model_id, slot_model_path, slot_port, slot_pid, slot_healthy, slot_restarting)) = slot_info {
-                                    // Check if this slot's backend needs reloading.
-                                    let backend_url = format!("http://127.0.0.1:{}", slot_port);
-                                    let needs_reload = !slot_healthy || !backend::check_health(&backend_url).await;
-
-                                    if needs_reload && !slot_restarting {
-                                        tracing::info!(
-                                            "Slot for {} on port {} not running — reloading (original model, never overwritten)",
-                                            slot_model_id, slot_port
-                                        );
-
-                                        // Kill any zombie process on this port before respawning.
-                                        if let Some(pid) = slot_pid {
-                                            if pid > 0 {
-                                                unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-                                                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                            }
-                                        }
-
-                                        // Mark slot as restarting to prevent race with health monitor.
+                                    if is_inprocess {
+                                        #[cfg(feature = "python")]
                                         {
-                                            let mut slots = shared_slots.lock().unwrap();
-                                            if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
-                                                s.restarting = true;
-                                            }
-                                        }
-
-                                        match reload_backend(
-                                            &idle_python_cmd,
-                                            &idle_backend_name,
-                                            &slot_model_path,
-                                            slot_port,
-                                        ).await {
-                                            Ok(new_pid) => {
-                                                set_backend_state(BACKEND_RUNNING);
-                                                // Update slot PID and health, clear restarting flag.
-                                                {
-                                                    let mut slots = shared_slots.lock().unwrap();
-                                                    if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
-                                                        s.pid = Some(new_pid);
-                                                        s.healthy = true;
-                                                        s.restarting = false;
-                                                    }
-                                                }
-                                                if let Some(ref hash_arc) = rehash_handle {
-                                                    if let Some(new_hash) = models::compute_weight_hash(&slot_model_id) {
-                                                        *hash_arc.lock().unwrap() = Some(new_hash);
-                                                        tracing::info!("Model weight hash refreshed after reload");
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::error!("Failed to reload {} on port {}: {e}", slot_model_id, slot_port);
-                                                {
-                                                    let mut slots = shared_slots.lock().unwrap();
-                                                    if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
-                                                        s.restarting = false;
-                                                    }
-                                                }
+                                            let Some(ref engines) = event_inprocess_engines else {
                                                 let _ = outbound_tx.send(
                                                     protocol::ProviderMessage::InferenceError {
                                                         request_id,
-                                                        error: format!("backend reload failed: {e}"),
+                                                        error: "in-process engine support unavailable in this build".to_string(),
                                                         status_code: 503,
                                                     }
                                                 ).await;
                                                 continue;
+                                            };
+
+                                            {
+                                                let mut slots = shared_slots.lock().unwrap();
+                                                if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                    s.restarting = true;
+                                                }
+                                            }
+
+                                            match get_or_load_inprocess_engine(
+                                                engines,
+                                                &slot_model_id,
+                                                &slot_model_path,
+                                            ).await {
+                                                Ok(engine) => {
+                                                    inprocess_engine = Some(engine);
+                                                    set_backend_state(BACKEND_RUNNING);
+                                                    {
+                                                        let mut slots = shared_slots.lock().unwrap();
+                                                        if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                            s.healthy = true;
+                                                            s.restarting = false;
+                                                        }
+                                                    }
+                                                    if let Some(ref hash_arc) = rehash_handle {
+                                                        if let Some(new_hash) =
+                                                            models::compute_weight_hash(&slot_model_id)
+                                                        {
+                                                            *hash_arc.lock().unwrap() = Some(new_hash);
+                                                            tracing::info!(
+                                                                "Model weight hash refreshed after in-process load"
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!(
+                                                        "Failed to load in-process model {}: {e}",
+                                                        slot_model_id
+                                                    );
+                                                    {
+                                                        let mut slots = shared_slots.lock().unwrap();
+                                                        if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                            s.healthy = false;
+                                                            s.restarting = false;
+                                                        }
+                                                    }
+                                                    let _ = outbound_tx.send(
+                                                        protocol::ProviderMessage::InferenceError {
+                                                            request_id,
+                                                            error: format!("in-process model load failed: {e}"),
+                                                            status_code: 503,
+                                                        }
+                                                    ).await;
+                                                    continue;
+                                                }
+                                            }
+                                        }
+
+                                        #[cfg(not(feature = "python"))]
+                                        {
+                                            let _ = outbound_tx.send(
+                                                protocol::ProviderMessage::InferenceError {
+                                                    request_id,
+                                                    error: "in-process engine support unavailable in this build".to_string(),
+                                                    status_code: 503,
+                                                }
+                                            ).await;
+                                            continue;
+                                        }
+                                    } else {
+                                        // Check if this slot's backend needs reloading.
+                                        let backend_url = format!("http://127.0.0.1:{}", slot_port);
+                                        let needs_reload = !slot_healthy || !backend::check_health(&backend_url).await;
+
+                                        if needs_reload && !slot_restarting {
+                                            tracing::info!(
+                                                "Slot for {} on port {} not running — reloading (original model, never overwritten)",
+                                                slot_model_id, slot_port
+                                            );
+
+                                            // Kill any zombie process on this port before respawning.
+                                            if let Some(pid) = slot_pid {
+                                                if pid > 0 {
+                                                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                                }
+                                            }
+
+                                            // Mark slot as restarting to prevent race with health monitor.
+                                            {
+                                                let mut slots = shared_slots.lock().unwrap();
+                                                if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                    s.restarting = true;
+                                                }
+                                            }
+
+                                            match reload_backend(
+                                                &idle_python_cmd,
+                                                &idle_backend_name,
+                                                &slot_model_path,
+                                                slot_port,
+                                            ).await {
+                                                Ok(new_pid) => {
+                                                    set_backend_state(BACKEND_RUNNING);
+                                                    // Update slot PID and health, clear restarting flag.
+                                                    {
+                                                        let mut slots = shared_slots.lock().unwrap();
+                                                        if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                            s.pid = Some(new_pid);
+                                                            s.healthy = true;
+                                                            s.restarting = false;
+                                                        }
+                                                    }
+                                                    if let Some(ref hash_arc) = rehash_handle {
+                                                        if let Some(new_hash) = models::compute_weight_hash(&slot_model_id) {
+                                                            *hash_arc.lock().unwrap() = Some(new_hash);
+                                                            tracing::info!("Model weight hash refreshed after reload");
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to reload {} on port {}: {e}", slot_model_id, slot_port);
+                                                    {
+                                                        let mut slots = shared_slots.lock().unwrap();
+                                                        if let Some(s) = slots.iter_mut().find(|s| s.port == slot_port) {
+                                                            s.restarting = false;
+                                                        }
+                                                    }
+                                                    let _ = outbound_tx.send(
+                                                        protocol::ProviderMessage::InferenceError {
+                                                            request_id,
+                                                            error: format!("backend reload failed: {e}"),
+                                                            status_code: 503,
+                                                        }
+                                                    ).await;
+                                                    continue;
+                                                }
                                             }
                                         }
                                     }
@@ -3460,7 +3590,7 @@ async fn cmd_serve(
 
                                 let handle = {
                                     #[cfg(feature = "python")]
-                                    if let Some(ref engine) = shared_engine {
+                                    if let Some(engine) = inprocess_engine {
                                         let engine = engine.clone();
                                         let rid2 = rid.clone();
                                         let stats = proxy_stats.clone();
@@ -3501,10 +3631,7 @@ async fn cmd_serve(
                                 let token_clone = cancel_token.clone();
                                 let done_tx = done_tx.clone();
                                 let rid = request_id.clone();
-                                let stt_url = proxy_backend_url.clone().replace(
-                                    &format!(":{}", be_port),
-                                    &format!(":{}", be_port + 1),
-                                );
+                                let stt_url = format!("http://127.0.0.1:{stt_port}");
 
                                 let handle = tokio::spawn(async move {
                                     proxy::handle_transcription_request(
@@ -3612,7 +3739,21 @@ async fn cmd_serve(
                              Next request will reload (~30-60s cold start).",
                             idle_timeout_mins
                         );
-                        shutdown_backends(&backend_pids).await;
+                        if is_inprocess {
+                            #[cfg(feature = "python")]
+                            if let Some(ref engines) = event_inprocess_engines {
+                                unload_inprocess_engines(engines).await;
+                            }
+                            {
+                                let mut slots = shared_slots.lock().unwrap();
+                                for slot in slots.iter_mut() {
+                                    slot.healthy = false;
+                                    slot.restarting = false;
+                                }
+                            }
+                        } else {
+                            shutdown_backends(&backend_pids).await;
+                        }
                         set_backend_state(BACKEND_IDLE_SHUTDOWN);
                     }
                 }
@@ -3646,7 +3787,14 @@ async fn cmd_serve(
                     _ = tokio::time::sleep(window_remaining) => {
                         tracing::info!("Schedule window closed — going offline");
                         // Shut down backend between windows to free GPU memory
-                        shutdown_backends(&[]).await;
+                        if using_inprocess {
+                            #[cfg(feature = "python")]
+                            if let Some(ref engines) = inprocess_engines {
+                                unload_inprocess_engines(engines).await;
+                            }
+                        } else {
+                            shutdown_backends(&[]).await;
+                        }
                         tracing::info!("Backend stopped — waiting for next schedule window");
                         continue 'schedule_loop;
                     }
@@ -3717,23 +3865,102 @@ async fn shutdown_backends(pids: &[(String, Option<u32>)]) {
     tracing::info!("Backend processes terminated — GPU memory freed");
 }
 
-/// Restart the inference backend and wait for it to become healthy.
-fn preferred_inference_backend_module() -> &'static str {
-    match std::env::var("EIGENINFERENCE_INFERENCE_BACKEND")
-        .ok()
-        .as_deref()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextBackendMode {
+    InProcess,
+}
+
+fn validate_private_text_runtime(local: bool) -> anyhow::Result<()> {
+    if local {
+        anyhow::bail!(
+            "local text serving is disabled in privacy mode: the local HTTP proxy path does not meet the single-process privacy guarantee"
+        );
+    }
+
+    if let Ok(raw) = std::env::var("EIGENINFERENCE_INFERENCE_BACKEND") {
+        let value = raw.trim();
+        if !value.is_empty() {
+            match value {
+                "inprocess" | "embedded" | "python" => {}
+                _ => {
+                    anyhow::bail!(
+                        "text subprocess backends are disabled for privacy; remove EIGENINFERENCE_INFERENCE_BACKEND={value} and use the embedded runtime"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "python")]
     {
-        Some("vllm-mlx") | Some("vllm_mlx") | Some("vllm_mlx.server") => "vllm_mlx.server",
-        Some("mlx_lm") | Some("mlx_lm.server") => "mlx_lm.server",
-        _ => "vllm_mlx.server",
+        Ok(())
+    }
+
+    #[cfg(not(feature = "python"))]
+    {
+        anyhow::bail!(
+            "this build does not include the embedded Python runtime; rebuild the provider with the privacy-preserving in-process engine enabled"
+        )
     }
 }
 
-fn backend_name_for_module(module: &str) -> &'static str {
-    match module {
-        "vllm_mlx.server" => "vllm-mlx",
-        "mlx_lm.server" => "mlx_lm",
-        _ => "unknown",
+fn preferred_text_backend_mode(local: bool) -> TextBackendMode {
+    let _ = local;
+    TextBackendMode::InProcess
+}
+
+fn backend_name_for_mode(mode: TextBackendMode) -> &'static str {
+    match mode {
+        TextBackendMode::InProcess => "inprocess-mlx",
+    }
+}
+
+#[cfg(feature = "python")]
+type SharedInprocessEngineMap = std::sync::Arc<
+    tokio::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<inference::SharedEngine>>>,
+>;
+
+#[cfg(feature = "python")]
+async fn get_or_load_inprocess_engine(
+    engines: &SharedInprocessEngineMap,
+    model_id: &str,
+    model_path: &str,
+) -> anyhow::Result<std::sync::Arc<inference::SharedEngine>> {
+    if let Some(engine) = {
+        let guard = engines.lock().await;
+        guard.get(model_id).cloned()
+    } {
+        if engine.is_loaded().await {
+            return Ok(engine);
+        }
+    }
+
+    let engine = std::sync::Arc::new(inference::SharedEngine::new(
+        inference::InProcessEngine::new(model_path.to_string()),
+    ));
+    engine.load().await?;
+
+    let mut guard = engines.lock().await;
+    let entry = guard
+        .entry(model_id.to_string())
+        .or_insert_with(|| engine.clone())
+        .clone();
+    Ok(entry)
+}
+
+#[cfg(feature = "python")]
+async fn unload_inprocess_engines(engines: &SharedInprocessEngineMap) {
+    let engines_to_unload: Vec<_> = {
+        let mut guard = engines.lock().await;
+        let values = guard.values().cloned().collect();
+        guard.clear();
+        values
+    };
+
+    for engine in engines_to_unload {
+        if let Err(e) = engine.unload().await {
+            tracing::warn!("Failed to unload in-process engine: {e}");
+        }
     }
 }
 
@@ -3763,7 +3990,16 @@ fn spawn_inference_backend(
     port: u16,
 ) -> std::io::Result<u32> {
     let mut cmd = tokio::process::Command::new(python_cmd);
-    cmd.args(["-m", module, "--model", model, "--port", &port.to_string()]);
+    cmd.args([
+        "-m",
+        module,
+        "--model",
+        model,
+        "--port",
+        &port.to_string(),
+        "--host",
+        "127.0.0.1",
+    ]);
 
     // Add tool call and reasoning parser flags for vllm-mlx
     if module == "vllm_mlx.server" {
@@ -3896,12 +4132,167 @@ async fn reload_backend(
     Ok(new_pid)
 }
 
+#[cfg(feature = "python")]
+fn extract_inprocess_input_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(extract_inprocess_input_text)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(|v| v.as_str()) {
+                text.to_string()
+            } else if let Some(content) = map.get("content") {
+                extract_inprocess_input_text(content)
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+#[cfg(feature = "python")]
+fn extract_inprocess_messages(body: &serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+        return messages
+            .iter()
+            .map(|msg| {
+                let role = msg
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user")
+                    .to_string();
+                let content = msg
+                    .get("content")
+                    .map(extract_inprocess_input_text)
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "role": role,
+                    "content": content,
+                })
+            })
+            .collect();
+    }
+
+    if let Some(prompt) = body.get("prompt") {
+        let prompt = extract_inprocess_input_text(prompt);
+        if !prompt.is_empty() {
+            return vec![serde_json::json!({
+                "role": "user",
+                "content": prompt,
+            })];
+        }
+    }
+
+    if let Some(input) = body.get("input") {
+        let input = extract_inprocess_input_text(input);
+        if !input.is_empty() {
+            return vec![serde_json::json!({
+                "role": "user",
+                "content": input,
+            })];
+        }
+    }
+
+    Vec::new()
+}
+
+#[cfg(feature = "python")]
+fn build_inprocess_response_json(
+    body: &serde_json::Value,
+    text: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+) -> serde_json::Value {
+    let endpoint = body
+        .get("endpoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/v1/chat/completions");
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let usage = serde_json::json!({
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    });
+
+    match endpoint {
+        "/v1/completions" => serde_json::json!({
+            "id": format!("cmpl-{}", uuid::Uuid::new_v4()),
+            "object": "text_completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "text": text,
+                "finish_reason": "stop",
+            }],
+            "usage": usage,
+        }),
+        "/v1/messages" => serde_json::json!({
+            "id": format!("msg_{}", uuid::Uuid::new_v4()),
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [{
+                "type": "text",
+                "text": text,
+            }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+            },
+        }),
+        "/v1/responses" => serde_json::json!({
+            "id": format!("resp_{}", uuid::Uuid::new_v4()),
+            "object": "response",
+            "model": model,
+            "output": [{
+                "id": format!("msg_{}", uuid::Uuid::new_v4()),
+                "type": "message",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": text,
+                    "annotations": [],
+                }],
+            }],
+            "output_text": text,
+            "usage": {
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }),
+        _ => serde_json::json!({
+            "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+            "object": "chat.completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": usage,
+        }),
+    }
+}
+
 /// Handle an inference request using the in-process engine (no HTTP, no subprocess).
 #[cfg(feature = "python")]
 async fn handle_inprocess_request(
     request_id: String,
     body: serde_json::Value,
-    engine: std::sync::Arc<tokio::sync::Mutex<inference::InProcessEngine>>,
+    engine: std::sync::Arc<inference::SharedEngine>,
     outbound_tx: tokio::sync::mpsc::Sender<protocol::ProviderMessage>,
     stats: Option<std::sync::Arc<coordinator::AtomicProviderStats>>,
 ) {
@@ -3918,11 +4309,7 @@ async fn handle_inprocess_request(
     }
 
     // Extract parameters from OpenAI-format body
-    let messages: Vec<serde_json::Value> = body
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let messages = extract_inprocess_messages(&body);
     let max_tokens = body
         .get("max_tokens")
         .and_then(|v| v.as_u64())
@@ -3936,37 +4323,65 @@ async fn handle_inprocess_request(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Run inference in blocking task (Python GIL)
-    let engine_clone = engine.clone();
-    let req_id = request_id.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let e = engine_clone.blocking_lock();
-        e.generate(&messages, max_tokens, temperature)
-    })
-    .await;
-
-    match result {
-        Ok(Ok(inference_result)) => {
-            if is_streaming {
-                // Send as a single chunk for now
-                let chunk = serde_json::json!({
-                    "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-                    "object": "chat.completion.chunk",
-                    "choices": [{"delta": {"content": inference_result.text}, "index": 0, "finish_reason": "stop"}]
-                });
-                let _ = outbound_tx
-                    .send(protocol::ProviderMessage::InferenceResponseChunk {
-                        request_id: request_id.clone(),
-                        data: format!(
-                            "data: {}",
-                            serde_json::to_string(&chunk).unwrap_or_default()
-                        ),
-                    })
-                    .await;
+    let result = if is_streaming {
+        match engine
+            .stream_generate(messages.clone(), max_tokens, temperature)
+            .await
+        {
+            Ok((prompt_tokens, completion_tokens, tokens)) => {
+                for token in tokens {
+                    let chunk = serde_json::json!({
+                        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+                        "object": "chat.completion.chunk",
+                        "choices": [{
+                            "delta": {"content": token.text},
+                            "index": 0,
+                            "finish_reason": token.finish_reason
+                        }]
+                    });
+                    let _ = outbound_tx
+                        .send(protocol::ProviderMessage::InferenceResponseChunk {
+                            request_id: request_id.clone(),
+                            data: format!(
+                                "data: {}",
+                                serde_json::to_string(&chunk).unwrap_or_default()
+                            ),
+                        })
+                        .await;
+                }
                 let _ = outbound_tx
                     .send(protocol::ProviderMessage::InferenceResponseChunk {
                         request_id: request_id.clone(),
                         data: "data: [DONE]".to_string(),
+                    })
+                    .await;
+
+                Ok(inference::InferenceResult {
+                    text: String::new(),
+                    prompt_tokens,
+                    completion_tokens,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    } else {
+        engine.generate(messages, max_tokens, temperature).await
+    };
+
+    match result {
+        Ok(inference_result) => {
+            if !is_streaming {
+                let response_json = build_inprocess_response_json(
+                    &body,
+                    &inference_result.text,
+                    inference_result.prompt_tokens,
+                    inference_result.completion_tokens,
+                );
+                let raw_json = serde_json::to_string(&response_json).unwrap_or_default();
+                let _ = outbound_tx
+                    .send(protocol::ProviderMessage::InferenceResponseChunk {
+                        request_id: request_id.clone(),
+                        data: format!("data: {}", raw_json),
                     })
                     .await;
             }
@@ -3990,7 +4405,6 @@ async fn handle_inprocess_request(
                     response_hash: Some(response_hash),
                 })
                 .await;
-            // Increment shared stats counters for heartbeat reporting.
             if let Some(s) = &stats {
                 s.requests_served
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -3998,22 +4412,12 @@ async fn handle_inprocess_request(
                     .fetch_add(completion_tokens, std::sync::atomic::Ordering::Relaxed);
             }
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             tracing::error!("In-process inference failed: {e}");
             let _ = outbound_tx
                 .send(protocol::ProviderMessage::InferenceError {
                     request_id,
                     error: e.to_string(),
-                    status_code: 500,
-                })
-                .await;
-        }
-        Err(e) => {
-            tracing::error!("Inference task panicked: {e}");
-            let _ = outbound_tx
-                .send(protocol::ProviderMessage::InferenceError {
-                    request_id,
-                    error: "inference task failed".to_string(),
                     status_code: 500,
                 })
                 .await;
@@ -4420,7 +4824,8 @@ async fn cmd_unenroll() -> Result<()> {
     println!();
     println!("Clean up local Darkbloom data? This removes:");
     println!("  - Config: ~/.config/eigeninference/");
-    println!("  - Node key: ~/.darkbloom/node_key");
+    println!("  - Secure Enclave E2E key");
+    println!("  - Legacy node key file: ~/.darkbloom/node_key");
     println!("  - Enclave key: ~/.darkbloom/enclave_key.data");
     println!("  - Auth token: ~/.darkbloom/auth_token");
     println!();
@@ -4430,7 +4835,7 @@ async fn cmd_unenroll() -> Result<()> {
     if input.trim() == "yes" {
         let home = dirs::home_dir().unwrap_or_default();
         let _ = std::fs::remove_dir_all(home.join(".config/eigeninference"));
-        let _ = std::fs::remove_file(home.join(".darkbloom/node_key"));
+        let _ = crypto::delete_persistent_key();
         let _ = std::fs::remove_file(home.join(".darkbloom/enclave_key.data"));
         let _ = std::fs::remove_file(home.join(".darkbloom/wallet_key"));
         println!("  ✓ Local data cleaned up");
@@ -5266,15 +5671,17 @@ async fn cmd_doctor(coordinator_url: String) -> Result<()> {
         issues.push("Download a model: darkbloom models download".to_string());
     }
 
-    // 7. Node key (SE-derived keys don't touch disk, so try loading rather than checking file)
-    print!("7. Node encryption key......... ");
-    let key_path = crypto::default_key_path().unwrap_or_default();
-    if crypto::NodeKeyPair::load_or_generate(&key_path).is_ok() {
-        println!("✓ Generated");
+    // 7. Text E2E key (must be Secure Enclave-backed for the privacy guarantee)
+    print!("7. Text E2E key................ ");
+    if crypto::NodeKeyPair::load_existing().is_ok_and(|key| key.is_some()) {
+        println!("✓ Secure Enclave-backed");
         passed += 1;
     } else {
-        println!("✗ Not generated");
-        issues.push("Run: darkbloom init".to_string());
+        println!("✗ Unavailable");
+        issues.push(
+            "Run `darkbloom init` or start the signed provider build on a Secure Enclave-capable Mac"
+                .to_string(),
+        );
     }
 
     // 8. Coordinator connectivity
@@ -6445,6 +6852,43 @@ async fn cmd_autoupdate(action: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_preferred_text_backend_mode_is_inprocess() {
+        assert_eq!(preferred_text_backend_mode(false), TextBackendMode::InProcess);
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn test_validate_private_text_runtime_allows_default_and_inprocess_override() {
+        unsafe {
+            std::env::remove_var("EIGENINFERENCE_INFERENCE_BACKEND");
+        }
+        assert!(validate_private_text_runtime(false).is_ok());
+
+        unsafe {
+            std::env::set_var("EIGENINFERENCE_INFERENCE_BACKEND", "inprocess");
+        }
+        assert!(validate_private_text_runtime(false).is_ok());
+
+        unsafe {
+            std::env::remove_var("EIGENINFERENCE_INFERENCE_BACKEND");
+        }
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn test_validate_private_text_runtime_rejects_subprocess_and_local() {
+        unsafe {
+            std::env::set_var("EIGENINFERENCE_INFERENCE_BACKEND", "vllm-mlx");
+        }
+        assert!(validate_private_text_runtime(false).is_err());
+
+        unsafe {
+            std::env::remove_var("EIGENINFERENCE_INFERENCE_BACKEND");
+        }
+        assert!(validate_private_text_runtime(true).is_err());
+    }
 
     /// Verify that spawn_backend_log_forwarder captures stdout/stderr from a child
     /// process instead of dropping it to /dev/null. This is the core regression test:

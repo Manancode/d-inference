@@ -1591,8 +1591,9 @@ func (s *Server) handleProviderEarnings(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// If in-memory payouts are empty (coordinator restarted), reconstruct
-	// from persisted ledger entries (payout type with wallet as account).
+	// If no explicit payout records exist (for example, legacy rows created
+	// before provider_payouts was introduced), reconstruct from persisted
+	// ledger entries with payout type and the wallet as account ID.
 	if len(walletPayouts) == 0 {
 		ledgerEntries := s.store.LedgerHistory(wallet)
 		for _, le := range ledgerEntries {

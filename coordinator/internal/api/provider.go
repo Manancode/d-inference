@@ -728,11 +728,9 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 	// Otherwise, fall back to the provider's self-reported wallet address.
 	if p := s.registry.GetProvider(providerID); p != nil {
 		if p.AccountID != "" {
-			// Provider is linked to a Privy account — credit the account directly.
-			_ = s.store.Credit(p.AccountID, providerPayout, store.LedgerPayout, msg.RequestID)
-
-			// Record per-node earning for granular provider analytics.
-			_ = s.store.RecordProviderEarning(&store.ProviderEarning{
+			// Provider is linked to a Privy account — atomically credit the
+			// account and record the per-node earning in one store transaction.
+			if err := s.store.CreditProviderAccount(&store.ProviderEarning{
 				AccountID:        p.AccountID,
 				ProviderID:       providerID,
 				ProviderKey:      p.PublicKey,
@@ -741,10 +739,25 @@ func (s *Server) handleComplete(providerID string, provider *registry.Provider, 
 				AmountMicroUSD:   providerPayout,
 				PromptTokens:     msg.Usage.PromptTokens,
 				CompletionTokens: msg.Usage.CompletionTokens,
-			})
+				CreatedAt:        time.Now(),
+			}); err != nil {
+				s.logger.Error("failed to credit linked provider account",
+					"provider_id", providerID,
+					"account_id", p.AccountID,
+					"request_id", msg.RequestID,
+					"error", err,
+				)
+			}
 		} else if p.WalletAddress != "" {
-			// Unlinked provider — fall back to wallet-based ledger.
-			s.ledger.CreditProvider(p.WalletAddress, providerPayout, pr.Model, msg.RequestID)
+			// Unlinked provider — atomically credit the wallet and record payout history.
+			if err := s.ledger.CreditProvider(p.WalletAddress, providerPayout, pr.Model, msg.RequestID); err != nil {
+				s.logger.Error("failed to credit provider wallet payout",
+					"provider_id", providerID,
+					"wallet_address", p.WalletAddress,
+					"request_id", msg.RequestID,
+					"error", err,
+				)
+			}
 		}
 	}
 
@@ -897,12 +910,34 @@ func (s *Server) handleImageGenerationComplete(providerID string, provider *regi
 	s.store.RecordUsageWithCost(providerID, pr.ConsumerKey, pr.Model, msg.RequestID, 0, 0, totalCost)
 
 	// Credit the provider.
-	providerWallet := ""
 	if p := s.registry.GetProvider(providerID); p != nil {
-		providerWallet = p.WalletAddress
-	}
-	if providerWallet != "" {
-		s.ledger.CreditProvider(providerWallet, providerPayout, pr.Model, msg.RequestID)
+		if p.AccountID != "" {
+			if err := s.store.CreditProviderAccount(&store.ProviderEarning{
+				AccountID:      p.AccountID,
+				ProviderID:     providerID,
+				ProviderKey:    p.PublicKey,
+				JobID:          msg.RequestID,
+				Model:          pr.Model,
+				AmountMicroUSD: providerPayout,
+				CreatedAt:      time.Now(),
+			}); err != nil {
+				s.logger.Error("failed to credit linked provider account for image generation",
+					"provider_id", providerID,
+					"account_id", p.AccountID,
+					"request_id", msg.RequestID,
+					"error", err,
+				)
+			}
+		} else if p.WalletAddress != "" {
+			if err := s.ledger.CreditProvider(p.WalletAddress, providerPayout, pr.Model, msg.RequestID); err != nil {
+				s.logger.Error("failed to credit provider wallet for image generation",
+					"provider_id", providerID,
+					"wallet_address", p.WalletAddress,
+					"request_id", msg.RequestID,
+					"error", err,
+				)
+			}
+		}
 	}
 
 	// Platform fee with referral distribution.

@@ -111,6 +111,7 @@ export function useAuth() {
     user,
     login,
     logout,
+    getAccessToken,
     email,
     walletAddress,
     displayName,

@@ -689,6 +689,44 @@ func TestProviderEarningsEndpoint(t *testing.T) {
 	}
 }
 
+func TestProviderEarningsUsesStoredPayoutRecords(t *testing.T) {
+	srv, _ := testServer(t)
+
+	wallet := "0xStoredPayoutWallet1234567890abcdef1234"
+	if err := srv.ledger.CreditProvider(wallet, 250_000, "qwen3.5-9b", "job-stored"); err != nil {
+		t.Fatalf("CreditProvider: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/provider/earnings?wallet="+wallet, nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	payouts, ok := resp["payouts"].([]any)
+	if !ok || len(payouts) != 1 {
+		t.Fatalf("payouts = %#v, want single payout", resp["payouts"])
+	}
+
+	payout, ok := payouts[0].(map[string]any)
+	if !ok {
+		t.Fatalf("payout = %#v, want object", payouts[0])
+	}
+	if payout["model"] != "qwen3.5-9b" {
+		t.Errorf("payout model = %v, want qwen3.5-9b", payout["model"])
+	}
+	if settled, _ := payout["settled"].(bool); settled {
+		t.Errorf("payout settled = %v, want false", payout["settled"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Benchmarks for normalizeSSEChunk (called per SSE chunk in streaming path)
 // ---------------------------------------------------------------------------

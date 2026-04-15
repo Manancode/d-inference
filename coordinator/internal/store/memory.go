@@ -71,6 +71,10 @@ type MemoryStore struct {
 	providerEarnings    []ProviderEarning
 	providerEarningsSeq int64 // auto-increment ID
 
+	// Provider payouts (wallet-based)
+	providerPayouts   []ProviderPayout
+	providerPayoutSeq int64 // auto-increment ID
+
 	// Releases (provider binary versioning)
 	releases map[string]*Release // "version:platform" → Release
 
@@ -106,6 +110,7 @@ func NewMemory(adminKey string) *MemoryStore {
 		inviteRedemptions:     make(map[string][]InviteRedemption),
 		accountRedemptions:    make(map[string]map[string]bool),
 		providerEarnings:      make([]ProviderEarning, 0),
+		providerPayouts:       make([]ProviderPayout, 0),
 		releases:              make(map[string]*Release),
 		providerRecords:       make(map[string]*ProviderRecord),
 		reputationRecords:     make(map[string]*ReputationRecord),
@@ -271,17 +276,7 @@ func (s *MemoryStore) Credit(accountID string, amountMicroUSD int64, entryType L
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.balances[accountID] += amountMicroUSD
-	s.ledgerSeq++
-	s.ledgerEntries = append(s.ledgerEntries, LedgerEntry{
-		ID:             s.ledgerSeq,
-		AccountID:      accountID,
-		Type:           entryType,
-		AmountMicroUSD: amountMicroUSD,
-		BalanceAfter:   s.balances[accountID],
-		Reference:      reference,
-		CreatedAt:      time.Now(),
-	})
+	s.creditLocked(accountID, amountMicroUSD, entryType, reference, time.Now())
 	return nil
 }
 
@@ -323,6 +318,20 @@ func (s *MemoryStore) LedgerHistory(accountID string) []LedgerEntry {
 		return []LedgerEntry{}
 	}
 	return entries
+}
+
+func (s *MemoryStore) creditLocked(accountID string, amountMicroUSD int64, entryType LedgerEntryType, reference string, createdAt time.Time) {
+	s.balances[accountID] += amountMicroUSD
+	s.ledgerSeq++
+	s.ledgerEntries = append(s.ledgerEntries, LedgerEntry{
+		ID:             s.ledgerSeq,
+		AccountID:      accountID,
+		Type:           entryType,
+		AmountMicroUSD: amountMicroUSD,
+		BalanceAfter:   s.balances[accountID],
+		Reference:      reference,
+		CreatedAt:      createdAt,
+	})
 }
 
 // --- Referral System ---
@@ -892,6 +901,138 @@ func (s *MemoryStore) GetAccountEarnings(accountID string, limit int) ([]Provide
 		return []ProviderEarning{}, nil
 	}
 	return results, nil
+}
+
+// GetProviderEarningsSummary returns lifetime aggregates for a provider node.
+func (s *MemoryStore) GetProviderEarningsSummary(providerKey string) (ProviderEarningsSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var summary ProviderEarningsSummary
+	for _, earning := range s.providerEarnings {
+		if earning.ProviderKey != providerKey {
+			continue
+		}
+		summary.Count++
+		summary.TotalMicroUSD += earning.AmountMicroUSD
+	}
+
+	return summary, nil
+}
+
+// GetAccountEarningsSummary returns lifetime aggregates for an account.
+func (s *MemoryStore) GetAccountEarningsSummary(accountID string) (ProviderEarningsSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var summary ProviderEarningsSummary
+	for _, earning := range s.providerEarnings {
+		if earning.AccountID != accountID {
+			continue
+		}
+		summary.Count++
+		summary.TotalMicroUSD += earning.AmountMicroUSD
+	}
+
+	return summary, nil
+}
+
+// RecordProviderPayout stores a payout record for a provider wallet.
+func (s *MemoryStore) RecordProviderPayout(payout *ProviderPayout) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.providerPayoutSeq++
+	cp := *payout
+	cp.ID = s.providerPayoutSeq
+	if cp.Timestamp.IsZero() {
+		cp.Timestamp = time.Now()
+	}
+	s.providerPayouts = append(s.providerPayouts, cp)
+	return nil
+}
+
+// ListProviderPayouts returns all provider payout records in creation order.
+func (s *MemoryStore) ListProviderPayouts() ([]ProviderPayout, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.providerPayouts) == 0 {
+		return []ProviderPayout{}, nil
+	}
+
+	out := make([]ProviderPayout, len(s.providerPayouts))
+	copy(out, s.providerPayouts)
+	return out, nil
+}
+
+// SettleProviderPayout marks a provider payout as settled.
+func (s *MemoryStore) SettleProviderPayout(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.providerPayouts {
+		if s.providerPayouts[i].ID != id {
+			continue
+		}
+		if s.providerPayouts[i].Settled {
+			return fmt.Errorf("provider payout %d already settled", id)
+		}
+		s.providerPayouts[i].Settled = true
+		return nil
+	}
+
+	return fmt.Errorf("provider payout %d not found", id)
+}
+
+// CreditProviderAccount atomically credits a linked provider account and records
+// the corresponding per-node earning.
+func (s *MemoryStore) CreditProviderAccount(earning *ProviderEarning) error {
+	if earning == nil {
+		return fmt.Errorf("provider earning is required")
+	}
+	if earning.AccountID == "" {
+		return fmt.Errorf("provider earning account_id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := *earning
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = time.Now()
+	}
+
+	s.creditLocked(cp.AccountID, cp.AmountMicroUSD, LedgerPayout, cp.JobID, cp.CreatedAt)
+	s.providerEarningsSeq++
+	cp.ID = s.providerEarningsSeq
+	s.providerEarnings = append(s.providerEarnings, cp)
+	return nil
+}
+
+// CreditProviderWallet atomically credits an unlinked provider wallet and
+// records the corresponding payout history row.
+func (s *MemoryStore) CreditProviderWallet(payout *ProviderPayout) error {
+	if payout == nil {
+		return fmt.Errorf("provider payout is required")
+	}
+	if payout.ProviderAddress == "" {
+		return fmt.Errorf("provider payout address is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := *payout
+	if cp.Timestamp.IsZero() {
+		cp.Timestamp = time.Now()
+	}
+
+	s.creditLocked(cp.ProviderAddress, cp.AmountMicroUSD, LedgerPayout, cp.JobID, cp.Timestamp)
+	s.providerPayoutSeq++
+	cp.ID = s.providerPayoutSeq
+	s.providerPayouts = append(s.providerPayouts, cp)
+	return nil
 }
 
 // --- Releases ---

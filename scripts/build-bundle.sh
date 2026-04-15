@@ -26,6 +26,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUNDLE_DIR="/tmp/eigeninference-bundle"
 TARBALL="/tmp/eigeninference-bundle-macos-arm64.tar.gz"
+PBS_TAG="20260408"
+PBS_PYTHON_VERSION="3.12.13"
+PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PBS_PYTHON_VERSION}+${PBS_TAG}-aarch64-apple-darwin-install_only.tar.gz"
 
 UPLOAD=false
 SKIP_BUILD=false
@@ -43,21 +46,12 @@ echo ""
 
 # ─── 1. Build Rust provider ──────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
-    echo "1. Building darkbloom (Rust, --no-default-features)..."
-    cd "$PROJECT_DIR/provider"
-    cargo build --release --no-default-features 2>&1 | tail -3
-    echo "   ✓ darkbloom ($(du -h target/release/darkbloom | cut -f1))"
+    echo "1. Preparing portable Python runtime for Rust build..."
+    echo "   darkbloom build is deferred until the portable runtime is ready"
     echo ""
 else
     echo "1. Skipping Rust build (--skip-build)"
     echo ""
-fi
-
-# Verify binary exists
-PROVIDER_BIN="$PROJECT_DIR/provider/target/release/darkbloom"
-if [ ! -f "$PROVIDER_BIN" ]; then
-    echo "   ERROR: $PROVIDER_BIN not found. Run without --skip-build."
-    exit 1
 fi
 
 # ─── 2. Build Swift enclave CLI ───────────────────────────────
@@ -77,39 +71,28 @@ if [ ! -f "$ENCLAVE_BIN" ]; then
     echo "   WARNING: eigeninference-enclave not found. Attestation will be unavailable."
 fi
 
-# ─── 3. Create Python 3.12 venv with inference deps ──────────
-echo "3. Creating Python venv with inference runtime..."
+# ─── 3. Create portable Python 3.12 runtime with inference deps ──────────
+echo "3. Creating portable Python runtime with inference deps..."
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR"
 
-# Find Python 3.12
-PYTHON312=""
-for candidate in python3.12 python3; do
-    if command -v "$candidate" &>/dev/null; then
-        version=$("$candidate" --version 2>&1 | awk '{print $2}')
-        if [[ "$version" == 3.12.* ]]; then
-            PYTHON312="$candidate"
-            break
-        fi
-    fi
-done
+echo "   Downloading python-build-standalone ${PBS_PYTHON_VERSION}..."
+curl -fsSL "$PBS_URL" -o /tmp/eigeninference-python.tar.gz
+mkdir -p "$BUNDLE_DIR/python"
+tar xzf /tmp/eigeninference-python.tar.gz --strip-components=1 -C "$BUNDLE_DIR/python"
+rm -f /tmp/eigeninference-python.tar.gz
 
-if [ -z "$PYTHON312" ]; then
-    echo "   ERROR: Python 3.12 not found. Install it first."
-    exit 1
-fi
-
-echo "   Using $PYTHON312 ($($PYTHON312 --version))"
-"$PYTHON312" -m venv "$BUNDLE_DIR/python"
-source "$BUNDLE_DIR/python/bin/activate"
+PYTHON312="$BUNDLE_DIR/python/bin/python3.12"
+echo "   Using $PYTHON312 ($("$PYTHON312" --version))"
+"$PYTHON312" -m pip install --quiet --upgrade pip
 
 echo "   Installing vllm-mlx and dependencies..."
-pip install --quiet --no-cache-dir \
+"$PYTHON312" -m pip install --quiet --no-cache-dir \
   'mlx-lm>=0.31.2' \
   'git+https://github.com/Gajesh2007/vllm-mlx.git@main' \
   grpcio flatbuffers Pillow mlx-audio
 # Force-upgrade mlx-lm in case a transitive dep pinned an older version
-pip install --quiet --no-cache-dir --upgrade 'mlx-lm>=0.31.2'
+"$PYTHON312" -m pip install --quiet --no-cache-dir --upgrade 'mlx-lm>=0.31.2'
 
 echo "   Stripping unnecessary packages (keeping pip)..."
 cd "$BUNDLE_DIR/python/lib/python3.12/site-packages"
@@ -119,7 +102,12 @@ find "$BUNDLE_DIR/python" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/nul
 # Remove EXTERNALLY-MANAGED so pip works without --break-system-packages
 rm -f "$BUNDLE_DIR/python/lib/python3.12/EXTERNALLY-MANAGED"
 
-deactivate
+echo "   Code-signing portable Python runtime..."
+find "$BUNDLE_DIR/python" -type f | while read -r file; do
+    if file "$file" | grep -q "Mach-O"; then
+        codesign --force --sign - --options runtime "$file"
+    fi
+done
 
 PYTHON_SIZE=$(du -sh "$BUNDLE_DIR/python" | cut -f1)
 echo "   ✓ Python venv ($PYTHON_SIZE)"
@@ -145,17 +133,47 @@ else
 fi
 echo ""
 
+# ─── 3.5. Build Rust provider against portable Python ────────
+if [ "$SKIP_BUILD" = false ]; then
+    echo "3.5. Building darkbloom against portable Python..."
+    cd "$PROJECT_DIR/provider"
+    PYO3_PYTHON="$PYTHON312" \
+    PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
+    cargo build --release 2>&1 | tail -3
+    echo "   ✓ darkbloom ($(du -h target/release/darkbloom | cut -f1))"
+    echo ""
+else
+    echo "3.5. Reusing existing darkbloom build (--skip-build)"
+    echo ""
+fi
+
+PROVIDER_BIN="$PROJECT_DIR/provider/target/release/darkbloom"
+if [ ! -f "$PROVIDER_BIN" ]; then
+    echo "   ERROR: $PROVIDER_BIN not found. Run without --skip-build."
+    exit 1
+fi
+
 # ─── 4. Copy and code-sign binaries ──────────────────────────
 echo "4. Copying and code-signing binaries..."
 ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
+mkdir -p "$BUNDLE_DIR/bin"
 
-cp "$PROVIDER_BIN" "$BUNDLE_DIR/darkbloom"
-codesign --force --sign - --entitlements "$ENTITLEMENTS" --options runtime "$BUNDLE_DIR/darkbloom"
+cp "$PROVIDER_BIN" "$BUNDLE_DIR/bin/darkbloom"
+PYTHON_LOAD_PATH=$(otool -L "$BUNDLE_DIR/bin/darkbloom" | awk '/libpython3\.12\.dylib/ {print $1; exit}')
+if [ -z "$PYTHON_LOAD_PATH" ]; then
+    echo "   ERROR: could not find libpython linkage in darkbloom"
+    exit 1
+fi
+install_name_tool -change \
+    "$PYTHON_LOAD_PATH" \
+    "@executable_path/../python/lib/libpython3.12.dylib" \
+    "$BUNDLE_DIR/bin/darkbloom"
+codesign --force --sign - --entitlements "$ENTITLEMENTS" --options runtime "$BUNDLE_DIR/bin/darkbloom"
 echo "   ✓ darkbloom (signed with hypervisor entitlement)"
 
 if [ -f "$ENCLAVE_BIN" ]; then
-    cp "$ENCLAVE_BIN" "$BUNDLE_DIR/eigeninference-enclave"
-    codesign --force --sign - --entitlements "$ENTITLEMENTS" --options runtime "$BUNDLE_DIR/eigeninference-enclave"
+    cp "$ENCLAVE_BIN" "$BUNDLE_DIR/bin/eigeninference-enclave"
+    codesign --force --sign - --entitlements "$ENTITLEMENTS" --options runtime "$BUNDLE_DIR/bin/eigeninference-enclave"
     echo "   ✓ eigeninference-enclave (signed)"
 fi
 echo ""
@@ -175,9 +193,9 @@ elif command -v ffmpeg &>/dev/null; then
 fi
 
 if [ -n "$FFMPEG_SRC" ]; then
-    cp "$FFMPEG_SRC" "$BUNDLE_DIR/ffmpeg"
-    chmod +x "$BUNDLE_DIR/ffmpeg"
-    echo "   ✓ ffmpeg ($(du -h "$BUNDLE_DIR/ffmpeg" | cut -f1), from $FFMPEG_SRC)"
+    cp "$FFMPEG_SRC" "$BUNDLE_DIR/bin/ffmpeg"
+    chmod +x "$BUNDLE_DIR/bin/ffmpeg"
+    echo "   ✓ ffmpeg ($(du -h "$BUNDLE_DIR/bin/ffmpeg" | cut -f1), from $FFMPEG_SRC)"
 else
     echo "   ⚠ ffmpeg not found. Place a static binary at vendor/ffmpeg or /tmp/ffmpeg-macos-arm64"
     echo "     The installer will attempt to download it at install time."
@@ -188,7 +206,7 @@ echo ""
 echo "6. Including stt_server.py..."
 STT_SERVER="$PROJECT_DIR/provider/stt_server.py"
 if [ -f "$STT_SERVER" ]; then
-    cp "$STT_SERVER" "$BUNDLE_DIR/stt_server.py"
+    cp "$STT_SERVER" "$BUNDLE_DIR/bin/stt_server.py"
     echo "   ✓ stt_server.py"
 else
     echo "   ⚠ stt_server.py not found at $STT_SERVER"
@@ -205,9 +223,9 @@ cd "$DRAWTHINGS_DIR"
 swift build -c release --product gRPCServerCLI 2>&1 | tail -3
 GRPC_BIN="$DRAWTHINGS_DIR/.build/arm64-apple-macosx/release/gRPCServerCLI"
 if [ -f "$GRPC_BIN" ]; then
-    cp "$GRPC_BIN" "$BUNDLE_DIR/gRPCServerCLI"
-    chmod +x "$BUNDLE_DIR/gRPCServerCLI"
-    echo "   ✓ gRPCServerCLI ($(du -h "$BUNDLE_DIR/gRPCServerCLI" | cut -f1))"
+    cp "$GRPC_BIN" "$BUNDLE_DIR/bin/gRPCServerCLI"
+    chmod +x "$BUNDLE_DIR/bin/gRPCServerCLI"
+    echo "   ✓ gRPCServerCLI ($(du -h "$BUNDLE_DIR/bin/gRPCServerCLI" | cut -f1))"
 else
     echo "   ⚠ gRPCServerCLI build failed — image generation will not work"
 fi
@@ -284,7 +302,7 @@ done
 TEMPLATE_HASHES_JSON+="}"
 
 # Write manifest.json into the bundle
-BINARY_HASH_PRE=$(shasum -a 256 "$BUNDLE_DIR/darkbloom" | cut -d' ' -f1)
+BINARY_HASH_PRE=$(shasum -a 256 "$BUNDLE_DIR/bin/darkbloom" | cut -d' ' -f1)
 cat > "$BUNDLE_DIR/manifest.json" << MANIFEST
 {
     "python_hash": "$PYTHON_HASH",

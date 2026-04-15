@@ -197,7 +197,7 @@ async fn proxy_streaming_response(resp: reqwest::Response) -> Response {
 /// Start the local HTTP server.
 pub async fn start_server(port: u16, backend_url: String) -> Result<()> {
     let app = create_router(backend_url);
-    let addr = format!("0.0.0.0:{port}");
+    let addr = format!("127.0.0.1:{port}");
 
     tracing::info!("Local API server listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

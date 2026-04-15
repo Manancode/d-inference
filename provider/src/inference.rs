@@ -20,7 +20,9 @@
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use sha2::{Digest, Sha256};
 use std::ffi::CString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -30,6 +32,7 @@ use tokio::sync::Mutex;
 /// (fallback, single-request) depending on what's installed.
 pub struct InProcessEngine {
     model_id: String,
+    cache_key: String,
     engine_type: EngineType,
     pub loaded: bool,
 }
@@ -57,11 +60,54 @@ pub struct StreamToken {
     pub finish_reason: Option<String>,
 }
 
+const VLLM_ENGINE_STORE: &str = "_eigeninference_vllm_engines";
+const MLX_ENGINE_STORE: &str = "_eigeninference_mlx_engines";
+
+fn engine_cache_key_for(model_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(model_id.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn python_runtime_roots(exe: &Path, home_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    // App bundle layouts.
+    let mut search = exe;
+    while let Some(parent) = search.parent() {
+        if search.extension().and_then(|e| e.to_str()) == Some("app") {
+            for rel in [
+                "Contents/python",
+                "Contents/Frameworks/python",
+                "Contents/Resources/python",
+            ] {
+                let candidate = search.join(rel);
+                if candidate.exists() {
+                    roots.push(candidate);
+                }
+            }
+            break;
+        }
+        search = parent;
+    }
+
+    // Shared CLI runtime installed by install.sh.
+    if let Some(home) = home_dir {
+        let candidate = home.join(".darkbloom/python");
+        if candidate.exists() {
+            roots.push(candidate);
+        }
+    }
+
+    roots
+}
+
 impl InProcessEngine {
     /// Create a new in-process engine for the given model.
     /// Does not load the model yet — call `load()` first.
     pub fn new(model_id: String) -> Self {
         Self {
+            cache_key: engine_cache_key_for(&model_id),
             model_id,
             engine_type: EngineType::VllmMlx, // will detect at load time
             loaded: false,
@@ -76,54 +122,55 @@ impl InProcessEngine {
     /// every prompt.
     ///
     /// With this, Python only loads from:
-    ///   1. Our app bundle's Frameworks/python/ directory (signed, tamper-proof)
-    ///   2. The Python stdlib (needed for basic operation)
+    ///   1. Our signed app bundle runtime (preferred)
+    ///   2. The verified `~/.darkbloom/python` runtime installed by the CLI
     ///
     /// The provider cannot inject code because:
-    ///   - sys.path is locked to our bundle
-    ///   - The bundle is code-signed; any modification breaks the signature
-    ///   - SIP enforces the signature
+    ///   - sys.path is locked to our approved runtime roots
+    ///   - app bundle runtimes are code-signed
+    ///   - CLI runtimes are hash-verified against the coordinator manifest
     fn lock_python_path(py: Python<'_>) -> Result<()> {
         let exe = std::env::current_exe().context("cannot find executable path")?;
 
-        // Find the app bundle's Frameworks/python directory
-        let mut search = exe.as_path();
-        let mut bundle_python = None;
-        while let Some(parent) = search.parent() {
-            if search.extension().and_then(|e| e.to_str()) == Some("app") {
-                let candidate = search.join("Contents/Frameworks/python");
-                if candidate.exists() {
-                    bundle_python = Some(candidate);
-                }
-                break;
-            }
-            search = parent;
-        }
-
-        if let Some(ref bundled_path) = bundle_python {
-            let path_str = bundled_path.to_string_lossy();
+        let allowed_roots = python_runtime_roots(&exe, dirs::home_dir().as_deref());
+        if !allowed_roots.is_empty() {
+            let allowed_roots: Vec<String> = allowed_roots
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            let allowed_json =
+                serde_json::to_string(&allowed_roots).context("failed to encode runtime roots")?;
             let code = CString::new(format!(
-                "import sys\n\
-                 # Lock sys.path to bundled packages only.\n\
-                 # Keep stdlib paths (containing 'lib/python') but remove site-packages.\n\
-                 stdlib = [p for p in sys.path if 'lib/python' in p and 'site-packages' not in p]\n\
-                 sys.path = ['{bundled}'] + stdlib\n\
-                 # Prevent future modifications\n\
-                 import importlib\n\
+                "import importlib\n\
+                 import os\n\
+                 import sys\n\
+                 allowed = [os.path.realpath(p) for p in {allowed_json}]\n\
+                 locked = []\n\
+                 for root in allowed:\n\
+                     lib = os.path.join(root, 'lib', 'python3.12')\n\
+                     site = os.path.join(lib, 'site-packages')\n\
+                     dyn = os.path.join(lib, 'lib-dynload')\n\
+                     for candidate in (site, dyn, lib):\n\
+                         if os.path.exists(candidate) and candidate not in locked:\n\
+                             locked.append(candidate)\n\
+                 for path in sys.path:\n\
+                     real = os.path.realpath(path or '.')\n\
+                     if any(real == root or real.startswith(root + os.sep) for root in allowed):\n\
+                         if path not in locked:\n\
+                             locked.append(path)\n\
+                 sys.path = locked\n\
                  importlib.invalidate_caches()\n",
-                bundled = path_str
+                allowed_json = allowed_json
             ))
             .unwrap();
             py.run(code.as_c_str(), None, None)
                 .context("failed to lock Python import path")?;
-            tracing::info!("Python path locked to bundled packages: {}", path_str);
+            tracing::info!("Python path locked to runtime roots: {:?}", allowed_roots);
         } else {
-            // Not running from an app bundle — development mode.
-            // In development, we use system packages but log a warning.
+            // Development fallback only.
             tracing::warn!(
-                "Not running from signed app bundle — using system Python packages. \
-                 This is acceptable for development but NOT for production. \
-                 In production, build with scripts/bundle-app.sh to ship bundled packages."
+                "No approved Python runtime roots found — using system Python packages. \
+                 This is acceptable for development but NOT for production."
             );
         }
 
@@ -176,10 +223,34 @@ impl InProcessEngine {
         Ok(())
     }
 
+    /// Drop the Python-side model objects so GPU memory can be reclaimed.
+    pub fn unload(&mut self) -> Result<()> {
+        if !self.loaded {
+            return Ok(());
+        }
+
+        Python::with_gil(|py| match self.engine_type {
+            EngineType::VllmMlx => self.unload_vllm_mlx(py),
+            EngineType::MlxLm => self.unload_mlx_lm(py),
+        })?;
+
+        self.loaded = false;
+        tracing::info!("Model unloaded in-process: {}", self.model_id);
+        Ok(())
+    }
+
     fn load_vllm_mlx(&self, py: Python<'_>) -> Result<()> {
+        let model = serde_json::to_string(&self.model_id).context("invalid model path")?;
+        let cache_key = serde_json::to_string(&self.cache_key).context("invalid cache key")?;
         let code = format!(
-            "import sys\nfrom vllm_mlx import LLM\n_eigeninference_engine = LLM(model=\"{model}\")\n",
-            model = self.model_id
+            "import builtins\n\
+             from vllm_mlx import LLM\n\
+             if not hasattr(builtins, '{store}'):\n\
+                 builtins.{store} = {{}}\n\
+             builtins.{store}[{cache_key}] = LLM(model={model})\n",
+            store = VLLM_ENGINE_STORE,
+            cache_key = cache_key,
+            model = model
         );
         let ccode = CString::new(code).context("invalid code string")?;
         py.run(ccode.as_c_str(), None, None)
@@ -188,14 +259,55 @@ impl InProcessEngine {
     }
 
     fn load_mlx_lm(&self, py: Python<'_>) -> Result<()> {
-        // Store model in builtins so it persists across all with_gil calls and threads
+        let model = serde_json::to_string(&self.model_id).context("invalid model path")?;
+        let cache_key = serde_json::to_string(&self.cache_key).context("invalid cache key")?;
         let code = format!(
-            "import mlx_lm, builtins\nbuiltins._eigeninference_model, builtins._eigeninference_tokenizer = mlx_lm.load(\"{model}\")\n",
-            model = self.model_id
+            "import builtins\n\
+             import mlx_lm\n\
+             if not hasattr(builtins, '{store}'):\n\
+                 builtins.{store} = {{}}\n\
+             builtins.{store}[{cache_key}] = mlx_lm.load({model})\n",
+            store = MLX_ENGINE_STORE,
+            cache_key = cache_key,
+            model = model
         );
         let ccode = CString::new(code).context("invalid code string")?;
         py.run(ccode.as_c_str(), None, None)
             .context("failed to load model via mlx-lm")?;
+        Ok(())
+    }
+
+    fn unload_vllm_mlx(&self, py: Python<'_>) -> Result<()> {
+        let cache_key = serde_json::to_string(&self.cache_key).context("invalid cache key")?;
+        let code = format!(
+            "import builtins, gc\n\
+             store = getattr(builtins, '{store}', None)\n\
+             if isinstance(store, dict):\n\
+                 store.pop({cache_key}, None)\n\
+             gc.collect()\n",
+            store = VLLM_ENGINE_STORE,
+            cache_key = cache_key
+        );
+        let ccode = CString::new(code).context("invalid code string")?;
+        py.run(ccode.as_c_str(), None, None)
+            .context("failed to unload vllm-mlx engine")?;
+        Ok(())
+    }
+
+    fn unload_mlx_lm(&self, py: Python<'_>) -> Result<()> {
+        let cache_key = serde_json::to_string(&self.cache_key).context("invalid cache key")?;
+        let code = format!(
+            "import builtins, gc\n\
+             store = getattr(builtins, '{store}', None)\n\
+             if isinstance(store, dict):\n\
+                 store.pop({cache_key}, None)\n\
+             gc.collect()\n",
+            store = MLX_ENGINE_STORE,
+            cache_key = cache_key
+        );
+        let ccode = CString::new(code).context("invalid code string")?;
+        py.run(ccode.as_c_str(), None, None)
+            .context("failed to unload mlx-lm engine")?;
         Ok(())
     }
 
@@ -226,14 +338,17 @@ impl InProcessEngine {
         let prompt = format_chat_prompt(messages);
 
         let locals = PyDict::new(py);
+        locals.set_item("engine_key", &self.cache_key)?;
         locals.set_item("prompt", &prompt)?;
         locals.set_item("max_tokens", max_tokens)?;
         locals.set_item("temperature", temperature)?;
 
         let code = CString::new(
-            "from vllm import SamplingParams\n\
+            "import builtins\n\
+             from vllm import SamplingParams\n\
              params = SamplingParams(max_tokens=int(max_tokens), temperature=float(temperature))\n\
-             outputs = _eigeninference_engine.generate([prompt], params)\n\
+             engine = builtins._eigeninference_vllm_engines[engine_key]\n\
+             outputs = engine.generate([prompt], params)\n\
              _result_text = outputs[0].outputs[0].text\n\
              _result_prompt_tokens = len(outputs[0].prompt_token_ids)\n\
              _result_completion_tokens = len(outputs[0].outputs[0].token_ids)\n",
@@ -274,13 +389,13 @@ impl InProcessEngine {
         // Import modules and call generate directly via PyO3 API
         let mlx_lm = py.import("mlx_lm").context("failed to import mlx_lm")?;
         let builtins = py.import("builtins").context("failed to import builtins")?;
-
-        let model = builtins
-            .getattr("_eigeninference_model")
-            .context("model not loaded in builtins")?;
-        let tokenizer = builtins
-            .getattr("_eigeninference_tokenizer")
-            .context("tokenizer not loaded in builtins")?;
+        let engines = builtins
+            .getattr(MLX_ENGINE_STORE)
+            .context("mlx-lm engine store not initialized")?;
+        let entry = engines
+            .get_item(self.cache_key.as_str())
+            .context("mlx-lm engine not loaded for model")?;
+        let (model, tokenizer): (PyObject, PyObject) = entry.extract()?;
 
         let kwargs = PyDict::new(py);
         kwargs.set_item("prompt", prompt.as_str())?;
@@ -319,15 +434,18 @@ impl InProcessEngine {
             let prompt = format_chat_prompt(messages);
 
             let locals = PyDict::new(py);
+            locals.set_item("engine_key", &self.cache_key)?;
             locals.set_item("prompt", &prompt)?;
             locals.set_item("max_tokens", max_tokens)?;
             locals.set_item("temperature", temperature)?;
 
             let (code_str, engine_name) = match self.engine_type {
                 EngineType::VllmMlx => (
-                    "from vllm import SamplingParams\n\
+                    "import builtins\n\
+                     from vllm import SamplingParams\n\
                      params = SamplingParams(max_tokens=int(max_tokens), temperature=float(temperature))\n\
-                     _stream_outputs = _eigeninference_engine.generate([prompt], params, use_tqdm=False)\n\
+                     engine = builtins._eigeninference_vllm_engines[engine_key]\n\
+                     _stream_outputs = engine.generate([prompt], params, use_tqdm=False)\n\
                      _stream_tokens = []\n\
                      for output in _stream_outputs:\n\
                          for o in output.outputs:\n\
@@ -336,9 +454,12 @@ impl InProcessEngine {
                 ),
                 EngineType::MlxLm => (
                     "import mlx_lm, builtins\n\
+                     _engine = builtins._eigeninference_mlx_engines[engine_key]\n\
+                     _model = _engine[0]\n\
+                     _tokenizer = _engine[1]\n\
                      _stream_tokens = []\n\
                      for token in mlx_lm.stream_generate(\n\
-                         builtins._eigeninference_model, builtins._eigeninference_tokenizer,\n\
+                         _model, _tokenizer,\n\
                          prompt=prompt, max_tokens=int(max_tokens)):\n\
                          _stream_tokens.append(token)\n",
                     "mlx-lm",
@@ -434,6 +555,42 @@ impl SharedEngine {
         })
         .await?
     }
+
+    /// Run streaming inference and collect the emitted tokens.
+    pub async fn stream_generate(
+        &self,
+        messages: Vec<serde_json::Value>,
+        max_tokens: u64,
+        temperature: f64,
+    ) -> Result<(u64, u64, Vec<StreamToken>)> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let e = engine.blocking_lock();
+            let mut tokens = Vec::new();
+            let (prompt_tokens, completion_tokens) =
+                e.stream_generate(&messages, max_tokens, temperature, |token| {
+                    tokens.push(token);
+                })?;
+            Ok((prompt_tokens, completion_tokens, tokens))
+        })
+        .await?
+    }
+
+    /// Unload the model so GPU memory can be reclaimed.
+    pub async fn unload(&self) -> Result<()> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut e = engine.blocking_lock();
+            e.unload()
+        })
+        .await?
+    }
+
+    /// Report whether the underlying engine is loaded.
+    pub async fn is_loaded(&self) -> bool {
+        let engine = self.inner.lock().await;
+        engine.is_loaded()
+    }
 }
 
 /// Implement the Backend trait for InProcessEngine so it can be used
@@ -445,14 +602,11 @@ impl crate::backend::Backend for SharedEngine {
     }
 
     async fn stop(&mut self) -> Result<()> {
-        // In-process engine: just drop the Python objects
-        tracing::info!("Stopping in-process inference engine");
-        Ok(())
+        self.unload().await
     }
 
     async fn health(&self) -> bool {
-        let engine = self.inner.lock().await;
-        engine.is_loaded()
+        self.is_loaded().await
     }
 
     fn base_url(&self) -> String {
@@ -513,6 +667,57 @@ mod tests {
         let result = engine.generate(&[], 100, 0.7);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not loaded"));
+    }
+
+    #[test]
+    fn test_engine_cache_key_stable_and_unique() {
+        let a = engine_cache_key_for("model-a");
+        let b = engine_cache_key_for("model-a");
+        let c = engine_cache_key_for("model-b");
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.len(), 64);
+    }
+
+    #[test]
+    fn test_python_runtime_roots_discovers_bundle_and_home_runtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app_root = tmp.path().join("EigenInference.app");
+        let exe = app_root.join("Contents/MacOS/darkbloom");
+        let frameworks_python = app_root.join("Contents/Frameworks/python");
+        let resources_python = app_root.join("Contents/Resources/python");
+        let home = tmp.path().join("home");
+        let home_python = home.join(".darkbloom/python");
+
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::create_dir_all(&frameworks_python).unwrap();
+        std::fs::create_dir_all(&resources_python).unwrap();
+        std::fs::create_dir_all(&home_python).unwrap();
+
+        let roots = python_runtime_roots(&exe, Some(home.as_path()));
+
+        assert_eq!(
+            roots,
+            vec![frameworks_python, resources_python, home_python]
+        );
+    }
+
+    #[test]
+    fn test_python_runtime_roots_falls_back_to_home_runtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("bin/darkbloom");
+        let home = tmp.path().join("home");
+        let home_python = home.join(".darkbloom/python");
+
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::create_dir_all(&home_python).unwrap();
+
+        let roots = python_runtime_roots(&exe, Some(home.as_path()));
+
+        assert_eq!(roots, vec![home_python]);
     }
 
     #[test]

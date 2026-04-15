@@ -57,7 +57,7 @@ func consumerKeyFromContext(ctx context.Context) string {
 
 // LatestProviderVersion is the current version of the provider CLI.
 // Update this when uploading a new provider bundle.
-var LatestProviderVersion = "0.2.20"
+var LatestProviderVersion = "0.3.9"
 
 // Server is the main HTTP/WS server for the coordinator. It ties together
 // the provider registry, key store, payment ledger, billing service, and HTTP routing.

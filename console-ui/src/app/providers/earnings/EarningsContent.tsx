@@ -44,10 +44,14 @@ interface EarningsResponse {
   total_micro_usd: number;
   total_usd: string;
   count: number;
+  recent_count: number;
+  history_limit: number;
+  available_balance_micro_usd: number;
+  available_balance_usd: string;
 }
 
 export default function EarningsContent() {
-  const { authenticated, login, walletAddress } = useAuth();
+  const { authenticated, login, walletAddress, getAccessToken } = useAuth();
   const { signAndSendTransaction } = useSignAndSendTransaction();
   const { wallets } = useWallets();
   const [data, setData] = useState<EarningsResponse | null>(null);
@@ -64,20 +68,29 @@ export default function EarningsContent() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawResult, setWithdrawResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  const getAuthHeaders = useCallback(async () => {
+    const accessToken = await getAccessToken().catch(() => null);
+    if (accessToken) {
+      return { Authorization: `Bearer ${accessToken}` };
+    }
+
+    const apiKey = localStorage.getItem("darkbloom_api_key") || "";
+    return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+  }, [getAccessToken]);
+
   const fetchEarnings = useCallback(async () => {
+    setError(null);
     try {
-      const apiKey = localStorage.getItem("darkbloom_api_key") || "";
       const coordinatorUrl =
         localStorage.getItem("darkbloom_coordinator_url") ||
         process.env.NEXT_PUBLIC_COORDINATOR_URL ||
         "https://api.darkbloom.dev";
+      const headers = await getAuthHeaders();
 
       const res = await fetch(
         `${coordinatorUrl}/v1/provider/account-earnings?limit=100`,
         {
-          headers: {
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-          },
+          headers,
         }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -87,7 +100,7 @@ export default function EarningsContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAuthHeaders]);
 
   useEffect(() => {
     if (!authenticated) {
@@ -102,25 +115,25 @@ export default function EarningsContent() {
   // Step 1: Claim all earnings → sends USDC from coordinator hot wallet to Privy wallet
   const handleClaim = useCallback(async () => {
     if (!walletAddress) return;
-    const totalMicro = data?.total_micro_usd || 0;
-    if (totalMicro < 1_000_000) return;
+    const availableMicro = data?.available_balance_micro_usd || 0;
+    if (availableMicro < 1_000_000) return;
 
     setClaiming(true);
     setClaimResult(null);
     try {
-      const apiKey = localStorage.getItem("darkbloom_api_key") || "";
       const coordinatorUrl =
         localStorage.getItem("darkbloom_coordinator_url") ||
         process.env.NEXT_PUBLIC_COORDINATOR_URL ||
         "https://api.darkbloom.dev";
+      const headers = await getAuthHeaders();
 
-      const amountUsd = (totalMicro / 1_000_000).toFixed(2);
+      const amountUsd = data?.available_balance_usd || (availableMicro / 1_000_000).toFixed(6);
 
       const res = await fetch(`${coordinatorUrl}/v1/billing/withdraw/solana`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          ...headers,
         },
         body: JSON.stringify({
           amount_usd: amountUsd,
@@ -145,7 +158,7 @@ export default function EarningsContent() {
     } finally {
       setClaiming(false);
     }
-  }, [data, walletAddress, fetchEarnings]);
+  }, [data, walletAddress, fetchEarnings, getAuthHeaders]);
 
   // Step 2: Withdraw USDC from Privy wallet → external address (gas-sponsored)
   const handleWithdraw = useCallback(async () => {
@@ -203,7 +216,7 @@ export default function EarningsContent() {
     } finally {
       setWithdrawing(false);
     }
-  }, [withdrawAddr, withdrawAmount, wallets, signAndSendTransaction]);
+  }, [withdrawAddr, withdrawAmount, wallets, signAndSendTransaction, walletAddress]);
 
   if (!authenticated) {
     return (
@@ -241,9 +254,11 @@ export default function EarningsContent() {
   }
 
   const totalEarned = data?.total_usd || "0.000000";
-  const totalMicro = data?.total_micro_usd || 0;
-  const jobCount = data?.count || 0;
-  const canClaim = totalMicro >= 1_000_000;
+  const availableBalance = data?.available_balance_usd || "0.000000";
+  const availableBalanceMicro = data?.available_balance_micro_usd || 0;
+  const totalJobs = data?.count || 0;
+  const recentCount = data?.recent_count ?? data?.earnings.length ?? 0;
+  const canClaim = availableBalanceMicro >= 1_000_000;
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
@@ -271,7 +286,7 @@ export default function EarningsContent() {
             <p className="text-xs text-text-tertiary">Jobs Completed</p>
           </div>
           <p className="text-2xl font-bold text-text-primary">
-            {jobCount}
+            {totalJobs}
           </p>
         </div>
         <div className="rounded-xl bg-bg-secondary shadow-sm p-5">
@@ -280,7 +295,7 @@ export default function EarningsContent() {
             <p className="text-xs text-text-tertiary">Avg per Job</p>
           </div>
           <p className="text-2xl font-bold text-text-primary">
-            ${jobCount > 0 ? (parseFloat(totalEarned) / jobCount).toFixed(6) : "0.00"}
+            ${totalJobs > 0 ? (parseFloat(totalEarned) / totalJobs).toFixed(6) : "0.00"}
           </p>
         </div>
       </div>
@@ -312,7 +327,7 @@ export default function EarningsContent() {
             <div className="flex items-center gap-3">
               <div className="flex-1">
                 <p className="text-sm font-mono text-text-primary">
-                  ${totalEarned} <span className="text-text-tertiary">available</span>
+                  ${availableBalance} <span className="text-text-tertiary">available to withdraw</span>
                 </p>
               </div>
               <button
@@ -325,7 +340,7 @@ export default function EarningsContent() {
               </button>
             </div>
 
-            {!canClaim && totalMicro > 0 && (
+            {!canClaim && availableBalanceMicro > 0 && (
               <p className="text-xs text-text-tertiary mt-2">
                 Minimum claim is $1.00
               </p>
@@ -398,6 +413,11 @@ export default function EarningsContent() {
       {/* Earnings history */}
       <div>
         <h3 className="text-sm font-semibold text-text-primary mb-3">Recent Activity</h3>
+        {totalJobs > recentCount && (
+          <p className="text-xs text-text-tertiary mb-3">
+            Showing the latest {recentCount} of {totalJobs} payouts.
+          </p>
+        )}
         <div className="rounded-xl bg-bg-secondary shadow-sm overflow-hidden">
           {data?.earnings && data.earnings.length > 0 ? (
             <table className="w-full">

@@ -57,10 +57,22 @@ jobs:
 
       # --- Build ---
 
+      - name: Prepare portable Python for provider build
+        run: |
+          curl -fsSL "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PBS_PYTHON_VERSION}+${PBS_TAG}-aarch64-apple-darwin-install_only.tar.gz" \
+            -o /tmp/build-python.tar.gz
+          rm -rf /tmp/eigeninference-build-python
+          mkdir -p /tmp/eigeninference-build-python
+          tar xzf /tmp/build-python.tar.gz --strip-components=1 -C /tmp/eigeninference-build-python
+          rm -f /tmp/build-python.tar.gz
+          /tmp/eigeninference-build-python/bin/python3.12 --version
+
       - name: Build provider (Rust)
+        env:
+          PYO3_PYTHON: /tmp/eigeninference-build-python/bin/python3.12
         run: |
           cd provider
-          cargo build --release --no-default-features
+          cargo build --release
 
       - name: Build enclave (Swift)
         run: |
@@ -79,6 +91,8 @@ jobs:
       # --- Test ---
 
       - name: Test provider
+        env:
+          PYO3_PYTHON: /tmp/eigeninference-build-python/bin/python3.12
         run: cd provider && cargo test -- --skip proxy::tests --skip server::tests
 
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
@@ -93,13 +107,13 @@ jobs:
       - name: Sign binaries and create bundle
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p /tmp/eigeninference-bundle
+          mkdir -p /tmp/eigeninference-bundle/bin
 
-          cp provider/target/release/darkbloom /tmp/eigeninference-bundle/
-          cp enclave/.build/release/eigeninference-enclave /tmp/eigeninference-bundle/
+          cp provider/target/release/darkbloom /tmp/eigeninference-bundle/bin/
+          cp enclave/.build/release/eigeninference-enclave /tmp/eigeninference-bundle/bin/
 
           # Copy stt_server.py
-          cp provider/stt_server.py /tmp/eigeninference-bundle/
+          cp provider/stt_server.py /tmp/eigeninference-bundle/bin/
 
           # Bundle ffmpeg (installed via Homebrew which verifies bottle checksums)
           FFMPEG_BIN="$(brew --prefix ffmpeg 2>/dev/null)/bin/ffmpeg"
@@ -107,7 +121,17 @@ jobs:
             brew install --quiet ffmpeg
             FFMPEG_BIN="$(brew --prefix ffmpeg)/bin/ffmpeg"
           fi
-          cp "$FFMPEG_BIN" /tmp/eigeninference-bundle/ffmpeg
+          cp "$FFMPEG_BIN" /tmp/eigeninference-bundle/bin/ffmpeg
+
+          PYTHON_LOAD_PATH=$(otool -L /tmp/eigeninference-bundle/bin/darkbloom | awk '/libpython3\.12\.dylib/ {print $1; exit}')
+          if [ -z "$PYTHON_LOAD_PATH" ]; then
+            echo "ERROR: could not find libpython linkage in darkbloom"
+            exit 1
+          fi
+          install_name_tool -change \
+            "$PYTHON_LOAD_PATH" \
+            "@executable_path/../python/lib/libpython3.12.dylib" \
+            /tmp/eigeninference-bundle/bin/darkbloom
 
           # Verify it's a real binary before signing
           file "$FFMPEG_BIN" | grep -q "Mach-O" || { echo "ERROR: ffmpeg is not a Mach-O binary"; exit 1; }
@@ -118,8 +142,8 @@ jobs:
             --keychain "$KEYCHAIN_PATH" \
             --options runtime \
             --timestamp \
-            /tmp/eigeninference-bundle/ffmpeg
-          codesign --verify --verbose /tmp/eigeninference-bundle/ffmpeg
+            /tmp/eigeninference-bundle/bin/ffmpeg
+          codesign --verify --verbose /tmp/eigeninference-bundle/bin/ffmpeg
 
           # Image generation support disabled — re-enable when ready
           # cp /tmp/gRPCServerCLI /tmp/eigeninference-bundle/
@@ -131,13 +155,13 @@ jobs:
             --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
-            /tmp/eigeninference-bundle/darkbloom
+            /tmp/eigeninference-bundle/bin/darkbloom
 
           codesign --force --sign "$DEVELOPER_ID" \
             --keychain "$KEYCHAIN_PATH" \
             --entitlements scripts/entitlements.plist \
             --options runtime \
-            /tmp/eigeninference-bundle/eigeninference-enclave
+            /tmp/eigeninference-bundle/bin/eigeninference-enclave
 
           # Image generation support disabled — re-enable when ready
           # codesign --force --sign "$DEVELOPER_ID" \
@@ -147,8 +171,8 @@ jobs:
           #   /tmp/eigeninference-bundle/gRPCServerCLI
 
           # Verify all signatures
-          codesign --verify --verbose /tmp/eigeninference-bundle/darkbloom
-          codesign --verify --verbose /tmp/eigeninference-bundle/eigeninference-enclave
+          codesign --verify --verbose /tmp/eigeninference-bundle/bin/darkbloom
+          codesign --verify --verbose /tmp/eigeninference-bundle/bin/eigeninference-enclave
           # codesign --verify --verbose /tmp/eigeninference-bundle/gRPCServerCLI
 
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
@@ -172,10 +196,10 @@ jobs:
             --wait --timeout 10m
 
           # Staple the individual binaries
-          xcrun stapler staple /tmp/eigeninference-bundle/darkbloom || true
-          xcrun stapler staple /tmp/eigeninference-bundle/eigeninference-enclave || true
+          xcrun stapler staple /tmp/eigeninference-bundle/bin/darkbloom || true
+          xcrun stapler staple /tmp/eigeninference-bundle/bin/eigeninference-enclave || true
           # xcrun stapler staple /tmp/eigeninference-bundle/gRPCServerCLI || true  # image support disabled
-          xcrun stapler staple /tmp/eigeninference-bundle/ffmpeg || true
+          xcrun stapler staple /tmp/eigeninference-bundle/bin/ffmpeg || true
 
           # Recreate tarball with stapled binaries
           cd /tmp && tar czf eigeninference-bundle-macos-arm64.tar.gz -C eigeninference-bundle .
@@ -185,7 +209,7 @@ jobs:
       - name: Compute hashes
         id: hash
         run: |
-          BINARY_HASH=$(shasum -a 256 /tmp/eigeninference-bundle/darkbloom | cut -d' ' -f1)
+          BINARY_HASH=$(shasum -a 256 /tmp/eigeninference-bundle/bin/darkbloom | cut -d' ' -f1)
           BUNDLE_HASH=$(shasum -a 256 /tmp/eigeninference-bundle-macos-arm64.tar.gz | cut -d' ' -f1)
           echo "binary_hash=$BINARY_HASH" >> "$GITHUB_OUTPUT"
           echo "bundle_hash=$BUNDLE_HASH" >> "$GITHUB_OUTPUT"
@@ -199,7 +223,7 @@ jobs:
           echo "image_bridge_hash=" >> "$GITHUB_OUTPUT"
 
           # Hash ffmpeg (signed)
-          FFMPEG_HASH=$(shasum -a 256 /tmp/eigeninference-bundle/ffmpeg | cut -d' ' -f1)
+          FFMPEG_HASH=$(shasum -a 256 /tmp/eigeninference-bundle/bin/ffmpeg | cut -d' ' -f1)
           echo "ffmpeg_hash=$FFMPEG_HASH" >> "$GITHUB_OUTPUT"
           echo "ffmpeg hash (signed): $FFMPEG_HASH"
 
@@ -262,6 +286,15 @@ jobs:
           /tmp/eigeninference-python/bin/python3.12 -m compileall -q /tmp/eigeninference-python/lib/python3.12/site-packages/ 2>/dev/null || true
           # Remove EXTERNALLY-MANAGED marker so pip works without --break-system-packages
           rm -f /tmp/eigeninference-python/lib/python*/EXTERNALLY-MANAGED
+          # Sign libpython and extension modules so the hardened provider can load them.
+          find /tmp/eigeninference-python -type f | while read -r file; do
+            if file "$file" | grep -q "Mach-O"; then
+              codesign --force --sign "$DEVELOPER_ID" \
+                --keychain "$KEYCHAIN_PATH" \
+                --options runtime \
+                "$file"
+            fi
+          done
           cd -
 
           # Hash the Python binary (this is what providers must match)
@@ -341,8 +374,6 @@ jobs:
             fi
           done
 
-          rm -rf /tmp/eigeninference-python
-
           echo "python_hash=$PYTHON_HASH" >> "$GITHUB_OUTPUT"
           echo "runtime_hash=$RUNTIME_HASH" >> "$GITHUB_OUTPUT"
           echo "template_hashes=$TEMPLATE_HASHES" >> "$GITHUB_OUTPUT"
@@ -380,8 +411,9 @@ jobs:
           CONTENTS="$APP_DIR/Contents"
           MACOS="$CONTENTS/MacOS"
           RESOURCES="$CONTENTS/Resources"
+          PYTHON_ROOT="$CONTENTS/python"
           rm -rf "$APP_DIR"
-          mkdir -p "$MACOS" "$RESOURCES"
+          mkdir -p "$MACOS" "$RESOURCES" "$PYTHON_ROOT"
 
           # Info.plist
           cat > "$CONTENTS/Info.plist" << PLIST
@@ -406,8 +438,17 @@ jobs:
 
           # Copy binaries (same signed binaries as CLI bundle)
           cp "$APP_BIN" "$MACOS/EigenInference"
-          cp /tmp/eigeninference-bundle/darkbloom "$MACOS/darkbloom"
-          cp /tmp/eigeninference-bundle/eigeninference-enclave "$MACOS/eigeninference-enclave" 2>/dev/null || true
+          cp /tmp/eigeninference-bundle/bin/darkbloom "$MACOS/darkbloom"
+          cp /tmp/eigeninference-bundle/bin/eigeninference-enclave "$MACOS/eigeninference-enclave" 2>/dev/null || true
+          cp provider/stt_server.py "$MACOS/stt_server.py"
+          cp -a /tmp/eigeninference-python/. "$PYTHON_ROOT/"
+
+          find "$PYTHON_ROOT" -type f | while read -r file; do
+            if file "$file" | grep -q "Mach-O"; then
+              codesign --force --options runtime \
+                --sign "$DEVELOPER_ID" "$file"
+            fi
+          done
 
           # Sign all binaries with Hardened Runtime
           for bin in "$MACOS"/*; do

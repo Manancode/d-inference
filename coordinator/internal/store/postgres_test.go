@@ -28,7 +28,24 @@ func testPostgresStore(t *testing.T) *PostgresStore {
 	}
 
 	// Clean tables for test isolation.
-	for _, table := range []string{"usage", "payments", "api_keys", "providers"} {
+	for _, table := range []string{
+		"usage",
+		"payments",
+		"api_keys",
+		"balances",
+		"ledger_entries",
+		"billing_sessions",
+		"users",
+		"device_codes",
+		"provider_tokens",
+		"invite_redemptions",
+		"invite_codes",
+		"referrals",
+		"referrers",
+		"provider_earnings",
+		"provider_payouts",
+		"providers",
+	} {
 		if _, err := s.pool.Exec(ctx, "TRUNCATE "+table+" CASCADE"); err != nil {
 			t.Fatalf("truncate %s: %v", table, err)
 		}
@@ -193,6 +210,124 @@ func TestPostgresRecordPaymentDuplicateTxHash(t *testing.T) {
 	err = s.RecordPayment("0xabc123", "0xconsumer", "0xprovider", "0.05", "qwen3.5-9b", 50, 100, "")
 	if err == nil {
 		t.Error("expected error for duplicate tx_hash")
+	}
+}
+
+func TestPostgresProviderPayoutsPersist(t *testing.T) {
+	s := testPostgresStore(t)
+
+	payout := &ProviderPayout{
+		ProviderAddress: "0xprovider-wallet",
+		AmountMicroUSD:  900_000,
+		Model:           "qwen3.5-9b",
+		JobID:           "job-123",
+	}
+	if err := s.RecordProviderPayout(payout); err != nil {
+		t.Fatalf("RecordProviderPayout: %v", err)
+	}
+
+	payouts, err := s.ListProviderPayouts()
+	if err != nil {
+		t.Fatalf("ListProviderPayouts: %v", err)
+	}
+	if len(payouts) != 1 {
+		t.Fatalf("provider payouts = %d, want 1", len(payouts))
+	}
+	if payouts[0].ProviderAddress != payout.ProviderAddress {
+		t.Errorf("provider address = %q, want %q", payouts[0].ProviderAddress, payout.ProviderAddress)
+	}
+	if payouts[0].Settled {
+		t.Fatal("provider payout should start unsettled")
+	}
+
+	if err := s.SettleProviderPayout(payouts[0].ID); err != nil {
+		t.Fatalf("SettleProviderPayout: %v", err)
+	}
+
+	payouts, err = s.ListProviderPayouts()
+	if err != nil {
+		t.Fatalf("ListProviderPayouts after settle: %v", err)
+	}
+	if !payouts[0].Settled {
+		t.Fatal("provider payout should be settled")
+	}
+}
+
+func TestPostgresCreditProviderAccountAtomic(t *testing.T) {
+	s := testPostgresStore(t)
+
+	earning := &ProviderEarning{
+		AccountID:        "acct-linked",
+		ProviderID:       "provider-1",
+		ProviderKey:      "key-1",
+		JobID:            "job-atomic",
+		Model:            "qwen3.5-9b",
+		AmountMicroUSD:   123_000,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+	}
+	if err := s.CreditProviderAccount(earning); err != nil {
+		t.Fatalf("CreditProviderAccount: %v", err)
+	}
+
+	if bal := s.GetBalance("acct-linked"); bal != 123_000 {
+		t.Fatalf("balance = %d, want 123000", bal)
+	}
+
+	history := s.LedgerHistory("acct-linked")
+	if len(history) != 1 {
+		t.Fatalf("ledger history = %d, want 1", len(history))
+	}
+	if history[0].Type != LedgerPayout {
+		t.Fatalf("ledger entry type = %q, want payout", history[0].Type)
+	}
+
+	earnings, err := s.GetAccountEarnings("acct-linked", 10)
+	if err != nil {
+		t.Fatalf("GetAccountEarnings: %v", err)
+	}
+	if len(earnings) != 1 {
+		t.Fatalf("earnings = %d, want 1", len(earnings))
+	}
+	if earnings[0].JobID != "job-atomic" {
+		t.Fatalf("earning job_id = %q, want job-atomic", earnings[0].JobID)
+	}
+}
+
+func TestPostgresCreditProviderWalletAtomic(t *testing.T) {
+	s := testPostgresStore(t)
+
+	payout := &ProviderPayout{
+		ProviderAddress: "0xatomicwallet",
+		AmountMicroUSD:  456_000,
+		Model:           "llama-3",
+		JobID:           "job-wallet",
+	}
+	if err := s.CreditProviderWallet(payout); err != nil {
+		t.Fatalf("CreditProviderWallet: %v", err)
+	}
+
+	if bal := s.GetBalance("0xatomicwallet"); bal != 456_000 {
+		t.Fatalf("wallet balance = %d, want 456000", bal)
+	}
+
+	history := s.LedgerHistory("0xatomicwallet")
+	if len(history) != 1 {
+		t.Fatalf("ledger history = %d, want 1", len(history))
+	}
+	if history[0].Type != LedgerPayout {
+		t.Fatalf("ledger entry type = %q, want payout", history[0].Type)
+	}
+
+	payouts, err := s.ListProviderPayouts()
+	if err != nil {
+		t.Fatalf("ListProviderPayouts: %v", err)
+	}
+	if len(payouts) != 1 {
+		t.Fatalf("provider payouts = %d, want 1", len(payouts))
+	}
+	if payouts[0].JobID != "job-wallet" {
+		t.Fatalf("payout job_id = %q, want job-wallet", payouts[0].JobID)
 	}
 }
 

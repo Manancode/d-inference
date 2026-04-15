@@ -86,6 +86,7 @@ pub struct CoordinatorClient {
     backend_name: String,
     heartbeat_interval: Duration,
     public_key: Option<String>,
+    node_keypair: Arc<crate::crypto::NodeKeyPair>,
     wallet_address: Option<String>,
     attestation: Option<Box<serde_json::value::RawValue>>,
     auth_token: Option<String>,
@@ -115,6 +116,7 @@ impl CoordinatorClient {
         backend_name: String,
         heartbeat_interval: Duration,
         public_key: Option<String>,
+        node_keypair: Arc<crate::crypto::NodeKeyPair>,
     ) -> Self {
         Self {
             url,
@@ -123,6 +125,7 @@ impl CoordinatorClient {
             backend_name,
             heartbeat_interval,
             public_key,
+            node_keypair,
             wallet_address: None,
             attestation: None,
             auth_token: None,
@@ -390,7 +393,7 @@ impl CoordinatorClient {
                                     // Decrypt E2E encrypted body if present
                                     let decrypted_body = if let Some(enc) = encrypted_body {
                                         tracing::info!("Decrypting E2E encrypted request");
-                                        match decrypt_request_body(&enc, self.public_key.as_deref()) {
+                                        match decrypt_request_body(&enc, self.node_keypair.as_ref()) {
                                             Ok(b) => b,
                                             Err(e) => {
                                                 tracing::error!("Failed to decrypt request: {e}");
@@ -412,7 +415,7 @@ impl CoordinatorClient {
                                     // Decrypt E2E encrypted body if present
                                     let decrypted_body = if let Some(enc) = encrypted_body {
                                         tracing::info!("Decrypting E2E encrypted transcription request");
-                                        match decrypt_request_body(&enc, self.public_key.as_deref()) {
+                                        match decrypt_request_body(&enc, self.node_keypair.as_ref()) {
                                             Ok(b) => b,
                                             Err(e) => {
                                                 tracing::error!("Failed to decrypt transcription request: {e}");
@@ -442,7 +445,7 @@ impl CoordinatorClient {
                                     // Decrypt E2E encrypted body if present
                                     let decrypted_body = if let Some(enc) = encrypted_body {
                                         tracing::info!("Decrypting E2E encrypted image generation request");
-                                        match decrypt_request_body(&enc, self.public_key.as_deref()) {
+                                        match decrypt_request_body(&enc, self.node_keypair.as_ref()) {
                                             Ok(b) => b,
                                             Err(e) => {
                                                 tracing::error!("Failed to decrypt image generation request: {e}");
@@ -551,13 +554,9 @@ impl CoordinatorClient {
 /// MITM on the network sees only encrypted blobs.
 fn decrypt_request_body(
     encrypted: &crate::protocol::EncryptedPayload,
-    _public_key: Option<&str>,
+    keypair: &crate::crypto::NodeKeyPair,
 ) -> anyhow::Result<serde_json::Value> {
     use base64::Engine;
-
-    // Load the provider's X25519 private key
-    let key_path = crate::crypto::default_key_path()?;
-    let keypair = crate::crypto::NodeKeyPair::load_or_generate(&key_path)?;
 
     // Decode the ephemeral public key from the coordinator
     let ephemeral_pub_bytes = base64::engine::general_purpose::STANDARD
@@ -992,6 +991,7 @@ mod tests {
             "vllm_mlx".to_string(),
             Duration::from_secs(1),
             None,
+            Arc::new(crate::crypto::NodeKeyPair::generate()),
         );
 
         // Run client in background
