@@ -33,8 +33,10 @@ pub enum BackendType {
     VllmMlx,
     /// mlx-lm: simpler, single-request server, always available with MLX.
     MlxLm,
-    /// omlx: alternative MLX inference server.
+    /// omlx: multi-model server, manages a whole model directory.
     Omlx,
+    /// vmlx: MLX Studio engine, per-model server with rich caching options.
+    Vmlx,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -584,6 +586,26 @@ heartbeat_interval_secs = 5
     }
 
     #[test]
+    fn test_backend_type_toml_vmlx() {
+        let toml_str = r#"
+[provider]
+name = "p"
+memory_reserve_gb = 4
+
+[backend]
+port = 8100
+continuous_batching = true
+backend_type = "vmlx"
+
+[coordinator]
+url = "ws://localhost:8080/ws/provider"
+heartbeat_interval_secs = 5
+"#;
+        let config: ProviderConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.backend.backend_type, BackendType::Vmlx);
+    }
+
+    #[test]
     fn test_backend_type_all_values_serialize() {
         // Every BackendType variant must serialize to its snake_case string
         // and round-trip cleanly. Use a wrapper table because TOML requires
@@ -593,7 +615,7 @@ heartbeat_interval_secs = 5
             backend_type: BackendType,
         }
 
-        for bt in [BackendType::VllmMlx, BackendType::MlxLm, BackendType::Omlx] {
+        for bt in [BackendType::VllmMlx, BackendType::MlxLm, BackendType::Omlx, BackendType::Vmlx] {
             let w = Wrapper { backend_type: bt };
             let serialized = toml::to_string(&w).unwrap();
             let deserialized: Wrapper = toml::from_str(&serialized).unwrap();

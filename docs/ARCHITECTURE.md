@@ -282,6 +282,7 @@ The provider supports three inference backends, selected via `backend_type` in `
 | **vllm-mlx** (default) | Subprocess | `vllm-mlx serve <model> --port <port>` | One process per model, continuous batching, tool calls, reasoning parsers |
 | **mlx-lm** | Subprocess | `python -m mlx_lm.server --model <model> --port <port>` | One process per model, simpler single-request server |
 | **omlx** | Subprocess | `omlx serve --model-dir <dir>` | Single process for all models, continuous batching, tiered KV cache |
+| **vmlx** | Subprocess | `vmlx serve <model> --port <port>` | MLX Studio engine, one process per model, paged KV cache, speculative decoding |
 
 `vllm-mlx` and `mlx-lm` are spawned once per model on sequential ports. `omlx` is a multi-model server that manages an entire model directory from a single process.
 

@@ -4,6 +4,7 @@
 //!   - vllm-mlx  — one process per model, continuous batching, tool calls, reasoning parsers
 //!   - mlx-lm    — one process per model, simpler single-request server
 //!   - omlx      — one process for a whole model directory, multi-model continuous batching
+//!   - vmlx      — MLX Studio engine, one process per model, rich caching + speculative decoding
 //!
 //! We prefer mlx-lm in production right now because vllm-mlx has been observed
 //! to accept HTTP requests and then hang indefinitely on generation for some
@@ -18,6 +19,7 @@
 
 pub mod omlx;
 pub mod vllm_mlx;
+pub mod vmlx;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -168,6 +170,7 @@ pub fn create_backend(
         // omlx is not per-model; fall back to vllm-mlx if someone mistakenly
         // uses create_backend with Omlx type.
         Some("omlx") | Some("omlx.server") => crate::config::BackendType::VllmMlx,
+        Some("vmlx") | Some("vmlx.server") => crate::config::BackendType::Vmlx,
         _ => backend_type,
     };
 
@@ -181,6 +184,9 @@ pub fn create_backend(
             // batching disabled approximates its behavior; a dedicated MlxLmBackend
             // can be added here when needed.
             Box::new(vllm_mlx::VllmMlxBackend::new(model, port, false))
+        }
+        crate::config::BackendType::Vmlx => {
+            Box::new(vmlx::VmlxBackend::new(model, port, continuous_batching))
         }
     }
 }
@@ -1470,5 +1476,17 @@ mod tests {
             9876,
         );
         assert_eq!(backend.base_url(), "http://127.0.0.1:9876");
+    }
+
+    #[test]
+    fn test_create_backend_vmlx_returns_correct_name() {
+        let backend = create_backend(
+            crate::config::BackendType::Vmlx,
+            "mlx-community/Qwen3-8B-4bit".into(),
+            8103,
+            true,
+        );
+        assert_eq!(backend.name(), "vmlx");
+        assert_eq!(backend.base_url(), "http://127.0.0.1:8103");
     }
 }

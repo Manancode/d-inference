@@ -2100,6 +2100,9 @@ async fn cmd_serve(
         let _ = std::process::Command::new("pkill")
             .args(["-f", "omlx"])
             .status();
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "vmlx"])
+            .status();
         // Kill legacy DGInf/dginf-provider processes
         let _ = std::process::Command::new("pkill")
             .args(["-f", "DGInf"])
@@ -3685,6 +3688,9 @@ async fn cmd_serve(
         let _ = std::process::Command::new("pkill")
             .args(["-f", "omlx"])
             .status();
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "vmlx"])
+            .status();
         let pid_file = dirs::home_dir()
             .unwrap_or_default()
             .join(".darkbloom/provider.pid");
@@ -3723,6 +3729,9 @@ async fn shutdown_backends(pids: &[(String, Option<u32>)]) {
             let _ = std::process::Command::new("pkill")
                 .args(["-f", "omlx"])
                 .status();
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "vmlx"])
+                .status();
         }
     }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -3739,10 +3748,12 @@ fn preferred_inference_backend_module(config_type: crate::config::BackendType) -
         Some("vllm-mlx") | Some("vllm_mlx") | Some("vllm_mlx.server") => "vllm_mlx.server",
         Some("mlx_lm") | Some("mlx_lm.server") => "mlx_lm.server",
         Some("omlx") | Some("omlx.server") => "omlx.server",
+        Some("vmlx") | Some("vmlx.server") => "vmlx.server",
         _ => match config_type {
             crate::config::BackendType::VllmMlx => "vllm_mlx.server",
             crate::config::BackendType::MlxLm => "mlx_lm.server",
             crate::config::BackendType::Omlx => "omlx.server",
+            crate::config::BackendType::Vmlx => "vmlx.server",
         },
     }
 }
@@ -3752,6 +3763,7 @@ fn backend_name_for_module(module: &str) -> &'static str {
         "vllm_mlx.server" => "vllm-mlx",
         "mlx_lm.server" => "mlx_lm",
         "omlx.server" => "omlx",
+        "vmlx.server" => "vmlx",
         _ => "unknown",
     }
 }
@@ -3781,18 +3793,23 @@ fn spawn_inference_backend(
     model: &str,
     port: u16,
 ) -> std::io::Result<u32> {
-    // omlx is a pip-installed CLI script, not a python -m module.
-    if module == "omlx.server" {
-        let mut child = tokio::process::Command::new("omlx")
+    // omlx and vmlx are pip-installed CLI scripts, not python -m modules.
+    let cli_binary = match module {
+        "omlx.server" => Some("omlx"),
+        "vmlx.server" => Some("vmlx"),
+        _ => None,
+    };
+    if let Some(binary) = cli_binary {
+        let mut child = tokio::process::Command::new(binary)
             .args(["serve", model, "--port", &port.to_string()])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
         if let Some(stdout) = child.stdout.take() {
-            spawn_backend_log_forwarder(stdout, "omlx", false);
+            spawn_backend_log_forwarder(stdout, binary, false);
         }
         if let Some(stderr) = child.stderr.take() {
-            spawn_backend_log_forwarder(stderr, "omlx", true);
+            spawn_backend_log_forwarder(stderr, binary, true);
         }
         return Ok(child.id().unwrap_or(0));
     }
@@ -3859,6 +3876,7 @@ async fn reload_backend(
         "vllm-mlx" | "vllm_mlx" => "vllm_mlx.server",
         "mlx_lm" => "mlx_lm.server",
         "omlx" => "omlx.server",
+        "vmlx" => "vmlx.server",
         _ => "vllm_mlx.server",
     };
 
@@ -5860,6 +5878,9 @@ async fn cmd_stop() -> Result<()> {
         let _ = std::process::Command::new("pkill")
             .args(["-f", "omlx"])
             .status();
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "vmlx"])
+            .status();
     }
 
     println!("Provider stopped.");
@@ -6731,6 +6752,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_preferred_module_vmlx_config() {
+        assert_eq!(
+            preferred_inference_backend_module(crate::config::BackendType::Vmlx),
+            "vmlx.server"
+        );
+    }
+
     // ── backend_name_for_module ──────────────────────────────────────────────
 
     #[test]
@@ -6749,6 +6778,11 @@ mod tests {
     }
 
     #[test]
+    fn test_backend_name_for_vmlx() {
+        assert_eq!(backend_name_for_module("vmlx.server"), "vmlx");
+    }
+
+    #[test]
     fn test_backend_name_for_unknown_falls_back() {
         assert_eq!(backend_name_for_module("unknown_module"), "unknown");
     }
@@ -6761,6 +6795,7 @@ mod tests {
             (crate::config::BackendType::VllmMlx, "vllm-mlx"),
             (crate::config::BackendType::MlxLm, "mlx_lm"),
             (crate::config::BackendType::Omlx, "omlx"),
+            (crate::config::BackendType::Vmlx, "vmlx"),
         ];
         for (bt, expected_name) in pairs {
             let module = preferred_inference_backend_module(bt);

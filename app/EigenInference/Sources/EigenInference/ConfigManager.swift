@@ -14,7 +14,7 @@
 ///   model = "mlx-community/Qwen3.5-4B-4bit"
 ///   continuous_batching = true
 ///   enabled_models = []
-///   backend_type = "vllm_mlx"   # vllm_mlx | mlx_lm | omlx (default: vllm_mlx)
+///   backend_type = "vllm_mlx"   # vllm_mlx | mlx_lm | omlx | vmlx (default: vllm_mlx)
 ///
 ///   [coordinator]
 ///   url = "wss://api.darkbloom.dev/ws/provider"
@@ -30,7 +30,7 @@ struct ProviderConfig: Equatable {
     var backendModel: String?
     var continuousBatching: Bool
     var enabledModels: [String]
-    /// Inference backend: "vllm_mlx" (default), "mlx_lm", or "omlx".
+    /// Inference backend: "vllm_mlx" (default), "mlx_lm", "omlx", or "vmlx".
     var backendType: String?
 
     var coordinatorURL: String
