@@ -70,6 +70,9 @@ jobs:
       - name: Build provider (Rust)
         env:
           PYO3_PYTHON: /tmp/eigeninference-build-python/bin/python3.12
+          LIBRARY_PATH: /tmp/eigeninference-build-python/lib
+          DYLD_LIBRARY_PATH: /tmp/eigeninference-build-python/lib
+          RUSTFLAGS: -L native=/tmp/eigeninference-build-python/lib
         run: |
           cd provider
           cargo build --release
@@ -93,6 +96,9 @@ jobs:
       - name: Test provider
         env:
           PYO3_PYTHON: /tmp/eigeninference-build-python/bin/python3.12
+          LIBRARY_PATH: /tmp/eigeninference-build-python/lib
+          DYLD_LIBRARY_PATH: /tmp/eigeninference-build-python/lib
+          RUSTFLAGS: -L native=/tmp/eigeninference-build-python/lib
         run: cd provider && cargo test -- --skip proxy::tests --skip server::tests
 
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0

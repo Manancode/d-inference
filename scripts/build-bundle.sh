@@ -137,8 +137,12 @@ echo ""
 if [ "$SKIP_BUILD" = false ]; then
     echo "3.5. Building darkbloom against portable Python..."
     cd "$PROJECT_DIR/provider"
+    LIB_DIR="$BUNDLE_DIR/python/lib"
     PYO3_PYTHON="$PYTHON312" \
     PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
+    LIBRARY_PATH="$LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}" \
+    DYLD_LIBRARY_PATH="$LIB_DIR${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+    RUSTFLAGS="-L native=$LIB_DIR${RUSTFLAGS:+ $RUSTFLAGS}" \
     cargo build --release 2>&1 | tail -3
     echo "   ✓ darkbloom ($(du -h target/release/darkbloom | cut -f1))"
     echo ""
