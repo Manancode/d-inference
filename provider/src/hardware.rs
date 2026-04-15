@@ -168,6 +168,7 @@ pub enum ChipFamily {
     M2,
     M3,
     M4,
+    M5,
     Unknown,
 }
 
@@ -334,7 +335,9 @@ fn detect_gpu_info() -> Result<(String, u32)> {
 fn parse_chip_identity(chip_name: &str) -> (ChipFamily, ChipTier) {
     let name = chip_name.to_lowercase();
 
-    let family = if name.contains("m4") {
+    let family = if name.contains("m5") {
+        ChipFamily::M5
+    } else if name.contains("m4") {
         ChipFamily::M4
     } else if name.contains("m3") {
         ChipFamily::M3
@@ -401,6 +404,18 @@ fn lookup_bandwidth(family: ChipFamily, tier: ChipTier, gpu_cores: u32) -> u32 {
             }
         }
         (ChipFamily::M4, ChipTier::Ultra) => 819, // expected, not released yet
+
+        // M5 family
+        (ChipFamily::M5, ChipTier::Base) => 153,
+        (ChipFamily::M5, ChipTier::Pro) => 307,
+        (ChipFamily::M5, ChipTier::Max) => {
+            if gpu_cores >= 40 {
+                614 // 40-core
+            } else {
+                460 // 32-core
+            }
+        }
+        (ChipFamily::M5, ChipTier::Ultra) => 1228, // expected: 2x M5 Max
 
         // Unknown — conservative estimate
         _ => 100,
@@ -519,6 +534,9 @@ mod tests {
             ("Apple M4", ChipFamily::M4, ChipTier::Base),
             ("Apple M4 Pro", ChipFamily::M4, ChipTier::Pro),
             ("Apple M4 Max", ChipFamily::M4, ChipTier::Max),
+            ("Apple M5", ChipFamily::M5, ChipTier::Base),
+            ("Apple M5 Pro", ChipFamily::M5, ChipTier::Pro),
+            ("Apple M5 Max", ChipFamily::M5, ChipTier::Max),
         ];
 
         for (name, expected_family, expected_tier) in cases {
@@ -543,6 +561,10 @@ mod tests {
         assert_eq!(lookup_bandwidth(ChipFamily::M1, ChipTier::Base, 8), 68);
         assert_eq!(lookup_bandwidth(ChipFamily::M3, ChipTier::Max, 40), 400);
         assert_eq!(lookup_bandwidth(ChipFamily::M3, ChipTier::Max, 30), 300);
+        assert_eq!(lookup_bandwidth(ChipFamily::M5, ChipTier::Base, 10), 153);
+        assert_eq!(lookup_bandwidth(ChipFamily::M5, ChipTier::Pro, 18), 307);
+        assert_eq!(lookup_bandwidth(ChipFamily::M5, ChipTier::Max, 40), 614);
+        assert_eq!(lookup_bandwidth(ChipFamily::M5, ChipTier::Max, 32), 460);
     }
 
     #[test]

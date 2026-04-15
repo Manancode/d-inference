@@ -48,6 +48,9 @@ const MAC_CONFIGS: MacConfig[] = [
   { macType: "MacBook Pro", chip: "M4",       ramOptions: [16, 24, 32],              bandwidthGBs: 120, idleWatts: 10, inferWatts: 20 },
   { macType: "MacBook Pro", chip: "M4 Pro",   ramOptions: [24, 48],                  bandwidthGBs: 273, idleWatts: 12, inferWatts: 30 },
   { macType: "MacBook Pro", chip: "M4 Max",   ramOptions: [36, 48, 64, 128],         bandwidthGBs: 546, idleWatts: 20, inferWatts: 50 },
+  { macType: "MacBook Pro", chip: "M5",       ramOptions: [16, 24, 32],              bandwidthGBs: 153, idleWatts: 10, inferWatts: 20 },
+  { macType: "MacBook Pro", chip: "M5 Pro",   ramOptions: [24, 48],                  bandwidthGBs: 307, idleWatts: 12, inferWatts: 30 },
+  { macType: "MacBook Pro", chip: "M5 Max",   ramOptions: [36, 48, 64, 128],         bandwidthGBs: 614, idleWatts: 20, inferWatts: 50 },
 
   // --- Mac Mini ---
   { macType: "Mac Mini", chip: "M1",          ramOptions: [8, 16],                   bandwidthGBs: 68,  idleWatts: 5,  inferWatts: 10 },
@@ -63,6 +66,7 @@ const MAC_CONFIGS: MacConfig[] = [
   { macType: "Mac Studio", chip: "M2 Ultra",  ramOptions: [64, 128, 192],            bandwidthGBs: 800, idleWatts: 35, inferWatts: 100 },
   { macType: "Mac Studio", chip: "M3 Ultra",  ramOptions: [96, 256, 512],             bandwidthGBs: 819, idleWatts: 35, inferWatts: 110 },
   { macType: "Mac Studio", chip: "M4 Max",    ramOptions: [36, 48, 64, 128],         bandwidthGBs: 546, idleWatts: 25, inferWatts: 65 },
+  { macType: "Mac Studio", chip: "M5 Max",    ramOptions: [36, 48, 64, 128],         bandwidthGBs: 614, idleWatts: 25, inferWatts: 65 },
 
   // --- Mac Pro ---
   { macType: "Mac Pro", chip: "M2 Ultra",     ramOptions: [64, 128, 192],            bandwidthGBs: 800, idleWatts: 40, inferWatts: 120 },
