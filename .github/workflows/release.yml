@@ -234,9 +234,14 @@ jobs:
 
           # Upgrade pip and install packages
           /tmp/eigeninference-python/bin/python3.12 -m pip install --upgrade pip --quiet
-          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet --no-cache-dir 'mlx-lm>=0.31.2'
-          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet --no-cache-dir /tmp/vllm-mlx-source.zip
-          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet grpcio flatbuffers soundfile mlx-audio
+          # Install vllm-mlx and all deps in one call so pip resolves constraints together.
+          # mlx-lm>=0.31.2 is critical — older versions lack GenerationBatch API.
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet --no-cache-dir \
+            'mlx-lm>=0.31.2' \
+            /tmp/vllm-mlx-source.zip \
+            grpcio flatbuffers soundfile mlx-audio
+          # Force-upgrade mlx-lm in case a transitive dep pinned an older version
+          /tmp/eigeninference-python/bin/python3.12 -m pip install --quiet --no-cache-dir --upgrade 'mlx-lm>=0.31.2'
 
           # Verify packages work and vllm-mlx can actually import (catches version mismatches)
           /tmp/eigeninference-python/bin/python3.12 -c "import vllm_mlx; print(f'vllm-mlx {vllm_mlx.__version__}')"

@@ -103,15 +103,13 @@ echo "   Using $PYTHON312 ($($PYTHON312 --version))"
 "$PYTHON312" -m venv "$BUNDLE_DIR/python"
 source "$BUNDLE_DIR/python/bin/activate"
 
-echo "   Installing vllm-mlx from our fork..."
-pip install --quiet --no-cache-dir 'mlx-lm>=0.31.2'
-pip install --quiet --no-cache-dir 'git+https://github.com/Gajesh2007/vllm-mlx.git@main'
-
-echo "   Installing image bridge dependencies..."
-pip install --quiet grpcio flatbuffers Pillow
-
-echo "   Installing STT dependencies..."
-pip install --quiet mlx-audio
+echo "   Installing vllm-mlx and dependencies..."
+pip install --quiet --no-cache-dir \
+  'mlx-lm>=0.31.2' \
+  'git+https://github.com/Gajesh2007/vllm-mlx.git@main' \
+  grpcio flatbuffers Pillow mlx-audio
+# Force-upgrade mlx-lm in case a transitive dep pinned an older version
+pip install --quiet --no-cache-dir --upgrade 'mlx-lm>=0.31.2'
 
 echo "   Stripping unnecessary packages (keeping pip)..."
 cd "$BUNDLE_DIR/python/lib/python3.12/site-packages"
