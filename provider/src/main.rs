@@ -1382,6 +1382,10 @@ enum Command {
         /// Disable automatic update checks (enabled by default)
         #[arg(long)]
         no_auto_update: bool,
+
+        /// Inference backend to use: vllm_mlx (default), mlx_lm, omlx, vmlx
+        #[arg(long, value_name = "BACKEND")]
+        backend: Option<String>,
     },
 
     /// One-command setup: enroll in MDM, download model, start serving
@@ -1461,6 +1465,10 @@ enum Command {
         /// Minutes of inactivity before backend shuts down to free GPU memory (0 = never)
         #[arg(long)]
         idle_timeout: Option<u64>,
+
+        /// Inference backend to use: vllm_mlx (default), mlx_lm, omlx, vmlx
+        #[arg(long, value_name = "BACKEND")]
+        backend: Option<String>,
     },
 
     /// Stop the provider gracefully
@@ -1550,6 +1558,7 @@ async fn main() -> Result<()> {
             image_model_path,
             idle_timeout,
             no_auto_update,
+            backend,
         } => {
             // Image generation disabled — ignore image_model/image_model_path args
             let _ = (&image_model, &image_model_path);
@@ -1562,6 +1571,7 @@ async fn main() -> Result<()> {
                 all_models,
                 idle_timeout,
                 !no_auto_update,
+                backend,
             )
             .await
         }
@@ -1581,10 +1591,11 @@ async fn main() -> Result<()> {
             image_model,
             image_model_path,
             idle_timeout,
+            backend,
         } => {
             // Image generation disabled — pass None for image args
             let _ = (&image_model, &image_model_path);
-            cmd_start(coordinator, model, None, None, idle_timeout).await
+            cmd_start(coordinator, model, None, None, idle_timeout, backend).await
         }
         Command::Stop => cmd_stop().await,
         Command::Logs { lines, watch } => cmd_logs(lines, watch).await,
@@ -1993,7 +2004,7 @@ async fn cmd_install(
     println!("  Model: {}", model);
     println!();
 
-    service::install_and_start(&coordinator_url, &[model.clone()], None, None, None, None)?;
+    service::install_and_start(&coordinator_url, &[model.clone()], None, None, None, None, None)?;
 
     let log_path = dirs::home_dir()
         .unwrap_or_default()
@@ -2043,6 +2054,7 @@ async fn cmd_serve(
     _all_models: bool,
     idle_timeout_override: Option<u64>,
     auto_update: bool,
+    backend_override: Option<String>,
 ) -> Result<()> {
     // Ensure only one provider instance runs at a time.
     // Kill any existing provider serve process + its backend children.
@@ -2159,13 +2171,23 @@ async fn cmd_serve(
 
     // Load or create config
     let config_path = config::default_config_path()?;
-    let cfg = if config_path.exists() {
+    let mut cfg = if config_path.exists() {
         config::load(&config_path)?
     } else {
         let cfg = config::ProviderConfig::default_for_hardware(&hw);
         config::save(&config_path, &cfg)?;
         cfg
     };
+
+    // --backend flag overrides the config value (does not persist to disk)
+    if let Some(ref b) = backend_override {
+        cfg.backend.backend_type = match b.as_str() {
+            "mlx_lm" | "mlx-lm" => config::BackendType::MlxLm,
+            "omlx" => config::BackendType::Omlx,
+            "vmlx" => config::BackendType::Vmlx,
+            "vllm_mlx" | "vllm-mlx" | _ => config::BackendType::VllmMlx,
+        };
+    }
 
     // Parse schedule from config
     let schedule = cfg
@@ -5572,6 +5594,7 @@ async fn cmd_start(
     image_model: Option<String>,
     image_model_path: Option<String>,
     idle_timeout: Option<u64>,
+    backend_override: Option<String>,
 ) -> Result<()> {
     // Stop any existing provider first
     cmd_stop().await?;
@@ -5799,6 +5822,7 @@ async fn cmd_start(
         final_image_model_path.as_deref(),
         picked_stt.as_deref(),
         idle_timeout,
+        backend_override.as_deref(),
     )?;
 
     println!("Provider installed as system service");
